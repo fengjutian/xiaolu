@@ -18,6 +18,16 @@ export interface DiskInfo {
   totalBytes: number;
   availableBytes: number;
   removable: boolean;
+  readBytesPerSec: number;
+  writtenBytesPerSec: number;
+}
+
+export interface NetworkInfo {
+  downloadBytesPerSec: number;
+  uploadBytesPerSec: number;
+  totalReceivedBytes: number;
+  totalTransmittedBytes: number;
+  interfaces: number;
 }
 
 export interface ProcessInfo {
@@ -37,6 +47,17 @@ export interface SystemSnapshot {
   capturedAtUnixMs: number;
   cpu: CpuInfo;
   memory: MemoryInfo;
+  network: NetworkInfo;
   disks: DiskInfo[];
   processes: ProcessInfo[];
 }
+
+export interface StartupItem {
+  name: string;
+  command: string;
+  scope: string;
+  enabled: boolean;
+  editable: boolean;
+}
+
+export type HardwareDetails = Record<string, unknown>;

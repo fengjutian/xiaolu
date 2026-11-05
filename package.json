@@ -12,9 +12,13 @@
     "tauri:build": "tauri build"
   },
   "dependencies": {
+    "@mantine/core": "^9.7.5",
+    "@mantine/hooks": "^9.7.5",
+    "@tabler/icons-react": "^3.50.0",
     "@tauri-apps/api": "2.12.4",
     "react": "19.3.1",
-    "react-dom": "19.3.1"
+    "react-dom": "19.3.1",
+    "recharts": "^3.10.1"
   },
   "devDependencies": {
     "@tauri-apps/cli": "2.12.4",

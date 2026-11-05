@@ -1,9 +1,37 @@
 mod system;
 
+use tauri::{menu::{Menu, MenuItem}, tray::TrayIconBuilder, Manager};
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![system::get_system_snapshot])
+        .manage(std::sync::Mutex::new(system::SystemCollector::new().expect("failed to initialize system collector")))
+        .setup(|app| {
+            let show = MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show, &quit])?;
+            TrayIconBuilder::new()
+                .icon(app.default_window_icon().expect("app icon").clone())
+                .tooltip("小鲁 · 系统透镜")
+                .menu(&menu)
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "show" => if let Some(window) = app.get_webview_window("main") { let _ = window.show(); let _ = window.set_focus(); },
+                    "quit" => app.exit(0),
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, _| {
+                    if let Some(window) = tray.app_handle().get_webview_window("main") { let _ = window.show(); let _ = window.set_focus(); }
+                })
+                .build(app)?;
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        })
+        .invoke_handler(tauri::generate_handler![system::get_system_snapshot, system::get_hardware_details, system::get_startup_items, system::set_startup_enabled])
         .run(tauri::generate_context!())
         .expect("failed to run System Lens");
 }
