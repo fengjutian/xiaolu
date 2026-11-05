@@ -232,8 +232,8 @@ mod tests {
                 "user": "DEMO\\user",
                 "hidden": false,
                 "triggers": ["LogonTrigger", "TimeTrigger"],
-                "lastRunUnixMs": 1700000000000,
-                "nextRunUnixMs": 1800000000000,
+                "lastRunUnixMs": 1700000000000i64,
+                "nextRunUnixMs": 1800000000000i64,
                 "lastResult": 0
             },
             {

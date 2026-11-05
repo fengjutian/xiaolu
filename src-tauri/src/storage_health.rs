@@ -10,6 +10,7 @@ pub enum HealthLevel {
 }
 
 impl HealthLevel {
+    #[allow(dead_code)]
     pub fn as_str(self) -> &'static str {
         match self {
             HealthLevel::Unknown => "unknown",
