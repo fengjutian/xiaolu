@@ -1,7 +1,7 @@
 # 小鲁 System Lens：完整功能规划
 
 版本：0.3 规划稿  
-状态：实施中（0.13.0 温度历史与告警）
+状态：实施中（0.14.0 报告预览与导出）
 目标平台：Windows 10/11 x64  
 桌面框架：Tauri 2 + React + Rust
 
@@ -34,9 +34,19 @@ v0.13.0 新增（传感器子系统第一、二阶段）：
 - 设计文档：[SENSOR_HELPER_DESIGN.md](SENSOR_HELPER_DESIGN.md)
 - 仍待完成：T0 去 PowerShell、CPU/主板温度（需 T2 可选 helper）、桌面通知
 
+v0.14.0 新增（诊断报告）：
+
+- JSON 与 Markdown 双格式导出，导出内容与预览完全一致
+- 导出前字段预览（字段路径 + 值，最多 300 行）
+- 6 项脱敏开关：主机名、用户名、序列号、MAC、IP、本地路径；进程 PID 始终移除
+- 区块选择：硬件、传感器、驱动、诊断、网络、软件、启动项、进程
+- 采集失败按区块降级记录，不阻断整份报告
+- 远程连接明细不写入报告
+
 现有代码入口：
 
 - 前端页面：`src/App.tsx`
+- 诊断报告：[src/report.tsx](../src/report.tsx)
 - Tauri 命令：`src-tauri/src/system.rs`
 - 托盘与应用生命周期：`src-tauri/src/lib.rs`
 
