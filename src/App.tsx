@@ -59,6 +59,7 @@ import {
   getDriverInventory,
   getDiagnosticReport,
   getHardwareDetails,
+  getNetworkDiagnostics,
   getSensorSnapshot,
   getStartupItems,
   getSystemSnapshot,
@@ -74,6 +75,7 @@ import type {
   DriverUpdate,
   DiagnosticReport,
   HardwareDetails,
+  NetworkDiagnosticReport,
   SensorReading,
   SensorSnapshot,
   StartupItem,
@@ -87,6 +89,7 @@ type Tab =
   | "sensors"
   | "drivers"
   | "diagnostics"
+  | "network"
   | "hardware"
   | "processes"
   | "startup"
@@ -107,6 +110,7 @@ const nav = [
   ["sensors", "温度与健康", IconTemperature],
   ["drivers", "驱动检测", IconTool],
   ["diagnostics", "系统诊断", IconHeartbeat],
+  ["network", "网络诊断", IconNetwork],
   ["hardware", "硬件详情", IconCpu],
   ["processes", "运行进程", IconActivity],
   ["startup", "启动项管理", IconRocket],
@@ -683,6 +687,136 @@ function DriversPanel({ data }: { data: DriverInventory | null }) {
   );
 }
 
+function NetworkPanel({ data }: { data: NetworkDiagnosticReport | null }) {
+  const [query, setQuery] = useState("");
+  if (!data)
+    return (
+      <Center h={260}>
+        <Loader />
+      </Center>
+    );
+  const needle = query.trim().toLowerCase();
+  const connections = data.connections.filter(
+    (item) =>
+      !needle ||
+      [
+        item.processName,
+        String(item.pid),
+        item.localAddress,
+        item.remoteAddress,
+        String(item.remotePort),
+      ].some((value) => value.toLowerCase().includes(needle)),
+  );
+  return (
+    <Stack gap="md">
+      <SimpleGrid cols={{ base: 2, xl: 4 }}>
+        <Stat
+          icon={IconNetwork}
+          label="活动 TCP 连接"
+          value={String(data.connections.length)}
+          hint="最多展示 200 条已建立连接"
+          color="indigo"
+        />
+        <Stat
+          icon={IconServer}
+          label="默认网关"
+          value={data.defaultGateways[0] || "未检测到"}
+          hint={
+            data.defaultGateways.length > 1
+              ? `${data.defaultGateways.length} 个网关`
+              : data.source
+          }
+          color="teal"
+        />
+        <Stat
+          icon={IconShieldCheck}
+          label="系统代理"
+          value={data.proxyEnabled ? "已启用" : "未启用"}
+          hint={data.proxyServer || data.autoConfigUrl || "没有代理服务器"}
+          color={data.proxyEnabled ? "orange" : "teal"}
+        />
+        <Stat
+          icon={IconTool}
+          label="Hosts 自定义项"
+          value={String(data.hostsCustomEntries)}
+          hint="仅统计非注释记录，不展示内容"
+          color="blue"
+        />
+      </SimpleGrid>
+      <Card className="glass-card" radius="lg">
+        <Text fw={800} mb="md">
+          DNS 服务器
+        </Text>
+        <SimpleGrid cols={{ base: 1, md: 2 }}>
+          {data.dns.map((item) => (
+            <Paper key={item.alias} p="md" radius="md" withBorder>
+              <Text fw={700}>{item.alias}</Text>
+              <Text size="sm" c="dimmed">
+                {item.servers.join(" · ")}
+              </Text>
+            </Paper>
+          ))}
+        </SimpleGrid>
+        {data.dns.length === 0 && (
+          <Text c="dimmed">没有读取到 IPv4 DNS 服务器。</Text>
+        )}
+      </Card>
+      <Group justify="space-between">
+        <Title order={3}>已建立连接</Title>
+        <TextInput
+          value={query}
+          onChange={(event) => setQuery(event.currentTarget.value)}
+          leftSection={<IconSearch size={17} />}
+          placeholder="搜索进程、PID、地址或端口"
+          w={360}
+        />
+      </Group>
+      <Alert color="blue" icon={<IconShieldCheck />}>
+        远程地址仅在本机展示，不会写入诊断报告或上传。
+      </Alert>
+      <Card className="glass-card" radius="lg" p={0}>
+        <ScrollArea h="calc(100vh - 470px)">
+          <Table stickyHeader highlightOnHover>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>进程</Table.Th>
+                <Table.Th>本地端点</Table.Th>
+                <Table.Th>远程端点</Table.Th>
+                <Table.Th>状态</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {connections.map((item, index) => (
+                <Table.Tr
+                  key={`${item.pid}-${item.localPort}-${item.remoteAddress}-${item.remotePort}-${index}`}
+                >
+                  <Table.Td>
+                    <Text fw={700}>{item.processName}</Text>
+                    <Text size="xs" c="dimmed">
+                      PID {item.pid}
+                    </Text>
+                  </Table.Td>
+                  <Table.Td>
+                    {item.localAddress}:{item.localPort}
+                  </Table.Td>
+                  <Table.Td>
+                    {item.remoteAddress}:{item.remotePort}
+                  </Table.Td>
+                  <Table.Td>
+                    <Badge color="teal" variant="light">
+                      {item.state}
+                    </Badge>
+                  </Table.Td>
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+        </ScrollArea>
+      </Card>
+    </Stack>
+  );
+}
+
 function DiagnosticsPanel({ data }: { data: DiagnosticReport | null }) {
   if (!data)
     return (
@@ -1039,6 +1173,8 @@ export default function App() {
   const [sensors, setSensors] = useState<SensorSnapshot | null>(null);
   const [drivers, setDrivers] = useState<DriverInventory | null>(null);
   const [diagnostics, setDiagnostics] = useState<DiagnosticReport | null>(null);
+  const [networkDiagnostics, setNetworkDiagnostics] =
+    useState<NetworkDiagnosticReport | null>(null);
   const [startup, setStartup] = useState<StartupItem[]>([]);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1115,6 +1251,12 @@ export default function App() {
         .then(setDiagnostics)
         .catch((e) => setError(String(e)));
   }, [tab, diagnostics]);
+  useEffect(() => {
+    if (tab === "network" && !networkDiagnostics)
+      void getNetworkDiagnostics()
+        .then(setNetworkDiagnostics)
+        .catch((e) => setError(String(e)));
+  }, [tab, networkDiagnostics]);
   const loadStartup = useCallback(
     () =>
       getStartupItems()
@@ -1232,7 +1374,7 @@ export default function App() {
           </Text>
         </Paper>
         <Text size="xs" c="dimmed">
-          v0.8.0 · 系统诊断
+          v0.9.0 · 网络诊断
         </Text>
       </aside>
       <main className="content">
@@ -1365,6 +1507,7 @@ export default function App() {
         {tab === "sensors" && <SensorsPanel data={sensors} />}
         {tab === "drivers" && <DriversPanel data={drivers} />}
         {tab === "diagnostics" && <DiagnosticsPanel data={diagnostics} />}
+        {tab === "network" && <NetworkPanel data={networkDiagnostics} />}
         {tab === "processes" && (
           <Card className="glass-card" radius="lg" p={0}>
             <ScrollArea h="calc(100vh - 180px)">

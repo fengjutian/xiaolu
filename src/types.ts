@@ -187,3 +187,23 @@ export interface DiagnosticReport {
   }>;
   source: string;
 }
+
+export interface NetworkDiagnosticReport {
+  capturedAtUnixMs: number;
+  defaultGateways: string[];
+  dns: Array<{ alias: string; servers: string[] }>;
+  proxyEnabled: boolean;
+  proxyServer: string;
+  autoConfigUrl: string;
+  hostsCustomEntries: number;
+  connections: Array<{
+    processName: string;
+    pid: number;
+    localAddress: string;
+    localPort: number;
+    remoteAddress: string;
+    remotePort: number;
+    state: string;
+  }>;
+  source: string;
+}
