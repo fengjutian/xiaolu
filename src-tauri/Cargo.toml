@@ -1,6 +1,6 @@
 [package]
 name = "system-lens"
-version = "0.1.0"
+version = "0.2.0"
 description = "Local-first Windows system information and health dashboard"
 authors = ["System Lens contributors"]
 edition = "2021"
@@ -16,7 +16,7 @@ tauri-build = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sysinfo = "0.40.1"
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon"] }
 
 [profile.release]
 panic = "abort"

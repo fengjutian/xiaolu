@@ -125,15 +125,13 @@ mod startup {
         let Ok(key) = root.open_subkey_with_flags(path, KEY_READ) else { return vec![] };
         key.enum_values().filter_map(Result::ok).filter_map(|(name, _)| key.get_value::<String, _>(&name).ok().map(|command| StartupItem { name, command, scope: scope.into(), enabled, editable })).collect()
     }
-    #[tauri::command]
-    pub fn get_startup_items() -> Vec<StartupItem> {
+    pub fn list() -> Vec<StartupItem> {
         let mut items = read_run(HKEY_CURRENT_USER, "当前用户", true, true, RUN);
         items.extend(read_run(HKEY_LOCAL_MACHINE, "所有用户", false, true, RUN));
         items.extend(read_run(HKEY_CURRENT_USER, "当前用户", true, false, DISABLED));
         items.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase())); items
     }
-    #[tauri::command]
-    pub fn set_startup_enabled(name: String, enabled: bool) -> Result<(), String> {
+    pub fn set_enabled(name: String, enabled: bool) -> Result<(), String> {
         let root = RegKey::predef(HKEY_CURRENT_USER);
         let (source_path, target_path) = if enabled { (DISABLED, RUN) } else { (RUN, DISABLED) };
         let source = root.open_subkey_with_flags(source_path, KEY_READ | KEY_WRITE).map_err(|e| format!("无法打开启动项：{e}"))?;
@@ -146,7 +144,12 @@ mod startup {
 }
 
 #[cfg(windows)]
-pub use startup::{get_startup_items, set_startup_enabled};
+#[tauri::command]
+pub fn get_startup_items() -> Vec<startup::StartupItem> { startup::list() }
+
+#[cfg(windows)]
+#[tauri::command]
+pub fn set_startup_enabled(name: String, enabled: bool) -> Result<(), String> { startup::set_enabled(name, enabled) }
 
 #[cfg(test)]
 mod tests {

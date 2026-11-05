@@ -1,128 +1,75 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { getSystemSnapshot, isDesktopRuntime } from "./api";
-import type { DiskInfo, SystemSnapshot } from "./types";
+import { ActionIcon, Alert, Badge, Box, Button, Card, Center, Group, Loader, NavLink, Paper, Progress, ScrollArea, SimpleGrid, Stack, Switch, Table, Text, ThemeIcon, Title, Tooltip } from "@mantine/core";
+import { IconActivity, IconAlertCircle, IconArrowDown, IconArrowUp, IconCpu, IconDeviceDesktop, IconDownload, IconGauge, IconNetwork, IconPlayerPause, IconRefresh, IconRocket, IconServer, IconShieldCheck } from "@tabler/icons-react";
+import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip as ChartTooltip, XAxis, YAxis } from "recharts";
+import { getHardwareDetails, getStartupItems, getSystemSnapshot, isDesktopRuntime, setStartupEnabled } from "./api";
+import type { HardwareDetails, StartupItem, SystemSnapshot } from "./types";
 import "./styles.css";
 
-type Tab = "overview" | "hardware" | "processes" | "report";
+type Tab = "overview" | "hardware" | "processes" | "startup" | "report";
+type Sample = { time: string; cpu: number; memory: number; download: number; upload: number; diskRead: number; diskWrite: number };
 
-const navItems: Array<{ id: Tab; label: string; icon: string }> = [
-  { id: "overview", label: "总览", icon: "⌂" },
-  { id: "hardware", label: "硬件与存储", icon: "▣" },
-  { id: "processes", label: "进程", icon: "≡" },
-  { id: "report", label: "诊断报告", icon: "↗" },
-];
+const nav = [
+  ["overview", "性能概览", IconGauge], ["hardware", "硬件详情", IconCpu], ["processes", "运行进程", IconActivity],
+  ["startup", "启动项管理", IconRocket], ["report", "诊断报告", IconShieldCheck],
+] as const;
 
-function bytes(value: number): string {
-  if (value >= 1024 ** 3) return `${(value / 1024 ** 3).toFixed(1)} GB`;
-  if (value >= 1024 ** 2) return `${(value / 1024 ** 2).toFixed(0)} MB`;
-  return `${Math.round(value / 1024)} KB`;
+const bytes = (value: number) => value >= 1024 ** 3 ? `${(value / 1024 ** 3).toFixed(1)} GB` : value >= 1024 ** 2 ? `${(value / 1024 ** 2).toFixed(1)} MB` : `${(value / 1024).toFixed(0)} KB`;
+const speed = (value: number) => `${bytes(value)}/s`;
+const duration = (seconds: number) => `${Math.floor(seconds / 86400)} 天 ${Math.floor(seconds % 86400 / 3600)} 小时`;
+
+function Stat({ icon: Icon, label, value, hint, color }: { icon: typeof IconCpu; label: string; value: string; hint: string; color: string }) {
+  return <Card className="stat-card" padding="lg" radius="lg"><Group justify="space-between" align="flex-start"><Box><Text size="xs" c="dimmed" fw={700}>{label}</Text><Title order={2} mt={6}>{value}</Title><Text size="xs" c="dimmed" mt={6}>{hint}</Text></Box><ThemeIcon size={42} radius="xl" variant="light" color={color}><Icon size={22}/></ThemeIcon></Group></Card>;
 }
 
-function duration(seconds: number): string {
-  const days = Math.floor(seconds / 86_400);
-  const hours = Math.floor((seconds % 86_400) / 3_600);
-  const minutes = Math.floor((seconds % 3_600) / 60);
-  return `${days} 天 ${hours} 小时 ${minutes} 分钟`;
+function PerformanceChart({ data, mode }: { data: Sample[]; mode: "system" | "network" }) {
+  const system = mode === "system";
+  return <ResponsiveContainer width="100%" height={245}><AreaChart data={data} margin={{ left: -18, right: 8, top: 10 }}><defs><linearGradient id="cpu" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#748ffc" stopOpacity={.45}/><stop offset="100%" stopColor="#748ffc" stopOpacity={0}/></linearGradient><linearGradient id="net" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#38d9a9" stopOpacity={.4}/><stop offset="100%" stopColor="#38d9a9" stopOpacity={0}/></linearGradient></defs><CartesianGrid stroke="#293042" strokeDasharray="4 4"/><XAxis dataKey="time" tick={{ fill: "#7d879b", fontSize: 11 }} axisLine={false} tickLine={false}/><YAxis domain={system ? [0, 100] : [0, "auto"]} tick={{ fill: "#7d879b", fontSize: 11 }} axisLine={false} tickLine={false}/><ChartTooltip contentStyle={{ background: "#171b25", border: "1px solid #30384b", borderRadius: 12 }}/>{system ? <><Area type="monotone" dataKey="cpu" name="CPU %" stroke="#748ffc" fill="url(#cpu)" strokeWidth={2}/><Area type="monotone" dataKey="memory" name="内存 %" stroke="#da77f2" fillOpacity={0} strokeWidth={2}/></> : <><Area type="monotone" dataKey="download" name="下载 MB/s" stroke="#38d9a9" fill="url(#net)" strokeWidth={2}/><Area type="monotone" dataKey="upload" name="上传 MB/s" stroke="#ffd43b" fillOpacity={0} strokeWidth={2}/></>}</AreaChart></ResponsiveContainer>;
 }
 
-function Ring({ value, label, color }: { value: number; label: string; color: string }) {
-  const safe = Math.min(100, Math.max(0, value));
-  return (
-    <div className="ring-wrap">
-      <div className="ring" style={{ background: `conic-gradient(${color} ${safe}%, #e9eef5 0)` }}>
-        <div className="ring-center"><strong>{safe.toFixed(0)}%</strong><span>{label}</span></div>
-      </div>
-    </div>
-  );
+function HardwarePanel({ details }: { details: HardwareDetails | null }) {
+  if (!details) return <Center h={260}><Loader/></Center>;
+  return <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">{Object.entries(details).map(([section, value]) => <Card key={section} className="glass-card" radius="lg"><Text tt="uppercase" size="xs" c="indigo.3" fw={800} mb="md">{section}</Text><pre className="hardware-json">{JSON.stringify(value, null, 2)}</pre></Card>)}</SimpleGrid>;
 }
 
-function MetricCard({ title, value, detail, tone = "blue" }: { title: string; value: string; detail: string; tone?: string }) {
-  return <article className={`metric-card ${tone}`}><span>{title}</span><strong>{value}</strong><small>{detail}</small></article>;
-}
-
-function DiskRow({ disk }: { disk: DiskInfo }) {
-  const used = disk.totalBytes - disk.availableBytes;
-  const percent = disk.totalBytes ? (used / disk.totalBytes) * 100 : 0;
-  return (
-    <div className="disk-row">
-      <div><strong>{disk.name || disk.mountPoint}</strong><span>{disk.mountPoint} · {disk.fileSystem || "未知文件系统"}</span></div>
-      <div className="disk-usage"><div className="progress"><i style={{ width: `${percent}%` }} /></div><span>{bytes(used)} / {bytes(disk.totalBytes)}</span></div>
-    </div>
-  );
-}
-
-function App() {
+export default function App() {
   const [tab, setTab] = useState<Tab>("overview");
   const [snapshot, setSnapshot] = useState<SystemSnapshot | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [history, setHistory] = useState<Sample[]>([]);
+  const [hardware, setHardware] = useState<HardwareDetails | null>(null);
+  const [startup, setStartup] = useState<StartupItem[]>([]);
+  const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    setLoading(true);
     try {
-      setSnapshot(await getSystemSnapshot());
-      setError(null);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setLoading(false);
-    }
+      const next = await getSystemSnapshot();
+      setSnapshot(next); setError(null);
+      const diskRead = next.disks.reduce((sum, x) => sum + x.readBytesPerSec, 0);
+      const diskWrite = next.disks.reduce((sum, x) => sum + x.writtenBytesPerSec, 0);
+      setHistory(old => [...old, { time: new Date().toLocaleTimeString([], { minute: "2-digit", second: "2-digit" }), cpu: +next.cpu.usagePercent.toFixed(1), memory: +next.memory.usagePercent.toFixed(1), download: +(next.network.downloadBytesPerSec / 1024 ** 2).toFixed(2), upload: +(next.network.uploadBytesPerSec / 1024 ** 2).toFixed(2), diskRead, diskWrite }].slice(-30));
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
   }, []);
 
-  useEffect(() => { void refresh(); }, [refresh]);
-  useEffect(() => {
-    const timer = window.setInterval(() => { void refresh(); }, 5_000);
-    return () => window.clearInterval(timer);
-  }, [refresh]);
+  useEffect(() => { void refresh(); const timer = window.setInterval(() => void refresh(), 2000); return () => clearInterval(timer); }, [refresh]);
+  useEffect(() => { if (tab === "hardware" && !hardware) void getHardwareDetails().then(setHardware).catch(e => setError(String(e))); }, [tab, hardware]);
+  const loadStartup = useCallback(() => getStartupItems().then(setStartup).catch(e => setError(String(e))), []);
+  useEffect(() => { if (tab === "startup") void loadStartup(); }, [tab, loadStartup]);
 
-  const report = useMemo(() => snapshot ? JSON.stringify({
-    schemaVersion: 1,
-    generatedAt: new Date(snapshot.capturedAtUnixMs).toISOString(),
-    privacy: "主机名已脱敏",
-    system: { ...snapshot, hostName: "[已脱敏]", processes: snapshot.processes.map(({ pid: _pid, ...process }) => process) },
-  }, null, 2) : "", [snapshot]);
+  const report = useMemo(() => snapshot ? JSON.stringify({ schemaVersion: 2, generatedAt: new Date(snapshot.capturedAtUnixMs).toISOString(), privacy: "主机名和 PID 已脱敏", system: { ...snapshot, hostName: "[已脱敏]", processes: snapshot.processes.map(({ pid: _, ...p }) => p) } }, null, 2) : "", [snapshot]);
+  const downloadReport = () => { const url = URL.createObjectURL(new Blob([report], { type: "application/json" })); const a = document.createElement("a"); a.href = url; a.download = `system-lens-${new Date().toISOString().slice(0, 10)}.json`; a.click(); URL.revokeObjectURL(url); };
+  const toggleStartup = async (item: StartupItem, enabled: boolean) => { if (!window.confirm(`确定要${enabled ? "启用" : "禁用"}启动项“${item.name}”吗？`)) return; try { await setStartupEnabled(item.name, enabled); await loadStartup(); } catch (e) { setError(String(e)); } };
 
-  const downloadReport = () => {
-    const blob = new Blob([report], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `system-lens-report-${new Date().toISOString().slice(0, 10)}.json`;
-    anchor.click();
-    URL.revokeObjectURL(url);
-  };
+  if (!snapshot) return <Center h="100vh"><Stack align="center"><Loader size="lg"/><Text c="dimmed">正在建立本地系统视图…</Text>{error && <Alert color="red">{error}</Alert>}</Stack></Center>;
+  const diskRead = snapshot.disks.reduce((sum, x) => sum + x.readBytesPerSec, 0);
+  const diskWrite = snapshot.disks.reduce((sum, x) => sum + x.writtenBytesPerSec, 0);
 
-  if (!snapshot && loading) return <div className="splash"><div className="brand-mark">S</div><p>正在读取系统状态…</p></div>;
-  if (!snapshot) return <div className="splash error"><p>无法读取系统状态</p><code>{error}</code><button onClick={refresh}>重试</button></div>;
-
-  const memoryFree = snapshot.memory.totalBytes - snapshot.memory.usedBytes;
-  return (
-    <div className="app-shell">
-      <aside className="sidebar">
-        <div className="brand"><div className="brand-mark">S</div><div><strong>小鲁</strong><span>System Lens</span></div></div>
-        <nav>{navItems.map(item => <button key={item.id} className={tab === item.id ? "active" : ""} onClick={() => setTab(item.id)}><b>{item.icon}</b>{item.label}</button>)}</nav>
-        <div className="privacy-card"><span>本地优先</span><p>系统数据只在本机处理，不上传云端。</p></div>
-        <div className="version">v0.1.0 · 只读模式</div>
-      </aside>
-
-      <main>
-        <header><div><p className="eyebrow">{snapshot.hostName}</p><h1>{navItems.find(item => item.id === tab)?.label}</h1></div><div className="header-actions">{!isDesktopRuntime() && <span className="demo-badge">浏览器演示数据</span>}<button className="refresh" onClick={refresh} disabled={loading}>{loading ? "刷新中…" : "刷新"}</button></div></header>
-        {error && <div className="error-banner">上次刷新失败：{error}</div>}
-
-        {tab === "overview" && <>
-          <section className="hero-card"><div><span className="status-dot" /> 系统运行正常<h2>{snapshot.osName} {snapshot.osVersion}</h2><p>{snapshot.cpu.brand} · {snapshot.memory.totalBytes ? bytes(snapshot.memory.totalBytes) : "内存未知"}</p><div className="hero-meta"><span>架构 {snapshot.architecture}</span><span>已运行 {duration(snapshot.uptimeSeconds)}</span><span>内核 {snapshot.kernelVersion}</span></div></div><div className="rings"><Ring value={snapshot.cpu.usagePercent} label="CPU" color="#3269f5" /><Ring value={snapshot.memory.usagePercent} label="内存" color="#25b8a6" /></div></section>
-          <section className="metric-grid"><MetricCard title="CPU 使用率" value={`${snapshot.cpu.usagePercent.toFixed(1)}%`} detail={`${snapshot.cpu.logicalCores} 逻辑核心 · ${snapshot.cpu.frequencyMhz} MHz`} /><MetricCard title="可用内存" value={bytes(memoryFree)} detail={`共 ${bytes(snapshot.memory.totalBytes)}`} tone="green" /><MetricCard title="磁盘数量" value={String(snapshot.disks.length)} detail="本地与可移动存储" tone="purple" /><MetricCard title="活跃进程" value={String(snapshot.processes.length)} detail="展示资源占用最高项" tone="orange" /></section>
-          <section className="panel"><div className="panel-head"><div><span className="eyebrow">STORAGE</span><h3>存储空间</h3></div><button onClick={() => setTab("hardware")}>查看详情</button></div>{snapshot.disks.slice(0, 3).map(disk => <DiskRow key={`${disk.name}-${disk.mountPoint}`} disk={disk} />)}</section>
-        </>}
-
-        {tab === "hardware" && <section className="content-grid"><article className="panel detail-card"><span className="eyebrow">PROCESSOR</span><h3>{snapshot.cpu.brand}</h3><dl><div><dt>逻辑核心</dt><dd>{snapshot.cpu.logicalCores}</dd></div><div><dt>当前频率</dt><dd>{snapshot.cpu.frequencyMhz} MHz</dd></div><div><dt>当前负载</dt><dd>{snapshot.cpu.usagePercent.toFixed(1)}%</dd></div></dl></article><article className="panel detail-card"><span className="eyebrow">MEMORY</span><h3>{bytes(snapshot.memory.totalBytes)} 内存</h3><dl><div><dt>已使用</dt><dd>{bytes(snapshot.memory.usedBytes)}</dd></div><div><dt>可用</dt><dd>{bytes(memoryFree)}</dd></div><div><dt>使用率</dt><dd>{snapshot.memory.usagePercent.toFixed(1)}%</dd></div></dl></article><article className="panel full"><div className="panel-head"><div><span className="eyebrow">DISKS</span><h3>磁盘与分区</h3></div><span>{snapshot.disks.length} 个</span></div>{snapshot.disks.map(disk => <DiskRow key={`${disk.name}-${disk.mountPoint}`} disk={disk} />)}</article></section>}
-
-        {tab === "processes" && <section className="panel"><div className="panel-head"><div><span className="eyebrow">PROCESSES</span><h3>资源占用最高的进程</h3></div><span>每 5 秒更新</span></div><div className="process-table"><div className="process-row heading"><span>名称</span><span>PID</span><span>CPU</span><span>内存</span></div>{snapshot.processes.map(process => <div className="process-row" key={process.pid}><strong>{process.name}</strong><span>{process.pid}</span><span>{process.cpuPercent.toFixed(1)}%</span><span>{bytes(process.memoryBytes)}</span></div>)}</div></section>}
-
-        {tab === "report" && <section className="report-layout"><article className="panel"><span className="eyebrow">PRIVACY-FIRST REPORT</span><h3>诊断报告</h3><p className="muted">报告包含系统、CPU、内存、磁盘和进程摘要。主机名与 PID 会在导出时自动移除。</p><ul className="check-list"><li>不包含文件内容</li><li>不包含浏览历史</li><li>不上传网络</li><li>导出前可预览</li></ul><button className="primary" onClick={downloadReport}>导出 JSON 报告</button></article><pre className="report-preview">{report}</pre></section>}
-      </main>
-    </div>
-  );
+  return <div className="shell"><aside className="side"><Group gap="sm" className="logo"><ThemeIcon size={42} radius={14} variant="gradient" gradient={{ from: "indigo", to: "cyan" }}><IconDeviceDesktop/></ThemeIcon><Box><Text fw={800}>小鲁</Text><Text size="xs" c="dimmed">SYSTEM LENS</Text></Box></Group><Stack gap={5} mt="xl">{nav.map(([id, label, Icon]) => <NavLink key={id} active={tab === id} label={label} leftSection={<Icon size={19}/>} onClick={() => setTab(id)} />)}</Stack><Paper className="privacy" radius="lg" p="md"><Group gap="xs"><IconShieldCheck size={18}/><Text fw={700} size="sm">本地优先</Text></Group><Text size="xs" c="dimmed" mt="xs">数据仅在本机采集和处理。</Text></Paper><Text size="xs" c="dimmed">v0.2.0 · 托盘常驻</Text></aside>
+    <main className="content"><Group justify="space-between" mb="xl"><Box><Text size="sm" c="dimmed">{snapshot.hostName} · {snapshot.osName}</Text><Title order={1}>{nav.find(x => x[0] === tab)?.[1]}</Title></Box><Group>{!isDesktopRuntime() && <Badge variant="light">浏览器演示</Badge>}<Tooltip label="立即刷新"><ActionIcon size="lg" variant="light" onClick={() => void refresh()} loading={busy}><IconRefresh size={19}/></ActionIcon></Tooltip></Group></Group>{error && <Alert icon={<IconAlertCircle/>} color="red" withCloseButton onClose={() => setError(null)} mb="md">{error}</Alert>}
+      {tab === "overview" && <Stack gap="md"><SimpleGrid cols={{ base: 2, xl: 4 }}><Stat icon={IconCpu} label="CPU 使用率" value={`${snapshot.cpu.usagePercent.toFixed(1)}%`} hint={`${snapshot.cpu.logicalCores} 线程 · ${snapshot.cpu.frequencyMhz} MHz`} color="indigo"/><Stat icon={IconServer} label="内存使用率" value={`${snapshot.memory.usagePercent.toFixed(1)}%`} hint={`${bytes(snapshot.memory.usedBytes)} / ${bytes(snapshot.memory.totalBytes)}`} color="grape"/><Stat icon={IconArrowDown} label="实时下载" value={speed(snapshot.network.downloadBytesPerSec)} hint={`累计 ${bytes(snapshot.network.totalReceivedBytes)}`} color="teal"/><Stat icon={IconArrowUp} label="实时上传" value={speed(snapshot.network.uploadBytesPerSec)} hint={`累计 ${bytes(snapshot.network.totalTransmittedBytes)}`} color="yellow"/></SimpleGrid><SimpleGrid cols={{ base: 1, lg: 2 }}><Card className="glass-card" radius="lg"><Group justify="space-between" mb="sm"><Box><Text fw={700}>系统负载</Text><Text size="xs" c="dimmed">最近 60 秒</Text></Box><Badge variant="dot">实时</Badge></Group><PerformanceChart data={history} mode="system"/></Card><Card className="glass-card" radius="lg"><Group justify="space-between" mb="sm"><Box><Text fw={700}>网络吞吐</Text><Text size="xs" c="dimmed">MB/s · {snapshot.network.interfaces} 个接口</Text></Box><IconNetwork size={21}/></Group><PerformanceChart data={history} mode="network"/></Card></SimpleGrid><Card className="glass-card" radius="lg"><Group justify="space-between" mb="md"><Box><Text fw={700}>磁盘活动</Text><Text size="xs" c="dimmed">读取 {speed(diskRead)} · 写入 {speed(diskWrite)}</Text></Box><Badge color="gray">运行 {duration(snapshot.uptimeSeconds)}</Badge></Group>{snapshot.disks.map(d => { const used = d.totalBytes - d.availableBytes; return <Box key={d.mountPoint} mb="md"><Group justify="space-between"><Text size="sm" fw={600}>{d.name || d.mountPoint} · {d.fileSystem}</Text><Text size="xs" c="dimmed">{bytes(used)} / {bytes(d.totalBytes)}</Text></Group><Progress mt={8} value={d.totalBytes ? used / d.totalBytes * 100 : 0}/></Box>; })}</Card></Stack>}
+      {tab === "hardware" && <HardwarePanel details={hardware}/>}
+      {tab === "processes" && <Card className="glass-card" radius="lg" p={0}><ScrollArea h="calc(100vh - 180px)"><Table stickyHeader highlightOnHover verticalSpacing="sm"><Table.Thead><Table.Tr><Table.Th>进程</Table.Th><Table.Th>PID</Table.Th><Table.Th>CPU</Table.Th><Table.Th>内存</Table.Th></Table.Tr></Table.Thead><Table.Tbody>{snapshot.processes.map(p => <Table.Tr key={p.pid}><Table.Td><Text fw={600}>{p.name}</Text></Table.Td><Table.Td>{p.pid}</Table.Td><Table.Td>{p.cpuPercent.toFixed(1)}%</Table.Td><Table.Td>{bytes(p.memoryBytes)}</Table.Td></Table.Tr>)}</Table.Tbody></Table></ScrollArea></Card>}
+      {tab === "startup" && <Stack><Alert color="blue" icon={<IconPlayerPause/>}>当前用户启动项可以启停；系统级启动项只读，避免未经授权修改全局配置。</Alert>{startup.map(item => <Card key={`${item.scope}-${item.name}-${item.enabled}`} className="glass-card" radius="lg"><Group justify="space-between" wrap="nowrap"><Box className="startup-command"><Group gap="xs"><Text fw={700}>{item.name}</Text><Badge size="xs" variant="light">{item.scope}</Badge></Group><Text size="xs" c="dimmed" truncate>{item.command}</Text></Box><Switch checked={item.enabled} disabled={!item.editable} onChange={e => void toggleStartup(item, e.currentTarget.checked)} label={item.enabled ? "已启用" : "已禁用"}/></Group></Card>)}</Stack>}
+      {tab === "report" && <SimpleGrid cols={{ base: 1, lg: 2 }}><Card className="glass-card" radius="lg"><IconShieldCheck size={40} color="#748ffc"/><Title order={2} mt="md">隐私优先诊断报告</Title><Text c="dimmed" mt="sm">包含系统、硬件、存储、网络和进程摘要。导出时自动移除主机名和 PID。</Text><Button mt="xl" leftSection={<IconDownload size={18}/>} onClick={downloadReport}>导出 JSON 报告</Button></Card><pre className="report">{report}</pre></SimpleGrid>}
+    </main></div>;
 }
-
-export default App;
