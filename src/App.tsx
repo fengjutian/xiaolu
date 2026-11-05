@@ -61,6 +61,7 @@ import {
   LineChart,
   ResponsiveContainer,
   Tooltip as ChartTooltip,
+  Treemap,
   XAxis,
   YAxis,
 } from "recharts";
@@ -82,6 +83,7 @@ import {
   isDesktopRuntime,
   runBenchmark,
   scanCleanupCandidates,
+  scanDirectory,
   scanDriverUpdates,
   scanDuplicates,
   scanLargeFiles,
@@ -95,6 +97,7 @@ import type {
   DriverInventory,
   DriverUpdate,
   DiagnosticReport,
+  DirectoryListing,
   DuplicateScan,
   EventLogResult,
   HardwareDetails,
@@ -1236,6 +1239,9 @@ function StoragePanel() {
   const [cleanup, setCleanup] = useState<CleanupPreview | null>(null);
   const [loadingCleanup, setLoadingCleanup] = useState(false);
   const [cleanupError, setCleanupError] = useState<string | null>(null);
+  const [listing, setListing] = useState<DirectoryListing | null>(null);
+  const [loadingDirectory, setLoadingDirectory] = useState(false);
+  const [directoryError, setDirectoryError] = useState<string | null>(null);
   const scan = async (kind: StorageScan["kind"]) => {
     setRunning(kind);
     setFailure(null);
@@ -1281,10 +1287,26 @@ function StoragePanel() {
       setLoadingCleanup(false);
     }
   };
+  const openDirectory = async (relative: string) => {
+    setLoadingDirectory(true);
+    setDirectoryError(null);
+    try {
+      setListing(await scanDirectory(deepKind, relative, 200));
+    } catch (error) {
+      setDirectoryError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoadingDirectory(false);
+    }
+  };
   const maxDirectoryBytes = Math.max(
     1,
     ...(large?.directories.map((item) => item.bytes) ?? []),
   );
+  const storageLabel = {
+    downloads: "下载",
+    documents: "文档",
+    desktop: "桌面",
+  }[deepKind];
   return (
     <Stack gap="md">
       <Alert color="blue" icon={<IconShieldCheck />}>
@@ -1483,6 +1505,7 @@ function StoragePanel() {
                 setDeepKind(value as StorageScan["kind"]);
                 setLarge(null);
                 setDupes(null);
+                setListing(null);
               }}
               data={[
                 { value: "downloads", label: "下载" },
@@ -1644,6 +1667,130 @@ function StoragePanel() {
               </Stack>
             )}
           </Box>
+        )}
+      </Card>
+
+      <Card className="glass-card" radius="lg">
+        <Group justify="space-between" align="flex-start" wrap="wrap">
+          <Box>
+            <Text fw={800}>目录钻取</Text>
+            <Text size="xs" c="dimmed">
+              仅在{storageLabel}目录内导航；Treemap 面积代表占用，不显示文件内容。
+            </Text>
+          </Box>
+          <Group gap="sm">
+            <Button
+              size="xs"
+              loading={loadingDirectory}
+              onClick={() => void openDirectory(listing?.relativePath ?? "")}
+            >
+              打开目录
+            </Button>
+            {listing?.parentRelativePath != null && (
+              <Button
+                size="xs"
+                variant="light"
+                onClick={() => void openDirectory(listing.parentRelativePath ?? "")}
+              >
+                返回上级
+              </Button>
+            )}
+          </Group>
+        </Group>
+        {listing && (
+          <Text size="xs" c="dimmed" ff="monospace" mt="xs" truncate>
+            {listing.root}\{listing.relativePath}
+          </Text>
+        )}
+        {directoryError && (
+          <Alert color="red" icon={<IconAlertCircle />} mt="md">
+            {directoryError}
+          </Alert>
+        )}
+        {listing && (
+          <>
+            <Group gap="lg" mt="md">
+              <Badge variant="light">{bytes(listing.totalBytes)}</Badge>
+              <Text size="xs" c="dimmed">
+                {listing.totalFiles} 个文件 · {listing.children.length} 项
+              </Text>
+              {listing.truncated && <Badge color="orange">已截断</Badge>}
+              {listing.errorCount > 0 && (
+                <Text size="xs" c="orange">
+                  {listing.errorCount} 个读取错误
+                </Text>
+              )}
+            </Group>
+            <SimpleGrid cols={{ base: 1, lg: 2 }} mt="md">
+              <Box h={300}>
+                {listing.children.length === 0 ? (
+                  <Center h={300}>
+                    <Text c="dimmed" size="sm">
+                      目录为空
+                    </Text>
+                  </Center>
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <Treemap
+                      data={listing.children.map((child) => ({
+                        name: child.name,
+                        size: Math.max(child.bytes, 1),
+                        isDir: child.isDir,
+                      }))}
+                      dataKey="size"
+                      nameKey="name"
+                      stroke="#161a24"
+                      fill="#4c6ef5"
+                      aspectRatio={4 / 3}
+                    />
+                  </ResponsiveContainer>
+                )}
+              </Box>
+              <Table highlightOnHover verticalSpacing="xs">
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>名称</Table.Th>
+                    <Table.Th>类型</Table.Th>
+                    <Table.Th>占用</Table.Th>
+                    <Table.Th>文件</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {listing.children.map((child) => (
+                    <Table.Tr
+                      key={child.path}
+                      style={{ cursor: child.isDir ? "pointer" : "default" }}
+                      onClick={() => {
+                        if (child.isDir) void openDirectory(child.relativePath);
+                      }}
+                    >
+                      <Table.Td>
+                        <Text
+                          size="sm"
+                          fw={child.isDir ? 700 : 400}
+                          truncate
+                          maw={260}
+                        >
+                          {child.name}
+                        </Text>
+                      </Table.Td>
+                      <Table.Td>
+                        <Badge
+                          size="xs"
+                          variant="light"
+                          color={child.isDir ? "indigo" : "gray"}
+                        >
+                          {child.isDir ? "目录" : "文件"}
+                        </Badge>
+                      </Table.Td>
+                      <Table.Td>{bytes(child.bytes)}</Table.Td>
+                      <Table.Td>{child.fileCount}</Table.Td>
+                    </Table.Tr>
+                  ))}
+                </Table.Tbody>
+              </Table>
+            </SimpleGrid>
+          </>
         )}
       </Card>
     </Stack>
@@ -2862,7 +3009,7 @@ export default function App() {
           </Text>
         </Paper>
         <Text size="xs" c="dimmed">
-          v0.20.0 · 事件日志查询
+          v0.21.0 · 目录钻取与 Treemap
         </Text>
       </aside>
       <main className="content">

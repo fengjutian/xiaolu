@@ -412,6 +412,216 @@ pub async fn scan_duplicates(kind: String, limit: u32) -> Result<DuplicateScan, 
     .map_err(|error| format!("重复文件扫描任务失败：{error}"))?
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DirectoryChild {
+    name: String,
+    path: String,
+    relative_path: String,
+    is_dir: bool,
+    bytes: u64,
+    file_count: usize,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DirectoryListing {
+    kind: String,
+    label: String,
+    root: String,
+    relative_path: String,
+    path: String,
+    parent_relative_path: Option<String>,
+    children: Vec<DirectoryChild>,
+    total_bytes: u64,
+    total_files: usize,
+    error_count: usize,
+    truncated: bool,
+}
+
+fn resolve_within(root: &Path, relative: &str) -> Result<PathBuf, String> {
+    let canonical_root = root
+        .canonicalize()
+        .map_err(|error| format!("无法解析目录：{error}"))?;
+    let trimmed = relative.trim().trim_start_matches(|value| value == '\\' || value == '/');
+    let normalized = trimmed.replace('/', "\\");
+    if normalized.split('\\').any(|part| part == "..") {
+        return Err("路径不能包含上级引用".into());
+    }
+    let candidate = if normalized.is_empty() {
+        canonical_root.clone()
+    } else {
+        canonical_root.join(&normalized)
+    };
+    let canonical = candidate
+        .canonicalize()
+        .map_err(|_| "目标目录不存在".to_string())?;
+    if !canonical.starts_with(&canonical_root) {
+        return Err("路径不在允许的目录内".into());
+    }
+    if !canonical.is_dir() {
+        return Err("目标不是目录".into());
+    }
+    Ok(canonical)
+}
+
+fn dir_stats(root: &Path, budget: usize) -> (u64, usize, usize, bool) {
+    let mut bytes = 0u64;
+    let mut files = 0usize;
+    let mut errors = 0usize;
+    let mut truncated = false;
+    for entry in WalkDir::new(root).follow_links(false).into_iter() {
+        let entry = match entry {
+            Ok(value) => value,
+            Err(_) => {
+                errors += 1;
+                continue;
+            }
+        };
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        files += 1;
+        if files > budget {
+            truncated = true;
+            break;
+        }
+        match entry.metadata() {
+            Ok(metadata) => bytes = bytes.saturating_add(metadata.len()),
+            Err(_) => errors += 1,
+        }
+    }
+    (bytes, files, errors, truncated)
+}
+
+fn listing_in(
+    root: &Path,
+    kind: &str,
+    label: &str,
+    relative: &str,
+    limit: usize,
+) -> Result<DirectoryListing, String> {
+    if !root.is_dir() {
+        return Err(format!("{label}目录不存在：{}", root.display()));
+    }
+    let canonical_root = root
+        .canonicalize()
+        .map_err(|error| format!("无法解析目录：{error}"))?;
+    let directory = resolve_within(root, relative)?;
+    let relative_path = directory
+        .strip_prefix(&canonical_root)
+        .unwrap_or(Path::new(""))
+        .to_string_lossy()
+        .replace('/', "\\");
+
+    let mut children = Vec::new();
+    let mut total_bytes = 0u64;
+    let mut total_files = 0usize;
+    let mut error_count = 0usize;
+    let mut truncated = false;
+    let mut scanned = 0usize;
+
+    let entries = std::fs::read_dir(&directory)
+        .map_err(|error| format!("无法读取目录：{error}"))?;
+    for entry in entries {
+        let entry = match entry {
+            Ok(value) => value,
+            Err(_) => {
+                error_count += 1;
+                continue;
+            }
+        };
+        let path = entry.path();
+        let metadata = match entry.metadata() {
+            Ok(value) => value,
+            Err(_) => {
+                error_count += 1;
+                continue;
+            }
+        };
+        let child_relative = path
+            .strip_prefix(&canonical_root)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .replace('/', "\\");
+        if metadata.is_dir() {
+            let (bytes, files, errors, child_truncated) = dir_stats(&path, MAX_FILES.saturating_sub(scanned));
+            scanned += files;
+            error_count += errors;
+            truncated |= child_truncated;
+            total_bytes = total_bytes.saturating_add(bytes);
+            total_files += files;
+            children.push(DirectoryChild {
+                name: entry.file_name().to_string_lossy().into_owned(),
+                path: path.to_string_lossy().into_owned(),
+                relative_path: child_relative,
+                is_dir: true,
+                bytes,
+                file_count: files,
+            });
+        } else if metadata.is_file() {
+            let size = metadata.len();
+            total_bytes = total_bytes.saturating_add(size);
+            total_files += 1;
+            children.push(DirectoryChild {
+                name: entry.file_name().to_string_lossy().into_owned(),
+                path: path.to_string_lossy().into_owned(),
+                relative_path: child_relative,
+                is_dir: false,
+                bytes: size,
+                file_count: 1,
+            });
+        }
+    }
+
+    children.sort_by(|left, right| {
+        right
+            .bytes
+            .cmp(&left.bytes)
+            .then_with(|| left.name.cmp(&right.name))
+    });
+    children.truncate(limit);
+
+    let parent_relative_path = if relative_path.is_empty() {
+        None
+    } else {
+        Some(
+            Path::new(&relative_path)
+                .parent()
+                .map(|parent| parent.to_string_lossy().replace('/', "\\"))
+                .unwrap_or_default(),
+        )
+    };
+
+    Ok(DirectoryListing {
+        kind: kind.into(),
+        label: label.into(),
+        root: canonical_root.to_string_lossy().into_owned(),
+        relative_path,
+        path: directory.to_string_lossy().into_owned(),
+        parent_relative_path,
+        children,
+        total_bytes,
+        total_files,
+        error_count,
+        truncated,
+    })
+}
+
+#[tauri::command]
+pub async fn scan_directory(
+    kind: String,
+    relative: String,
+    limit: u32,
+) -> Result<DirectoryListing, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let (label, root) = target(&kind)?;
+        listing_in(&root, &kind, label, &relative, (limit as usize).clamp(10, 500))
+    })
+    .await
+    .map_err(|error| format!("目录扫描任务失败：{error}"))?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -476,5 +686,55 @@ mod tests {
         let root = temp_root("missing");
         assert!(scan_large_files_in(&root, "downloads", "下载", 1024, 10).is_err());
         assert!(scan_duplicates_in(&root, "downloads", "下载", 10).is_err());
+    }
+
+    #[test]
+    fn lists_directory_children_and_totals() {
+        let root = temp_root("listing");
+        fs::create_dir_all(root.join("big").join("inner")).unwrap();
+        fs::write(root.join("a.txt"), vec![0u8; 1000]).unwrap();
+        fs::write(root.join("big").join("b.bin"), vec![0u8; 2000]).unwrap();
+        fs::write(root.join("big").join("inner").join("c.bin"), vec![0u8; 500]).unwrap();
+
+        let listing = listing_in(&root, "downloads", "下载", "", 50).unwrap();
+        assert_eq!(listing.total_files, 3);
+        assert_eq!(listing.total_bytes, 3500);
+        assert_eq!(listing.children.len(), 2);
+        assert!(listing.parent_relative_path.is_none());
+        let big = listing.children.iter().find(|item| item.name == "big").unwrap();
+        assert!(big.is_dir);
+        assert_eq!(big.bytes, 2500);
+        assert_eq!(big.file_count, 2);
+        assert_eq!(big.relative_path, "big");
+
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn drills_down_and_reports_parent() {
+        let root = temp_root("drill");
+        fs::create_dir_all(root.join("big").join("inner")).unwrap();
+        fs::write(root.join("big").join("b.bin"), vec![0u8; 2000]).unwrap();
+        fs::write(root.join("big").join("inner").join("c.bin"), vec![0u8; 500]).unwrap();
+
+        let listing = listing_in(&root, "downloads", "下载", "big\\inner", 50).unwrap();
+        assert_eq!(listing.relative_path, "big\\inner");
+        assert_eq!(listing.parent_relative_path.as_deref(), Some("big"));
+        assert_eq!(listing.children.len(), 1);
+        assert_eq!(listing.children[0].name, "c.bin");
+
+        let top_level = listing_in(&root, "downloads", "下载", "big", 50).unwrap();
+        assert_eq!(top_level.parent_relative_path.as_deref(), Some(""));
+
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn rejects_path_escape_and_absolute_paths() {
+        let root = temp_root("escape");
+        fs::create_dir_all(&root).unwrap();
+        assert!(listing_in(&root, "downloads", "下载", "..\\Windows", 50).is_err());
+        assert!(listing_in(&root, "downloads", "下载", "C:\\Windows", 50).is_err());
+        fs::remove_dir_all(&root).ok();
     }
 }

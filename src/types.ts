@@ -405,6 +405,29 @@ export interface DuplicateScan {
   truncated: boolean;
 }
 
+export interface DirectoryChild {
+  name: string;
+  path: string;
+  relativePath: string;
+  isDir: boolean;
+  bytes: number;
+  fileCount: number;
+}
+
+export interface DirectoryListing {
+  kind: StorageKind;
+  label: string;
+  root: string;
+  relativePath: string;
+  path: string;
+  parentRelativePath: string | null;
+  children: DirectoryChild[];
+  totalBytes: number;
+  totalFiles: number;
+  errorCount: number;
+  truncated: boolean;
+}
+
 export interface ScheduledTask {
   name: string;
   path: string;

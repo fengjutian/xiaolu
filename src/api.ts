@@ -1,5 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import type { BenchmarkRecord, BenchmarkResult, CleanupPreview, DiagnosticReport, DriverInventory, DriverUpdate, DuplicateScan, EventLogResult, HardwareDetails, LargeFileScan, NetworkDiagnosticReport, ScheduledTaskInventory, SensorHistorySeries, SensorSettings, SensorSnapshot, SensorValue, SoftwareInventory, StartupItem, StorageKind, StorageScan, SystemSnapshot } from "./types";
+import type { BenchmarkRecord, BenchmarkResult, CleanupPreview, DiagnosticReport, DirectoryListing, DriverInventory, DriverUpdate, DuplicateScan, EventLogResult, HardwareDetails, LargeFileScan, NetworkDiagnosticReport, ScheduledTaskInventory, SensorHistorySeries, SensorSettings, SensorSnapshot, SensorValue, SoftwareInventory, StartupItem, StorageKind, StorageScan, SystemSnapshot } from "./types";
 
 const gib = 1024 ** 3;
 
@@ -255,6 +255,43 @@ export async function scanDuplicates(kind: StorageKind, limit = 50): Promise<Dup
     };
   }
   return invoke<DuplicateScan>("scan_duplicates", { kind, limit });
+}
+
+export async function scanDirectory(
+  kind: StorageKind,
+  relative = "",
+  limit = 200,
+): Promise<DirectoryListing> {
+  if (!isTauri()) {
+    const children = relative
+      ? [
+          { name: "installer.exe", path: `C:\\Users\\Demo\\${kind}\\${relative}\\installer.exe`, relativePath: `${relative}\\installer.exe`, isDir: false, bytes: 1.2 * gib, fileCount: 1 },
+          { name: "notes.txt", path: `C:\\Users\\Demo\\${kind}\\${relative}\\notes.txt`, relativePath: `${relative}\\notes.txt`, isDir: false, bytes: 12 * 1024, fileCount: 1 },
+        ]
+      : [
+          { name: "Videos", path: `C:\\Users\\Demo\\${kind}\\Videos`, relativePath: "Videos", isDir: true, bytes: 3.8 * gib, fileCount: 12 },
+          { name: "Installers", path: `C:\\Users\\Demo\\${kind}\\Installers`, relativePath: "Installers", isDir: true, bytes: 2.1 * gib, fileCount: 6 },
+          { name: "readme.txt", path: `C:\\Users\\Demo\\${kind}\\readme.txt`, relativePath: "readme.txt", isDir: false, bytes: 4 * 1024, fileCount: 1 },
+        ];
+    const totalBytes = children.reduce((sum, item) => sum + item.bytes, 0);
+    const totalFiles = children.reduce((sum, item) => sum + item.fileCount, 0);
+    return {
+      kind,
+      label: { downloads: "下载", documents: "文档", desktop: "桌面" }[kind],
+      root: `C:\\Users\\Demo\\${kind}`,
+      relativePath: relative,
+      path: relative ? `C:\\Users\\Demo\\${kind}\\${relative}` : `C:\\Users\\Demo\\${kind}`,
+      parentRelativePath: relative
+        ? relative.split("\\").slice(0, -1).join("\\")
+        : null,
+      children,
+      totalBytes,
+      totalFiles,
+      errorCount: 0,
+      truncated: false,
+    };
+  }
+  return invoke<DirectoryListing>("scan_directory", { kind, relative, limit });
 }
 
 export async function getScheduledTasks(): Promise<ScheduledTaskInventory> {
