@@ -1,7 +1,7 @@
 # 小鲁 System Lens：完整功能规划
 
 版本：0.3 规划稿  
-状态：实施中（0.24.0 NVMe Health Log 直读）
+状态：实施中（0.25.0 WebGPU/D3D12 计算跑分）
 目标平台：Windows 10/11 x64  
 桌面框架：Tauri 2 + React + Rust
 
@@ -127,6 +127,18 @@ v0.24.0 新增（NVMe Health Log 直读）：
 - 普通权限通常返回“需要管理员”，界面给出明确原因与处理建议
 - 无新增依赖：使用最小 kernel32 FFI；解析函数用 512 字节固定样本单测
 - 已知：尚未并入磁盘健康分级；真实数值读取需管理员运行验证
+
+v0.25.0 新增（GPU 计算跑分）：
+
+- GPU 跑分从 WebGL2 升级为 **WebGPU 计算管线**；Windows 上由 Chromium 的 D3D12
+  后端执行，符合“GPU 用 D3D12”的目标
+- 工作负载：2M 个 u32、每线程 1024 次混合运算、8 个批次；读取校验和防止被优化
+- 记录适配器信息（如 `intel / xe-lpg`）、工作负载参数与 backend 标记
+- 分数归一化到与 WebGL2 同数量级，说明中注明“仅同版本比较”
+- WebGPU 不可用或初始化失败时自动回退 WebGL2，并在 note 中标明回退
+- 取消：WebGPU 在批次之间检查取消标志；WebGL2 路径仍不可中断
+- 实机验证：WebView2 提供 `navigator.gpu`，Intel Xe LPG 适配器跑分成功，
+  结果 note 为“WebGPU 计算管线（Windows 由 D3D12 后端执行）”
 
 现有代码入口：
 

@@ -442,7 +442,178 @@ function compileShader(gl: WebGL2RenderingContext, type: number, source: string)
   return shader;
 }
 
-export async function runGpuBenchmark(): Promise<BenchmarkResult> {
+let gpuCancelRequested = false;
+
+/** 请求取消正在运行的 GPU 跑分（WebGPU 分批提交，在批次之间检查）。 */
+export function cancelGpuBenchmark() {
+  gpuCancelRequested = true;
+}
+
+async function runWebGpuBenchmark(gpu: {
+  requestAdapter: (options?: unknown) => Promise<unknown>;
+}): Promise<BenchmarkResult> {
+  const adapter = (await gpu.requestAdapter({
+    powerPreference: "high-performance",
+  })) as {
+    info?: {
+      vendor?: string;
+      architecture?: string;
+      device?: string;
+      description?: string;
+    };
+    requestDevice: () => Promise<unknown>;
+  } | null;
+  if (!adapter) throw new Error("WebGPU 适配器不可用");
+  const device = (await adapter.requestDevice()) as {
+    createBuffer: (options: unknown) => {
+      size: number;
+      mapAsync: (mode: number) => Promise<void>;
+      getMappedRange: () => ArrayBuffer;
+      unmap: () => void;
+      destroy: () => void;
+    };
+    createShaderModule: (options: unknown) => unknown;
+    createComputePipeline: (options: unknown) => {
+      getBindGroupLayout: (index: number) => unknown;
+    };
+    createBindGroup: (options: unknown) => unknown;
+    createCommandEncoder: () => {
+      beginComputePass: () => {
+        setPipeline: (pipeline: unknown) => void;
+        setBindGroup: (index: number, group: unknown) => void;
+        dispatchWorkgroups: (count: number) => void;
+        end: () => void;
+      };
+      copyBufferToBuffer: (
+        source: unknown,
+        sourceOffset: number,
+        destination: unknown,
+        destinationOffset: number,
+        size: number,
+      ) => void;
+      finish: () => unknown;
+    };
+    queue: {
+      submit: (commands: unknown[]) => void;
+      onSubmittedWorkDone: () => Promise<void>;
+    };
+    destroy: () => void;
+  };
+
+  const BUFFER_USAGE_STORAGE = 0x0080;
+  const BUFFER_USAGE_COPY_SRC = 0x0004;
+  const BUFFER_USAGE_COPY_DST = 0x0008;
+  const BUFFER_USAGE_MAP_READ = 0x0001;
+  const MAP_MODE_READ = 0x0001;
+
+  const elements = 1 << 21;
+  const bytes = elements * 4;
+  const iterations = 1024;
+  const batches = 8;
+  const workgroups = Math.ceil(elements / 64);
+
+  const buffer = device.createBuffer({
+    size: bytes,
+    usage: BUFFER_USAGE_STORAGE | BUFFER_USAGE_COPY_SRC | BUFFER_USAGE_COPY_DST,
+  });
+  const readback = device.createBuffer({
+    size: bytes,
+    usage: BUFFER_USAGE_COPY_DST | BUFFER_USAGE_MAP_READ,
+  });
+
+  const shader = device.createShaderModule({
+    code: `
+@group(0) @binding(0) var<storage, read_write> data: array<u32>;
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+  let index = id.x;
+  if (index >= arrayLength(&data)) { return; }
+  var value: u32 = data[index];
+  for (var i: u32 = 0u; i < ${iterations}u; i = i + 1u) {
+    value = value * 1664525u + 1013904223u;
+    value = value ^ (value >> 13u);
+    value = value + id.x;
+  }
+  data[index] = value;
+}`,
+  });
+  const pipeline = device.createComputePipeline({
+    layout: "auto",
+    compute: { module: shader, entryPoint: "main" },
+  });
+  const bindGroup = device.createBindGroup({
+    layout: pipeline.getBindGroupLayout(0),
+    entries: [{ binding: 0, resource: { buffer } }],
+  });
+
+  const dispatch = () => {
+    const encoder = device.createCommandEncoder();
+    const pass = encoder.beginComputePass();
+    pass.setPipeline(pipeline);
+    pass.setBindGroup(0, bindGroup);
+    pass.dispatchWorkgroups(workgroups);
+    pass.end();
+    device.queue.submit([encoder.finish()]);
+  };
+
+  try {
+    dispatch();
+    await device.queue.onSubmittedWorkDone();
+    gpuCancelRequested = false;
+    const started = performance.now();
+    for (let batch = 0; batch < batches; batch += 1) {
+      if (gpuCancelRequested) {
+        throw new Error("BENCHMARK_CANCELLED");
+      }
+      dispatch();
+      await device.queue.onSubmittedWorkDone();
+    }
+    const durationMs = performance.now() - started;
+
+    let checksum = 0;
+    try {
+      const encoder = device.createCommandEncoder();
+      encoder.copyBufferToBuffer(buffer, 0, readback, 0, bytes);
+      device.queue.submit([encoder.finish()]);
+      await readback.mapAsync(MAP_MODE_READ);
+      const mapped = new Uint32Array(readback.getMappedRange().slice(0));
+      for (let index = 0; index < mapped.length; index += 4096) {
+        checksum ^= mapped[index];
+      }
+      readback.unmap();
+    } catch {
+      checksum = 0;
+    }
+
+    const operations = elements * iterations * batches * 4;
+    const opsPerSecond = (operations / Math.max(durationMs, 1)) * 1000;
+    const info = adapter.info ?? {};
+    const renderer =
+      info.description || info.device || info.vendor || "WebGPU 设备";
+    return {
+      schemaVersion: 2,
+      kind: "gpu",
+      label: "GPU 计算（WebGPU / D3D12）",
+      score: opsPerSecond / 40_000_000,
+      unit: "分",
+      durationMs: Math.round(durationMs),
+      details: {
+        elements,
+        iterations,
+        batches,
+        workgroups,
+        opsPerSecond,
+        checksum,
+        backend: 1,
+      },
+      note: `WebGPU 计算管线（Windows 由 D3D12 后端执行）；分数已归一化，仅同版本比较；${renderer}`,
+    };
+  } finally {
+    device.destroy();
+  }
+}
+
+async function runWebGlBenchmark(): Promise<BenchmarkResult> {
   const width = 1024, height = 1024, frames = 90;
   const canvas = document.createElement("canvas");
   canvas.width = width; canvas.height = height;
@@ -464,10 +635,35 @@ export async function runGpuBenchmark(): Promise<BenchmarkResult> {
   const debug = gl.getExtension("WEBGL_debug_renderer_info");
   const renderer = debug ? String(gl.getParameter(debug.UNMASKED_RENDERER_WEBGL)) : String(gl.getParameter(gl.RENDERER));
   gl.deleteProgram(program); gl.deleteShader(vertex); gl.deleteShader(fragment);
-  const result: BenchmarkResult = { schemaVersion: 2, kind: "gpu", label: "GPU 着色器", score: megapixelsPerSecond * 10, unit: "分", durationMs: Math.round(durationMs), details: { megapixelsPerSecond, width, height, frames, shaderIterations: 48 }, note: `WebGL2 离屏着色器；${renderer}` };
+  return { schemaVersion: 2, kind: "gpu", label: "GPU 着色器", score: megapixelsPerSecond * 10, unit: "分", durationMs: Math.round(durationMs), details: { megapixelsPerSecond, width, height, frames, shaderIterations: 48, backend: 0 }, note: `WebGL2 离屏着色器（WebGPU 不可用时的回退）；${renderer}` };
+}
+
+export async function runGpuBenchmark(): Promise<BenchmarkResult> {
+  gpuCancelRequested = false;
+  const gpu = (navigator as unknown as {
+    gpu?: { requestAdapter: (options?: unknown) => Promise<unknown> };
+  }).gpu;
+  let result: BenchmarkResult;
+  if (gpu) {
+    try {
+      result = await runWebGpuBenchmark(gpu);
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message.includes("BENCHMARK_CANCELLED")
+      ) {
+        throw error;
+      }
+      console.warn("WebGPU 跑分失败，回退 WebGL2：", error);
+      result = await runWebGlBenchmark();
+    }
+  } else {
+    result = await runWebGlBenchmark();
+  }
   if (isTauri()) await invoke("save_external_benchmark", { result });
   return result;
 }
+
 
 export function isDesktopRuntime(): boolean {
   return isTauri();

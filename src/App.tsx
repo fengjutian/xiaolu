@@ -69,6 +69,7 @@ import {
   getBenchmarkHistory,
   benchmarkPreflight,
   cancelBenchmark,
+  cancelGpuBenchmark,
   getDriverInventory,
   getDiagnosticReport,
   getHardwareDetails,
@@ -2581,7 +2582,7 @@ const benchmarkKinds: Array<{
     label: "磁盘顺序读写",
     description: "临时创建并删除测试文件（默认 1 GiB，可配置）",
   },
-  { kind: "gpu", label: "GPU 着色器", description: "WebGL2 离屏像素着色器" },
+  { kind: "gpu", label: "GPU 计算", description: "WebGPU 计算（Windows 走 D3D12 后端），失败回退 WebGL2" },
 ];
 
 function BenchmarkPanel() {
@@ -2681,7 +2682,7 @@ function BenchmarkPanel() {
             仅影响磁盘顺序读写；文件在系统临时目录创建并自动删除。
           </Text>
         </Group>
-        {running && running !== "gpu" && (
+        {running && (
           <Button
             size="xs"
             color="red"
@@ -2689,6 +2690,7 @@ function BenchmarkPanel() {
             loading={cancelling}
             onClick={() => {
               setCancelling(true);
+              cancelGpuBenchmark();
               void cancelBenchmark().finally(() => setCancelling(false));
             }}
           >
@@ -3229,7 +3231,7 @@ export default function App() {
           </Text>
         </Paper>
         <Text size="xs" c="dimmed">
-          v0.24.0 · NVMe 健康日志直读
+          v0.25.0 · WebGPU/D3D12 计算跑分
         </Text>
       </aside>
       <main className="content">
