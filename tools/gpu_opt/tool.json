@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "gpu_opt",
+  "name": "显卡性能优化",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "description": "只读查看显卡、驱动日期与电源计划并给出建议",
+  "category": "optimize",
+  "risk": "read_only",
+  "entry": "gpu_opt.exe",
+  "arguments": ["--stdio"],
+  "permissions": {
+    "readPaths": [],
+    "writePaths": [],
+    "registry": [],
+    "network": false,
+    "elevation": "none"
+  },
+  "actions": [{ "id": "preview", "label": "预览", "write": false }],
+  "limits": { "timeoutMs": 60000, "maxOutputBytes": 1048576 },
+  "ui": { "kind": "table" },
+  "rollback": "none",
+  "hash": "",
+  "signature": null
+}

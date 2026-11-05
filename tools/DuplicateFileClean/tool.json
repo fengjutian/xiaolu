@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "DuplicateFileClean",
+  "name": "重复文件清理",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "description": "只读扫描下载/文档/桌面的重复文件并统计可释放空间",
+  "category": "cleanup",
+  "risk": "read_only",
+  "entry": "DuplicateFileClean.exe",
+  "arguments": ["--stdio"],
+  "permissions": {
+    "readPaths": ["%USERPROFILE%\\Downloads", "%USERPROFILE%\\Documents", "%USERPROFILE%\\Desktop"],
+    "writePaths": [],
+    "registry": [],
+    "network": false,
+    "elevation": "none"
+  },
+  "actions": [{ "id": "preview", "label": "预览", "write": false }],
+  "limits": { "timeoutMs": 120000, "maxOutputBytes": 2097152 },
+  "ui": { "kind": "table" },
+  "rollback": "none",
+  "hash": "",
+  "signature": null
+}

@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "ai_cooling",
+  "name": "AI 智能降温",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "description": "只读查看 ACPI 温度与 CPU 负载并给出降温建议",
+  "category": "optimize",
+  "risk": "read_only",
+  "entry": "ai_cooling.exe",
+  "arguments": ["--stdio"],
+  "permissions": {
+    "readPaths": [],
+    "writePaths": [],
+    "registry": [],
+    "network": false,
+    "elevation": "none"
+  },
+  "actions": [{ "id": "preview", "label": "预览", "write": false }],
+  "limits": { "timeoutMs": 60000, "maxOutputBytes": 1048576 },
+  "ui": { "kind": "table" },
+  "rollback": "none",
+  "hash": "",
+  "signature": null
+}

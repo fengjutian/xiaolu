@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "defrag",
+  "name": "磁盘碎片整理",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "description": "只读查看固定卷、物理磁盘介质与 TRIM 状态",
+  "category": "optimize",
+  "risk": "read_only",
+  "entry": "defrag.exe",
+  "arguments": ["--stdio"],
+  "permissions": {
+    "readPaths": [],
+    "writePaths": [],
+    "registry": [],
+    "network": false,
+    "elevation": "none"
+  },
+  "actions": [{ "id": "preview", "label": "预览", "write": false }],
+  "limits": { "timeoutMs": 60000, "maxOutputBytes": 1048576 },
+  "ui": { "kind": "table" },
+  "rollback": "none",
+  "hash": "",
+  "signature": null
+}
