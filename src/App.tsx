@@ -2658,6 +2658,7 @@ function BenchmarkPanel() {
                 <Table.Th>项目</Table.Th>
                 <Table.Th>分数</Table.Th>
                 <Table.Th>耗时</Table.Th>
+                <Table.Th>环境</Table.Th>
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
@@ -2671,6 +2672,31 @@ function BenchmarkPanel() {
                   <Table.Td>{record.result.label}</Table.Td>
                   <Table.Td>{record.result.score.toFixed(0)} 分</Table.Td>
                   <Table.Td>{record.result.durationMs} ms</Table.Td>
+                  <Table.Td>
+                    {record.environment ? (
+                      <Tooltip
+                        multiline
+                        w={320}
+                        label={`${record.environment.osName} ${record.environment.osVersion} · ${(
+                          record.environment.memoryBytes / 1024 ** 3
+                        ).toFixed(1)} GB 内存 · 应用 v${record.environment.appVersion}`}
+                      >
+                        <Box>
+                          <Text size="xs" truncate maw={220}>
+                            {record.environment.cpuBrand}
+                          </Text>
+                          <Text size="xs" c="dimmed">
+                            {record.environment.logicalCores} 线程 · v
+                            {record.environment.appVersion}
+                          </Text>
+                        </Box>
+                      </Tooltip>
+                    ) : (
+                      <Text size="xs" c="dimmed">
+                        旧记录（无环境信息）
+                      </Text>
+                    )}
+                  </Table.Td>
                 </Table.Tr>
               ))}
             </Table.Tbody>
@@ -3072,7 +3098,7 @@ export default function App() {
           </Text>
         </Paper>
         <Text size="xs" c="dimmed">
-          v0.22.0 · 跑分可配置与取消
+          v0.23.0 · 跑分环境记录
         </Text>
       </aside>
       <main className="content">

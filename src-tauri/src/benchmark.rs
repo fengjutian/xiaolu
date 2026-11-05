@@ -31,11 +31,25 @@ pub struct BenchmarkResult {
     note: String,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BenchmarkEnvironment {
+    app_version: String,
+    cpu_brand: String,
+    logical_cores: usize,
+    memory_bytes: u64,
+    os_name: String,
+    os_version: String,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BenchmarkRecord {
     recorded_at_unix_ms: u128,
     result: BenchmarkResult,
+    /// 旧版本记录没有环境字段，反序列化时按 None 处理。
+    #[serde(default)]
+    environment: Option<BenchmarkEnvironment>,
 }
 
 pub struct BenchmarkHistoryLock(pub std::sync::Mutex<()>);
@@ -81,10 +95,45 @@ fn load_history_file(app: &tauri::AppHandle) -> Result<Vec<BenchmarkRecord>, Str
 fn save_result(app: &tauri::AppHandle, result: &BenchmarkResult) -> Result<(), String> {
     let path = history_path(app)?;
     let mut history = load_history_file(app)?;
-    history.push(BenchmarkRecord { recorded_at_unix_ms: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis(), result: result.clone() });
+    history.push(BenchmarkRecord {
+        recorded_at_unix_ms: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis(),
+        result: result.clone(),
+        environment: Some(capture_environment()),
+    });
     if history.len() > 200 { history.drain(0..history.len() - 200); }
     let bytes = serde_json::to_vec_pretty(&history).map_err(|error| format!("无法序列化跑分历史：{error}"))?;
     std::fs::write(path, bytes).map_err(|error| format!("无法保存跑分历史：{error}"))
+}
+
+/// 记录跑分时的硬件与系统环境，便于同版本、同设备之间比较。
+fn capture_environment() -> BenchmarkEnvironment {
+    let system = match sysinfo::System::new_all() {
+        Ok(system) => system,
+        Err(_) => {
+            return BenchmarkEnvironment {
+                app_version: env!("CARGO_PKG_VERSION").into(),
+                cpu_brand: "未知处理器".into(),
+                logical_cores: 0,
+                memory_bytes: 0,
+                os_name: "Windows".into(),
+                os_version: String::new(),
+            }
+        }
+    };
+    let cpu_brand = system
+        .cpus()
+        .first()
+        .map(|cpu| cpu.brand().trim().to_string())
+        .filter(|brand| !brand.is_empty())
+        .unwrap_or_else(|| "未知处理器".into());
+    BenchmarkEnvironment {
+        app_version: env!("CARGO_PKG_VERSION").into(),
+        cpu_brand,
+        logical_cores: system.cpus().len(),
+        memory_bytes: system.total_memory(),
+        os_name: sysinfo::System::name().unwrap_or_else(|_| "Windows".into()),
+        os_version: sysinfo::System::os_version().unwrap_or_default(),
+    }
 }
 
 fn integer_workload(iterations: u64, mut value: u64, cancel: &AtomicBool) -> Result<u64, String> {
@@ -359,5 +408,43 @@ mod tests {
             .max_temperature_c
             .map(|value| value.is_finite())
             .unwrap_or(true));
+    }
+
+    #[test]
+    fn environment_has_cpu_and_version() {
+        let environment = capture_environment();
+        assert_eq!(environment.app_version, env!("CARGO_PKG_VERSION"));
+        assert!(environment.logical_cores > 0);
+        assert!(!environment.cpu_brand.is_empty());
+        assert!(!environment.os_name.is_empty());
+    }
+
+    #[test]
+    fn legacy_record_without_environment_parses() {
+        let json = r#"{"recordedAtUnixMs":1,"result":{"schemaVersion":1,"kind":"cpu-single","label":"x","score":1.0,"unit":"分","durationMs":1,"details":{},"note":""}}"#;
+        let record: BenchmarkRecord = serde_json::from_str(json).unwrap();
+        assert!(record.environment.is_none());
+    }
+
+    #[test]
+    fn record_serializes_environment() {
+        let record = BenchmarkRecord {
+            recorded_at_unix_ms: 1,
+            result: BenchmarkResult {
+                schema_version: SCHEMA_VERSION,
+                kind: "cpu-single".into(),
+                label: "CPU 单核".into(),
+                score: 1.0,
+                unit: "分".into(),
+                duration_ms: 1,
+                details: BTreeMap::new(),
+                note: String::new(),
+            },
+            environment: Some(capture_environment()),
+        };
+        let json = serde_json::to_string(&record).unwrap();
+        assert!(json.contains("\"environment\""));
+        assert!(json.contains("\"cpuBrand\""));
+        assert!(json.contains("\"appVersion\""));
     }
 }

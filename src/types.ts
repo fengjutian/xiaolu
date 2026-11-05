@@ -260,6 +260,16 @@ export interface BenchmarkResult {
 export interface BenchmarkRecord {
   recordedAtUnixMs: number;
   result: BenchmarkResult;
+  environment: BenchmarkEnvironment | null;
+}
+
+export interface BenchmarkEnvironment {
+  appVersion: string;
+  cpuBrand: string;
+  logicalCores: number;
+  memoryBytes: number;
+  osName: string;
+  osVersion: string;
 }
 
 export interface BenchmarkPreflight {

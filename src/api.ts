@@ -195,7 +195,31 @@ export async function cancelBenchmark(): Promise<void> {
 }
 
 export async function getBenchmarkHistory(): Promise<BenchmarkRecord[]> {
-  if (!isTauri()) return [];
+  if (!isTauri()) {
+    return [
+      {
+        recordedAtUnixMs: Date.now() - 3_600_000,
+        result: {
+          schemaVersion: 1,
+          kind: "cpu-single",
+          label: "CPU 单核",
+          score: 8560,
+          unit: "分",
+          durationMs: 1260,
+          details: { throughput: 85.6 },
+          note: "浏览器演示结果",
+        },
+        environment: {
+          appVersion: "0.23.0",
+          cpuBrand: "演示处理器",
+          logicalCores: 16,
+          memoryBytes: 32 * gib,
+          osName: "Windows",
+          osVersion: "11 Pro",
+        },
+      },
+    ];
+  }
   return invoke<BenchmarkRecord[]>("get_benchmark_history");
 }
 
