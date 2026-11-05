@@ -10,28 +10,34 @@ fn scan() -> Result<Value, ToolError> {
     let script = r#"
 [Console]::OutputEncoding=[Text.Encoding]::UTF8
 $drivers=@()
-Get-CimInstance Win32_PnPSignedDriver -ErrorAction SilentlyContinue | ForEach-Object {
-  $drivers += @{id=[string]$_.DeviceID; version=[string]$_.DriverVersion; name=[string]$_.DeviceName; signed=[bool]$_.IsSigned; error=[int]$_.ConfigManagerErrorCode}
-}
 $problems=@()
-$drivers | Where-Object { (-not $_.signed) -or ($_.error -ne 0) } | Select-Object -First 30 | ForEach-Object {
-  $problems += $_
+Get-CimInstance Win32_PnPSignedDriver -ErrorAction SilentlyContinue | ForEach-Object {
+  $name=[string]$_.DeviceName
+  if([string]::IsNullOrWhiteSpace($name)){ return }
+  $id=[string]$_.DeviceID
+  $d=@{id=$id; version=[string]$_.DriverVersion; name=$name; signed=[bool]$_.IsSigned; error=[int]$_.ConfigManagerErrorCode}
+  $drivers += $d
+  if(((-not $d.signed) -or ($d.error -ne 0)) -and $problems.Count -lt 30){ $problems += $d }
 }
 $updates=@()
+$wuError=''
 try {
   $session=New-Object -ComObject Microsoft.Update.Session
   $searcher=$session.CreateUpdateSearcher()
   $result=$searcher.Search("IsInstalled=0 and Type='Driver'")
   foreach($u in $result.Updates){
-    $updates += @{
-      title=[string]$u.Title
-      version=if($u.DriverVerVersion){[string]$u.DriverVerVersion}else{''}
-      hw=if($u.DriverHardwareID){[string]$u.DriverHardwareID}else{''}
-      signed=if($null -eq $u.IsSigned){$null}else{[bool]$u.IsSigned}
-      class=if($u.DriverClass){[string]$u.DriverClass}else{''}
-    }
+    try {
+      $updates += @{
+        title=[string]$u.Title
+        version=if($u.DriverVerVersion){[string]$u.DriverVerVersion}else{''}
+        hw=if($u.DriverHardwareID){[string]$u.DriverHardwareID}else{''}
+        signed=if($null -eq $u.IsSigned){$null}else{[bool]$u.IsSigned}
+        class=if($u.DriverClass){[string]$u.DriverClass}else{''}
+      }
+    } catch {}
   }
-} catch {}
+} catch { $wuError=[string]$_.Exception.Message }
+@{drivers=@($drivers); problems=@($problems); updates=@($updates); wuError=$wuError} | ConvertTo-Json -Depth 5 -Compress
 @{drivers=@($drivers); problems=@($problems); updates=@($updates)} | ConvertTo-Json -Depth 5 -Compress
 "#;
     let output = Command::new("powershell.exe")
@@ -45,7 +51,14 @@ try {
             String::from_utf8_lossy(&output.stderr).trim().to_string(),
         ));
     }
-    let payload: Value = serde_json::from_slice(&output.stdout)
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json_line = stdout
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with('{'))
+        .last()
+        .ok_or_else(|| ToolError::new("INTERNAL", "驱动预检没有返回 JSON"))?;
+    let payload: Value = serde_json::from_str(json_line)
         .map_err(|error| ToolError::new("INTERNAL", format!("无法解析驱动预检：{error}")))?;
     let drivers = payload
         .get("drivers")
@@ -62,6 +75,11 @@ try {
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
+    let wu_error = payload
+        .get("wuError")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
 
     let mut rows = Vec::new();
     for problem in &problems {
@@ -136,11 +154,20 @@ try {
         }));
     }
 
+    let mut notes = vec![
+        json!("只读预检：只读取驱动清单与 Windows Update 候选，不下载、不安装、不回滚。"),
+        json!("Windows Update 常不返回签名标记，本工具不把“未知”当作未签名。"),
+        json!("安装与驱动回滚需后续版本单独授权并提供恢复点。"),
+    ];
+    if !wu_error.is_empty() {
+        notes.push(json!(format!("Windows Update 查询失败：{wu_error}")));
+    }
+
     Ok(table(
         json!([
             item("驱动总数", drivers.len().to_string()),
             item("异常驱动", problems.len().to_string()),
-            item("更新候选", updates.len().to_string()),
+            item("更新候选", if wu_error.is_empty() { updates.len().to_string() } else { "查询失败".to_string() }),
             item("可更新", applicable.to_string()),
         ]),
         json!([
@@ -150,11 +177,7 @@ try {
             column("detail", "详情"),
         ]),
         Value::Array(rows),
-        json!([
-            "只读预检：只读取驱动清单与 Windows Update 候选，不下载、不安装、不回滚。",
-            "Windows Update 常不返回签名标记，本工具不把“未知”当作未签名。",
-            "安装与驱动回滚需后续版本单独授权并提供恢复点。",
-        ]),
+        Value::Array(notes),
     ))
 }
 
