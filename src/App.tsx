@@ -80,6 +80,7 @@ import {
   getSystemSnapshot,
   isDesktopRuntime,
   runBenchmark,
+  scanCleanupCandidates,
   scanDriverUpdates,
   scanDuplicates,
   scanLargeFiles,
@@ -89,6 +90,7 @@ import {
 import type {
   BenchmarkRecord,
   BenchmarkResult,
+  CleanupPreview,
   DriverInventory,
   DriverUpdate,
   DiagnosticReport,
@@ -1184,6 +1186,9 @@ function StoragePanel() {
   const [loadingLarge, setLoadingLarge] = useState(false);
   const [loadingDupes, setLoadingDupes] = useState(false);
   const [deepFailure, setDeepFailure] = useState<string | null>(null);
+  const [cleanup, setCleanup] = useState<CleanupPreview | null>(null);
+  const [loadingCleanup, setLoadingCleanup] = useState(false);
+  const [cleanupError, setCleanupError] = useState<string | null>(null);
   const scan = async (kind: StorageScan["kind"]) => {
     setRunning(kind);
     setFailure(null);
@@ -1218,6 +1223,17 @@ function StoragePanel() {
       setLoadingDupes(false);
     }
   };
+  const runCleanup = async () => {
+    setLoadingCleanup(true);
+    setCleanupError(null);
+    try {
+      setCleanup(await scanCleanupCandidates());
+    } catch (error) {
+      setCleanupError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoadingCleanup(false);
+    }
+  };
   const maxDirectoryBytes = Math.max(
     1,
     ...(large?.directories.map((item) => item.bytes) ?? []),
@@ -1228,6 +1244,91 @@ function StoragePanel() {
         只扫描下载、文档和桌面三个标准目录；结果按扩展名聚合，不显示文件名，也不会删除文件。每次最多统计
         25 万个文件。
       </Alert>
+
+      <Card className="glass-card" radius="lg">
+        <Group justify="space-between" align="flex-start" wrap="wrap">
+          <Box>
+            <Text fw={800}>清理候选（只读预览）</Text>
+            <Text size="xs" c="dimmed">
+              统计常见可清理位置的占用，不会删除任何文件；本版本不提供清理动作。
+            </Text>
+          </Box>
+          <Button
+            size="xs"
+            loading={loadingCleanup}
+            onClick={() => void runCleanup()}
+          >
+            扫描清理候选
+          </Button>
+        </Group>
+        {cleanupError && (
+          <Alert color="red" icon={<IconAlertCircle />} mt="md">
+            {cleanupError}
+          </Alert>
+        )}
+        {cleanup && (
+          <>
+            <Group gap="lg" mt="md">
+              <Badge variant="light">合计 {bytes(cleanup.totalBytes)}</Badge>
+              <Text size="xs" c="dimmed">
+                {cleanup.totalFiles} 个文件 · {cleanup.source}
+              </Text>
+            </Group>
+            <Table mt="sm" highlightOnHover verticalSpacing="xs">
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>位置</Table.Th>
+                  <Table.Th>占用</Table.Th>
+                  <Table.Th>文件</Table.Th>
+                  <Table.Th>权限</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {cleanup.candidates.map((candidate) => (
+                  <Table.Tr key={candidate.id}>
+                    <Table.Td>
+                      <Text fw={600} size="sm">
+                        {candidate.label}
+                      </Text>
+                      <Text size="xs" c="dimmed" truncate maw={520}>
+                        {candidate.path || "无法解析路径"}
+                      </Text>
+                      <Text size="xs" c="dimmed">
+                        {candidate.note}
+                      </Text>
+                    </Table.Td>
+                    <Table.Td>
+                      {candidate.exists ? bytes(candidate.bytes) : "不存在"}
+                    </Table.Td>
+                    <Table.Td>
+                      <Text size="sm">{candidate.fileCount}</Text>
+                      {candidate.errorCount > 0 && (
+                        <Text size="xs" c="orange">
+                          {candidate.errorCount} 个读取错误
+                        </Text>
+                      )}
+                      {candidate.truncated && (
+                        <Badge size="xs" color="orange">
+                          已截断
+                        </Badge>
+                      )}
+                    </Table.Td>
+                    <Table.Td>
+                      <Badge
+                        size="xs"
+                        variant="light"
+                        color={candidate.requiresAdmin ? "orange" : "gray"}
+                      >
+                        {candidate.requiresAdmin ? "需要管理员" : "普通权限"}
+                      </Badge>
+                    </Table.Td>
+                  </Table.Tr>
+                ))}
+              </Table.Tbody>
+            </Table>
+          </>
+        )}
+      </Card>
       {failure && (
         <Alert color="red" icon={<IconAlertCircle />}>
           {failure}
@@ -2535,7 +2636,7 @@ export default function App() {
           </Text>
         </Paper>
         <Text size="xs" c="dimmed">
-          v0.16.0 · 计划任务视图
+          v0.17.0 · 清理候选预览
         </Text>
       </aside>
       <main className="content">

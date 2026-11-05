@@ -7,6 +7,7 @@ mod network_diagnostics;
 mod software;
 mod storage_analysis;
 mod scheduled_tasks;
+mod cleanup_preview;
 
 use tauri::{menu::{Menu, MenuItem}, tray::TrayIconBuilder, Manager};
 
@@ -40,7 +41,7 @@ pub fn run() {
                 let _ = window.hide();
             }
         })
-        .invoke_handler(tauri::generate_handler![system::get_system_snapshot, system::get_hardware_details, system::get_startup_items, system::set_startup_enabled, sensors::get_sensor_snapshot, sensors::get_sensor_history, sensors::get_sensor_settings, sensors::save_sensor_settings, drivers::get_driver_inventory, drivers::scan_driver_updates, benchmark::run_benchmark, benchmark::get_benchmark_history, benchmark::save_external_benchmark, diagnostics::get_diagnostic_report, network_diagnostics::get_network_diagnostics, software::get_software_inventory, storage_analysis::scan_storage, storage_analysis::scan_large_files, storage_analysis::scan_duplicates, scheduled_tasks::get_scheduled_tasks])
+        .invoke_handler(tauri::generate_handler![system::get_system_snapshot, system::get_hardware_details, system::get_startup_items, system::set_startup_enabled, sensors::get_sensor_snapshot, sensors::get_sensor_history, sensors::get_sensor_settings, sensors::save_sensor_settings, drivers::get_driver_inventory, drivers::scan_driver_updates, benchmark::run_benchmark, benchmark::get_benchmark_history, benchmark::save_external_benchmark, diagnostics::get_diagnostic_report, network_diagnostics::get_network_diagnostics, software::get_software_inventory, storage_analysis::scan_storage, storage_analysis::scan_large_files, storage_analysis::scan_duplicates, scheduled_tasks::get_scheduled_tasks, cleanup_preview::scan_cleanup_candidates])
         .run(tauri::generate_context!())
         .expect("failed to run System Lens");
 }

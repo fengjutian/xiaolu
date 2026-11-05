@@ -1,5 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import type { BenchmarkRecord, BenchmarkResult, DiagnosticReport, DriverInventory, DriverUpdate, DuplicateScan, HardwareDetails, LargeFileScan, NetworkDiagnosticReport, ScheduledTaskInventory, SensorHistorySeries, SensorSettings, SensorSnapshot, SensorValue, SoftwareInventory, StartupItem, StorageKind, StorageScan, SystemSnapshot } from "./types";
+import type { BenchmarkRecord, BenchmarkResult, CleanupPreview, DiagnosticReport, DriverInventory, DriverUpdate, DuplicateScan, HardwareDetails, LargeFileScan, NetworkDiagnosticReport, ScheduledTaskInventory, SensorHistorySeries, SensorSettings, SensorSnapshot, SensorValue, SoftwareInventory, StartupItem, StorageKind, StorageScan, SystemSnapshot } from "./types";
 
 const gib = 1024 ** 3;
 
@@ -276,6 +276,25 @@ export async function getScheduledTasks(): Promise<ScheduledTaskInventory> {
     };
   }
   return invoke<ScheduledTaskInventory>("get_scheduled_tasks");
+}
+
+export async function scanCleanupCandidates(): Promise<CleanupPreview> {
+  if (!isTauri()) {
+    const candidates = [
+      { id: "user-temp", label: "用户临时文件", path: "C:\\Users\\Demo\\AppData\\Local\\Temp", exists: true, bytes: 3.4 * gib, fileCount: 8421, errorCount: 0, requiresAdmin: false, truncated: false, note: "应用运行时可能仍在写入，统计值会波动。", error: null },
+      { id: "windows-temp", label: "Windows 临时文件", path: "C:\\Windows\\Temp", exists: true, bytes: 1.2 * gib, fileCount: 412, errorCount: 3, requiresAdmin: true, truncated: false, note: "部分系统临时文件需要管理员权限才能完整统计。", error: null },
+      { id: "recycle-bin", label: "回收站", path: "C:\\$Recycle.Bin", exists: true, bytes: 900 * 1024 ** 2, fileCount: 64, errorCount: 1, requiresAdmin: true, truncated: false, note: "普通权限只能看到当前用户的部分内容。", error: null },
+      { id: "edge-cache", label: "Edge 浏览器缓存", path: "C:\\Users\\Demo\\AppData\\Local\\Microsoft\\Edge\\User Data\\Default\\Cache", exists: true, bytes: 640 * 1024 ** 2, fileCount: 2100, errorCount: 0, requiresAdmin: false, truncated: false, note: "浏览器运行时缓存文件可能被占用，统计值会波动。", error: null },
+    ];
+    return {
+      capturedAtUnixMs: Date.now(),
+      candidates,
+      totalBytes: candidates.reduce((sum, item) => sum + item.bytes, 0),
+      totalFiles: candidates.reduce((sum, item) => sum + item.fileCount, 0),
+      source: "浏览器演示",
+    };
+  }
+  return invoke<CleanupPreview>("scan_cleanup_candidates");
 }
 
 function compileShader(gl: WebGL2RenderingContext, type: number, source: string): WebGLShader {

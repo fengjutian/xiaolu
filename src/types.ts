@@ -412,3 +412,25 @@ export interface ScheduledTaskInventory {
   tasks: ScheduledTask[];
   source: string;
 }
+
+export interface CleanupCandidate {
+  id: string;
+  label: string;
+  path: string;
+  exists: boolean;
+  bytes: number;
+  fileCount: number;
+  errorCount: number;
+  requiresAdmin: boolean;
+  truncated: boolean;
+  note: string;
+  error: string | null;
+}
+
+export interface CleanupPreview {
+  capturedAtUnixMs: number;
+  candidates: CleanupCandidate[];
+  totalBytes: number;
+  totalFiles: number;
+  source: string;
+}
