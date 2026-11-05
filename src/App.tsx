@@ -1,16 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ActionIcon, Alert, Badge, Box, Button, Card, Center, Group, Loader, NavLink, Paper, Progress, ScrollArea, SimpleGrid, Stack, Switch, Table, Text, ThemeIcon, Title, Tooltip } from "@mantine/core";
-import { IconActivity, IconAlertCircle, IconArrowDown, IconArrowUp, IconCpu, IconDeviceDesktop, IconDownload, IconGauge, IconNetwork, IconPlayerPause, IconRefresh, IconRocket, IconServer, IconShieldCheck } from "@tabler/icons-react";
+import { IconActivity, IconAlertCircle, IconArrowDown, IconArrowUp, IconBolt, IconCpu, IconDeviceDesktop, IconDownload, IconGauge, IconNetwork, IconPlayerPause, IconRefresh, IconRocket, IconServer, IconShieldCheck, IconTemperature, IconWind } from "@tabler/icons-react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip as ChartTooltip, XAxis, YAxis } from "recharts";
-import { getHardwareDetails, getStartupItems, getSystemSnapshot, isDesktopRuntime, setStartupEnabled } from "./api";
-import type { HardwareDetails, StartupItem, SystemSnapshot } from "./types";
+import { getHardwareDetails, getSensorSnapshot, getStartupItems, getSystemSnapshot, isDesktopRuntime, setStartupEnabled } from "./api";
+import type { HardwareDetails, SensorReading, SensorSnapshot, StartupItem, SystemSnapshot } from "./types";
 import "./styles.css";
 
-type Tab = "overview" | "hardware" | "processes" | "startup" | "report";
+type Tab = "overview" | "sensors" | "hardware" | "processes" | "startup" | "report";
 type Sample = { time: string; cpu: number; memory: number; download: number; upload: number; diskRead: number; diskWrite: number };
 
 const nav = [
-  ["overview", "性能概览", IconGauge], ["hardware", "硬件详情", IconCpu], ["processes", "运行进程", IconActivity],
+  ["overview", "性能概览", IconGauge], ["sensors", "温度与健康", IconTemperature], ["hardware", "硬件详情", IconCpu], ["processes", "运行进程", IconActivity],
   ["startup", "启动项管理", IconRocket], ["report", "诊断报告", IconShieldCheck],
 ] as const;
 
@@ -32,11 +32,23 @@ function HardwarePanel({ details }: { details: HardwareDetails | null }) {
   return <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">{Object.entries(details).map(([section, value]) => <Card key={section} className="glass-card" radius="lg"><Text tt="uppercase" size="xs" c="indigo.3" fw={800} mb="md">{section}</Text><pre className="hardware-json">{JSON.stringify(value, null, 2)}</pre></Card>)}</SimpleGrid>;
 }
 
+function SensorCard({ sensor }: { sensor: SensorReading }) {
+  const Icon = sensor.category === "temperature" ? IconTemperature : sensor.category === "fan" ? IconWind : sensor.category === "power" ? IconBolt : IconGauge;
+  const color = sensor.category === "temperature" && sensor.value >= 85 ? "red" : sensor.category === "temperature" && sensor.value >= 70 ? "orange" : "cyan";
+  return <Card className="stat-card" radius="lg"><Group justify="space-between"><Box><Text size="xs" c="dimmed" fw={700}>{sensor.name}</Text><Title order={2} mt={7}>{sensor.value.toFixed(sensor.category === "temperature" ? 0 : 1)} {sensor.unit}</Title><Text size="xs" c="dimmed" mt={7}>{sensor.source}</Text></Box><ThemeIcon size={44} radius="xl" color={color} variant="light"><Icon size={23}/></ThemeIcon></Group></Card>;
+}
+
+function SensorsPanel({ data }: { data: SensorSnapshot | null }) {
+  if (!data) return <Center h={260}><Loader/></Center>;
+  return <Stack gap="md">{data.limitations.map(message => <Alert key={message} color="yellow" icon={<IconAlertCircle/>}>{message}</Alert>)}{data.readings.length > 0 && <SimpleGrid cols={{ base: 2, xl: 4 }}>{data.readings.map(sensor => <SensorCard key={sensor.id} sensor={sensor}/>)}</SimpleGrid>}<Title order={3} mt="sm">物理磁盘健康</Title>{data.storage.length === 0 ? <Alert color="gray">Windows Storage API 没有返回物理磁盘健康数据。</Alert> : data.storage.map(disk => <Card key={disk.name} className="glass-card" radius="lg"><Group justify="space-between" mb="md"><Box><Text fw={800}>{disk.name}</Text><Text size="xs" c="dimmed">{disk.source}</Text></Box><Badge color={disk.healthStatus.toLowerCase() === "healthy" ? "teal" : "yellow"}>{disk.healthStatus} · {disk.operationalStatus}</Badge></Group><SimpleGrid cols={{ base: 2, md: 5 }}><Box><Text size="xs" c="dimmed">温度</Text><Text fw={700}>{disk.temperatureC == null ? "不可用" : `${disk.temperatureC} °C`}</Text></Box><Box><Text size="xs" c="dimmed">磨损</Text><Text fw={700}>{disk.wearPercent == null ? "不可用" : `${disk.wearPercent}%`}</Text></Box><Box><Text size="xs" c="dimmed">通电时间</Text><Text fw={700}>{disk.powerOnHours == null ? "不可用" : `${disk.powerOnHours} 小时`}</Text></Box><Box><Text size="xs" c="dimmed">读取错误</Text><Text fw={700}>{disk.readErrorsTotal ?? "不可用"}</Text></Box><Box><Text size="xs" c="dimmed">写入错误</Text><Text fw={700}>{disk.writeErrorsTotal ?? "不可用"}</Text></Box></SimpleGrid></Card>)}</Stack>;
+}
+
 export default function App() {
   const [tab, setTab] = useState<Tab>("overview");
   const [snapshot, setSnapshot] = useState<SystemSnapshot | null>(null);
   const [history, setHistory] = useState<Sample[]>([]);
   const [hardware, setHardware] = useState<HardwareDetails | null>(null);
+  const [sensors, setSensors] = useState<SensorSnapshot | null>(null);
   const [startup, setStartup] = useState<StartupItem[]>([]);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -53,6 +65,13 @@ export default function App() {
 
   useEffect(() => { void refresh(); const timer = window.setInterval(() => void refresh(), 2000); return () => clearInterval(timer); }, [refresh]);
   useEffect(() => { if (tab === "hardware" && !hardware) void getHardwareDetails().then(setHardware).catch(e => setError(String(e))); }, [tab, hardware]);
+  useEffect(() => {
+    if (tab !== "sensors") return;
+    const load = () => void getSensorSnapshot().then(setSensors).catch(e => setError(String(e)));
+    load();
+    const timer = window.setInterval(load, 10_000);
+    return () => window.clearInterval(timer);
+  }, [tab]);
   const loadStartup = useCallback(() => getStartupItems().then(setStartup).catch(e => setError(String(e))), []);
   useEffect(() => { if (tab === "startup") void loadStartup(); }, [tab, loadStartup]);
 
@@ -64,10 +83,11 @@ export default function App() {
   const diskRead = snapshot.disks.reduce((sum, x) => sum + x.readBytesPerSec, 0);
   const diskWrite = snapshot.disks.reduce((sum, x) => sum + x.writtenBytesPerSec, 0);
 
-  return <div className="shell"><aside className="side"><Group gap="sm" className="logo"><ThemeIcon size={42} radius={14} variant="gradient" gradient={{ from: "indigo", to: "cyan" }}><IconDeviceDesktop/></ThemeIcon><Box><Text fw={800}>小鲁</Text><Text size="xs" c="dimmed">SYSTEM LENS</Text></Box></Group><Stack gap={5} mt="xl">{nav.map(([id, label, Icon]) => <NavLink key={id} active={tab === id} label={label} leftSection={<Icon size={19}/>} onClick={() => setTab(id)} />)}</Stack><Paper className="privacy" radius="lg" p="md"><Group gap="xs"><IconShieldCheck size={18}/><Text fw={700} size="sm">本地优先</Text></Group><Text size="xs" c="dimmed" mt="xs">数据仅在本机采集和处理。</Text></Paper><Text size="xs" c="dimmed">v0.2.0 · 托盘常驻</Text></aside>
+  return <div className="shell"><aside className="side"><Group gap="sm" className="logo"><ThemeIcon size={42} radius={14} variant="gradient" gradient={{ from: "indigo", to: "cyan" }}><IconDeviceDesktop/></ThemeIcon><Box><Text fw={800}>小鲁</Text><Text size="xs" c="dimmed">SYSTEM LENS</Text></Box></Group><Stack gap={5} mt="xl">{nav.map(([id, label, Icon]) => <NavLink key={id} active={tab === id} label={label} leftSection={<Icon size={19}/>} onClick={() => setTab(id)} />)}</Stack><Paper className="privacy" radius="lg" p="md"><Group gap="xs"><IconShieldCheck size={18}/><Text fw={700} size="sm">本地优先</Text></Group><Text size="xs" c="dimmed" mt="xs">数据仅在本机采集和处理。</Text></Paper><Text size="xs" c="dimmed">v0.3.0 · 传感器预览</Text></aside>
     <main className="content"><Group justify="space-between" mb="xl"><Box><Text size="sm" c="dimmed">{snapshot.hostName} · {snapshot.osName}</Text><Title order={1}>{nav.find(x => x[0] === tab)?.[1]}</Title></Box><Group>{!isDesktopRuntime() && <Badge variant="light">浏览器演示</Badge>}<Tooltip label="立即刷新"><ActionIcon size="lg" variant="light" onClick={() => void refresh()} loading={busy}><IconRefresh size={19}/></ActionIcon></Tooltip></Group></Group>{error && <Alert icon={<IconAlertCircle/>} color="red" withCloseButton onClose={() => setError(null)} mb="md">{error}</Alert>}
       {tab === "overview" && <Stack gap="md"><SimpleGrid cols={{ base: 2, xl: 4 }}><Stat icon={IconCpu} label="CPU 使用率" value={`${snapshot.cpu.usagePercent.toFixed(1)}%`} hint={`${snapshot.cpu.logicalCores} 线程 · ${snapshot.cpu.frequencyMhz} MHz`} color="indigo"/><Stat icon={IconServer} label="内存使用率" value={`${snapshot.memory.usagePercent.toFixed(1)}%`} hint={`${bytes(snapshot.memory.usedBytes)} / ${bytes(snapshot.memory.totalBytes)}`} color="grape"/><Stat icon={IconArrowDown} label="实时下载" value={speed(snapshot.network.downloadBytesPerSec)} hint={`累计 ${bytes(snapshot.network.totalReceivedBytes)}`} color="teal"/><Stat icon={IconArrowUp} label="实时上传" value={speed(snapshot.network.uploadBytesPerSec)} hint={`累计 ${bytes(snapshot.network.totalTransmittedBytes)}`} color="yellow"/></SimpleGrid><SimpleGrid cols={{ base: 1, lg: 2 }}><Card className="glass-card" radius="lg"><Group justify="space-between" mb="sm"><Box><Text fw={700}>系统负载</Text><Text size="xs" c="dimmed">最近 60 秒</Text></Box><Badge variant="dot">实时</Badge></Group><PerformanceChart data={history} mode="system"/></Card><Card className="glass-card" radius="lg"><Group justify="space-between" mb="sm"><Box><Text fw={700}>网络吞吐</Text><Text size="xs" c="dimmed">MB/s · {snapshot.network.interfaces} 个接口</Text></Box><IconNetwork size={21}/></Group><PerformanceChart data={history} mode="network"/></Card></SimpleGrid><Card className="glass-card" radius="lg"><Group justify="space-between" mb="md"><Box><Text fw={700}>磁盘活动</Text><Text size="xs" c="dimmed">读取 {speed(diskRead)} · 写入 {speed(diskWrite)}</Text></Box><Badge color="gray">运行 {duration(snapshot.uptimeSeconds)}</Badge></Group>{snapshot.disks.map(d => { const used = d.totalBytes - d.availableBytes; return <Box key={d.mountPoint} mb="md"><Group justify="space-between"><Text size="sm" fw={600}>{d.name || d.mountPoint} · {d.fileSystem}</Text><Text size="xs" c="dimmed">{bytes(used)} / {bytes(d.totalBytes)}</Text></Group><Progress mt={8} value={d.totalBytes ? used / d.totalBytes * 100 : 0}/></Box>; })}</Card></Stack>}
       {tab === "hardware" && <HardwarePanel details={hardware}/>}
+      {tab === "sensors" && <SensorsPanel data={sensors}/>}
       {tab === "processes" && <Card className="glass-card" radius="lg" p={0}><ScrollArea h="calc(100vh - 180px)"><Table stickyHeader highlightOnHover verticalSpacing="sm"><Table.Thead><Table.Tr><Table.Th>进程</Table.Th><Table.Th>PID</Table.Th><Table.Th>CPU</Table.Th><Table.Th>内存</Table.Th></Table.Tr></Table.Thead><Table.Tbody>{snapshot.processes.map(p => <Table.Tr key={p.pid}><Table.Td><Text fw={600}>{p.name}</Text></Table.Td><Table.Td>{p.pid}</Table.Td><Table.Td>{p.cpuPercent.toFixed(1)}%</Table.Td><Table.Td>{bytes(p.memoryBytes)}</Table.Td></Table.Tr>)}</Table.Tbody></Table></ScrollArea></Card>}
       {tab === "startup" && <Stack><Alert color="blue" icon={<IconPlayerPause/>}>当前用户启动项可以启停；系统级启动项只读，避免未经授权修改全局配置。</Alert>{startup.map(item => <Card key={`${item.scope}-${item.name}-${item.enabled}`} className="glass-card" radius="lg"><Group justify="space-between" wrap="nowrap"><Box className="startup-command"><Group gap="xs"><Text fw={700}>{item.name}</Text><Badge size="xs" variant="light">{item.scope}</Badge></Group><Text size="xs" c="dimmed" truncate>{item.command}</Text></Box><Switch checked={item.enabled} disabled={!item.editable} onChange={e => void toggleStartup(item, e.currentTarget.checked)} label={item.enabled ? "已启用" : "已禁用"}/></Group></Card>)}</Stack>}
       {tab === "report" && <SimpleGrid cols={{ base: 1, lg: 2 }}><Card className="glass-card" radius="lg"><IconShieldCheck size={40} color="#748ffc"/><Title order={2} mt="md">隐私优先诊断报告</Title><Text c="dimmed" mt="sm">包含系统、硬件、存储、网络和进程摘要。导出时自动移除主机名和 PID。</Text><Button mt="xl" leftSection={<IconDownload size={18}/>} onClick={downloadReport}>导出 JSON 报告</Button></Card><pre className="report">{report}</pre></SimpleGrid>}

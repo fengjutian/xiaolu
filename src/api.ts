@@ -1,5 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import type { HardwareDetails, StartupItem, SystemSnapshot } from "./types";
+import type { HardwareDetails, SensorSnapshot, StartupItem, SystemSnapshot } from "./types";
 
 const gib = 1024 ** 3;
 
@@ -63,6 +63,20 @@ export async function getStartupItems(): Promise<StartupItem[]> {
 export async function setStartupEnabled(name: string, enabled: boolean): Promise<void> {
   if (!isTauri()) return;
   return invoke("set_startup_enabled", { name, enabled });
+}
+
+export async function getSensorSnapshot(): Promise<SensorSnapshot> {
+  if (!isTauri()) return {
+    capturedAtUnixMs: Date.now(),
+    readings: [
+      { id: "demo-gpu-temp", name: "演示 GPU 温度", category: "temperature", value: 54, unit: "°C", source: "浏览器演示" },
+      { id: "demo-gpu-fan", name: "演示 GPU 风扇", category: "fan", value: 32, unit: "%", source: "浏览器演示" },
+      { id: "demo-gpu-power", name: "演示 GPU 功耗", category: "power", value: 48, unit: "W", source: "浏览器演示" },
+    ],
+    storage: [{ name: "演示 NVMe SSD", healthStatus: "Healthy", operationalStatus: "OK", temperatureC: 39, wearPercent: 4, powerOnHours: 1260, readErrorsTotal: 0, writeErrorsTotal: 0, source: "浏览器演示" }],
+    limitations: [],
+  };
+  return invoke<SensorSnapshot>("get_sensor_snapshot");
 }
 
 export function isDesktopRuntime(): boolean {

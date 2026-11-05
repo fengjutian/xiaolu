@@ -14,6 +14,8 @@
 - 资源占用最高的 30 个进程
 - Windows 当前用户启动项启停管理（系统级启动项只读）
 - 系统托盘常驻、关闭窗口后后台运行
+- NVIDIA GPU 温度、风扇、功耗与频率（硬件支持时）
+- Windows ACPI 热区与物理磁盘健康/温度
 - 自动脱敏的 JSON 诊断报告
 - 浏览器演示模式与 Tauri 真实数据模式
 
@@ -43,3 +45,7 @@ cargo test --manifest-path src-tauri/Cargo.toml
 - Mantine：桌面端组件、主题与布局
 - Recharts：实时性能曲线
 - Tabler Icons：一致的矢量图标
+
+## 传感器限制
+
+0.3.0 使用 Windows 标准接口和已安装的 NVIDIA 厂商工具，不额外安装内核驱动。部分机器不会通过这些接口公开 CPU 温度，界面会明确显示不可用；后续版本计划提供可选、独立且经过审查的传感器 helper。

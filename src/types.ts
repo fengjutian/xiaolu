@@ -61,3 +61,31 @@ export interface StartupItem {
 }
 
 export type HardwareDetails = Record<string, unknown>;
+
+export interface SensorReading {
+  id: string;
+  name: string;
+  category: "temperature" | "fan" | "power" | "clock" | string;
+  value: number;
+  unit: string;
+  source: string;
+}
+
+export interface StorageHealth {
+  name: string;
+  healthStatus: string;
+  operationalStatus: string;
+  temperatureC: number | null;
+  wearPercent: number | null;
+  powerOnHours: number | null;
+  readErrorsTotal: number | null;
+  writeErrorsTotal: number | null;
+  source: string;
+}
+
+export interface SensorSnapshot {
+  capturedAtUnixMs: number;
+  readings: SensorReading[];
+  storage: StorageHealth[];
+  limitations: string[];
+}
