@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "System Lens main window with read-only custom commands",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}
