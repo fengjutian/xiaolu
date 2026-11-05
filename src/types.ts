@@ -244,6 +244,23 @@ export interface DriverUpdate {
   driverDate: string;
   categories: string[];
   downloaded: boolean;
+  driverHardwareId: string;
+  signed: boolean | null;
+}
+
+export interface DriverUpdateAssessment {
+  update: DriverUpdate;
+  signatureOk: boolean | null;
+  status: "applicable" | "current" | "no_match" | "unknown" | string;
+  matchingDevices: string[];
+  notes: string[];
+}
+
+export interface DriverAssessmentReport {
+  capturedAtUnixMs: number;
+  updates: DriverUpdateAssessment[];
+  inventorySource: string;
+  note: string;
 }
 
 export interface BenchmarkResult {

@@ -88,7 +88,7 @@ import {
   runBenchmark,
   scanCleanupCandidates,
   scanDirectory,
-  scanDriverUpdates,
+  assessDriverUpdates,
   scanDuplicates,
   scanLargeFiles,
   scanStorage,
@@ -99,6 +99,7 @@ import type {
   BenchmarkResult,
   CleanupPreview,
   DriverInventory,
+  DriverUpdateAssessment,
   DriverUpdate,
   DiagnosticReport,
   DirectoryListing,
@@ -121,7 +122,8 @@ import type {
 } from "./types";
 import "./styles.css";
 import ReportPanel from "./report";
-import logoUrl from "../src-tauri/app-icon.png";
+
+const logoUrl = "/logo.png";
 
 type Tab =
   | "overview"
@@ -1138,16 +1140,26 @@ function SensorsPanel({ data }: { data: SensorSnapshot | null }) {
 }
 
 
+function driverStatus(status: string): { label: string; color: string } {
+  if (status === "applicable") return { label: "可更新", color: "teal" };
+  if (status === "current") return { label: "已是最新", color: "gray" };
+  if (status === "no_match") return { label: "无匹配设备", color: "orange" };
+  return { label: "未知", color: "gray" };
+}
+
 function DriversPanel({ data }: { data: DriverInventory | null }) {
   const [query, setQuery] = useState("");
-  const [updates, setUpdates] = useState<DriverUpdate[] | null>(null);
+  const [updates, setUpdates] = useState<DriverUpdateAssessment[] | null>(null);
   const [scanningUpdates, setScanningUpdates] = useState(false);
   const [updateError, setUpdateError] = useState<string | null>(null);
+  const [assessmentNote, setAssessmentNote] = useState<string>("");
   const scanUpdates = async () => {
     setScanningUpdates(true);
     setUpdateError(null);
     try {
-      setUpdates(await scanDriverUpdates());
+      const report = await assessDriverUpdates();
+      setUpdates(report.updates);
+      setAssessmentNote(report.note);
     } catch (error) {
       setUpdateError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -1222,7 +1234,7 @@ function DriversPanel({ data }: { data: DriverInventory | null }) {
           <Box>
             <Text fw={800}>Windows Update 驱动候选</Text>
             <Text size="xs" c="dimmed">
-              只读查询 Microsoft Update，不接受许可、不下载、不安装。
+              只读查询 Microsoft Update；按硬件 ID 匹配本机设备并比较版本，同时检查签名状态。不下载、不安装、不回滚。
             </Text>
           </Box>
           <Button
@@ -1246,40 +1258,83 @@ function DriversPanel({ data }: { data: DriverInventory | null }) {
         )}
         {updates && updates.length > 0 && (
           <Stack mt="md" gap="sm">
-            {updates.map((update) => (
-              <Paper
-                key={`${update.updateId}-${update.revisionNumber}`}
-                p="md"
-                radius="md"
-                withBorder
-              >
-                <Group justify="space-between" align="flex-start">
-                  <Box maw="75%">
-                    <Text fw={700}>{update.title}</Text>
-                    <Text size="xs" c="dimmed">
-                      {update.driverManufacturer ||
-                        update.driverProvider ||
-                        "发布者未知"}{" "}
-                      ·{" "}
-                      {update.driverModel ||
-                        update.driverClass ||
-                        "设备类型未知"}
-                    </Text>
-                    <Text size="xs" c="dimmed" mt={5}>
-                      {update.description || "没有附加说明"}
-                    </Text>
-                  </Box>
-                  <Box ta="right">
-                    <Badge color={update.downloaded ? "teal" : "blue"}>
-                      {update.downloaded ? "已下载" : "可用"}
-                    </Badge>
-                    <Text size="xs" c="dimmed" mt={5}>
-                      {update.driverVersion || "版本未知"}
-                    </Text>
-                  </Box>
-                </Group>
-              </Paper>
-            ))}
+            {updates.map((assessment) => {
+              const update = assessment.update;
+              const status = driverStatus(assessment.status);
+              return (
+                <Paper
+                  key={`${update.updateId}-${update.revisionNumber}`}
+                  p="md"
+                  radius="md"
+                  withBorder
+                >
+                  <Group justify="space-between" align="flex-start">
+                    <Box maw="75%">
+                      <Group gap="xs">
+                        <Text fw={700}>{update.title}</Text>
+                        <Badge color={status.color} variant="light">
+                          {status.label}
+                        </Badge>
+                        <Badge
+                          color={
+                            assessment.signatureOk == null
+                              ? "gray"
+                              : assessment.signatureOk
+                                ? "teal"
+                                : "red"
+                          }
+                          variant="light"
+                        >
+                          {assessment.signatureOk == null
+                            ? "签名未知"
+                            : assessment.signatureOk
+                              ? "已签名"
+                              : "未签名"}
+                        </Badge>
+                      </Group>
+                      <Text size="xs" c="dimmed" mt={4}>
+                        {update.driverManufacturer ||
+                          update.driverProvider ||
+                          "发布者未知"}{" "}
+                        ·{" "}
+                        {update.driverModel ||
+                          update.driverClass ||
+                          "设备类型未知"}
+                      </Text>
+                      <Text size="xs" c="dimmed" mt={5}>
+                        {update.description || "没有附加说明"}
+                      </Text>
+                      {assessment.matchingDevices.length > 0 && (
+                        <Text size="xs" mt={5}>
+                          匹配设备：{assessment.matchingDevices.join("；")}
+                        </Text>
+                      )}
+                      {assessment.notes.map((note) => (
+                        <Text key={note} size="xs" c="dimmed">
+                          {note}
+                        </Text>
+                      ))}
+                    </Box>
+                    <Box ta="right">
+                      <Text size="xs" c="dimmed">
+                        候选版本 {update.driverVersion || "未知"}
+                      </Text>
+                      <Text size="xs" c="dimmed" mt={4} maw={220} truncate>
+                        {update.driverHardwareId || "未提供硬件 ID"}
+                      </Text>
+                      <Text size="xs" c="dimmed" mt={4}>
+                        {update.downloaded ? "已下载" : "未下载"}
+                      </Text>
+                    </Box>
+                  </Group>
+                </Paper>
+              );
+            })}
+            {assessmentNote && (
+              <Text size="xs" c="dimmed">
+                {assessmentNote}
+              </Text>
+            )}
           </Stack>
         )}
       </Card>
@@ -2706,7 +2761,7 @@ function BenchmarkPanel() {
       {composite != null && (
         <Card className="glass-card" radius="lg">
           <Text size="xs" c="dimmed" fw={800}>
-            SYSTEM LENS 综合分 · SCHEMA 2
+            SYSTEM LENS 综合分 · 公式 v3
           </Text>
           <Title order={1} mt="xs">
             {composite.toFixed(0)} 分
@@ -2802,7 +2857,20 @@ function BenchmarkPanel() {
                   <Table.Td>
                     {new Date(record.recordedAtUnixMs).toLocaleString()}
                   </Table.Td>
-                  <Table.Td>{record.result.label}</Table.Td>
+                  <Table.Td>
+                    {record.result.label}
+                    <Badge size="xs" variant="light" ml={6}>
+                      Schema {record.result.schemaVersion}
+                    </Badge>
+                    {record.result.kind === "gpu" &&
+                      record.result.schemaVersion < 3 && (
+                        <Tooltip label="旧 WebGL2 GPU 工作负载，分数不能与 Schema 3 直接比较">
+                          <Badge size="xs" color="gray" variant="light" ml={4}>
+                            旧 GPU
+                          </Badge>
+                        </Tooltip>
+                      )}
+                  </Table.Td>
                   <Table.Td>{record.result.score.toFixed(0)} 分</Table.Td>
                   <Table.Td>{record.result.durationMs} ms</Table.Td>
                   <Table.Td>
@@ -3175,13 +3243,35 @@ export default function App() {
 
   if (!snapshot)
     return (
-      <Center h="100vh">
-        <Stack align="center">
-          <Loader size="lg" />
-          <Text c="dimmed">正在建立本地系统视图…</Text>
-          {error && <Alert color="red">{error}</Alert>}
-        </Stack>
-      </Center>
+      <div
+        className="boot-splash"
+        role="status"
+        aria-live="polite"
+        aria-label="小鲁系统透镜正在启动"
+      >
+        <div className="boot-splash__inner">
+          <div className="boot-logo-shell">
+            <img
+              className="boot-logo"
+              src={logoUrl}
+              alt="小鲁 System Lens Logo"
+              width="104"
+              height="104"
+            />
+          </div>
+          <div className="boot-title">小鲁</div>
+          <div className="boot-subtitle">SYSTEM LENS</div>
+          <div className="boot-progress" aria-hidden="true">
+            <span />
+          </div>
+          <div className="boot-status">正在建立本地系统视图…</div>
+          {error && (
+            <Alert color="red" mt="md" style={{ maxWidth: 520 }}>
+              {error}
+            </Alert>
+          )}
+        </div>
+      </div>
     );
   const diskRead = snapshot.disks.reduce(
     (sum, x) => sum + x.readBytesPerSec,
@@ -3231,7 +3321,7 @@ export default function App() {
           </Text>
         </Paper>
         <Text size="xs" c="dimmed">
-          v0.25.0 · WebGPU/D3D12 计算跑分
+          v0.26.0 · 驱动预检与 GPU Schema 3
         </Text>
       </aside>
       <main className="content">

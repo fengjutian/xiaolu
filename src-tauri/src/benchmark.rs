@@ -351,7 +351,7 @@ pub fn get_benchmark_history(app: tauri::AppHandle, state: tauri::State<'_, Benc
 
 #[tauri::command]
 pub fn save_external_benchmark(app: tauri::AppHandle, state: tauri::State<'_, BenchmarkHistoryLock>, result: BenchmarkResult) -> Result<(), String> {
-    if result.kind != "gpu" || result.schema_version != 2 || !result.score.is_finite() || result.score <= 0.0 {
+    if result.kind != "gpu" || !matches!(result.schema_version, 2 | 3) || !result.score.is_finite() || result.score <= 0.0 {
         return Err("GPU 跑分结果格式无效".into());
     }
     let _guard = state.0.lock().map_err(|_| "跑分历史正在被占用".to_string())?;

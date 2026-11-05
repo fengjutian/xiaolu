@@ -1,7 +1,7 @@
 # 小鲁 System Lens：完整功能规划
 
 版本：0.3 规划稿  
-状态：实施中（0.25.0 WebGPU/D3D12 计算跑分）
+状态：实施中（0.26.0 驱动预检与 GPU Schema 3）
 目标平台：Windows 10/11 x64  
 桌面框架：Tauri 2 + React + Rust
 
@@ -139,6 +139,22 @@ v0.25.0 新增（GPU 计算跑分）：
 - 取消：WebGPU 在批次之间检查取消标志；WebGL2 路径仍不可中断
 - 实机验证：WebView2 提供 `navigator.gpu`，Intel Xe LPG 适配器跑分成功，
   结果 note 为“WebGPU 计算管线（Windows 由 D3D12 后端执行）”
+
+v0.26.0 新增（驱动预检与 GPU 分版本）：
+
+- GPU（WebGPU）结果升到 Schema 3；历史表显示每条记录的 Schema，
+  旧 WebGL2 GPU 记录标注“旧 GPU”并提示不可直接比较
+- 综合分标签改为“公式 v3”，明确不跨 Schema 混合排名
+- 驱动更新改为只读兼容性预检：
+  - 按 Windows Update 候选的硬件 ID 与本机设备做前缀匹配
+  - 版本比较（`DriverVerVersion` 为空时从标题括号回退提取）
+  - 输出 `applicable / current / no_match / unknown` 四态
+  - 签名三态：已签名 / 未签名 / 接口未提供（不误判为未签名）
+  - UI 展示匹配设备、当前版本、候选版本、硬件 ID 与原因
+- 实机预检示例：NVIDIA 显示驱动 32.0.15.9671 > 已装 9636 → 可更新；
+  Dell 固件 0.1.27.0 > 0.1.26.0 → 可更新；蓝牙/软件组件候选无匹配设备
+- 不下载、不安装、不回滚；安装仍属后续独立授权模块
+- 修复：启动画面中文在构建后乱码，改用 HTML 数字实体保证编码稳定
 
 现有代码入口：
 

@@ -1,5 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import type { BenchmarkPreflight, BenchmarkRecord, BenchmarkResult, CleanupPreview, DiagnosticReport, DirectoryListing, DriverInventory, DriverUpdate, DuplicateScan, EventLogResult, HardwareDetails, LargeFileScan, NetworkDiagnosticReport, NvmeHealthReport, ScheduledTaskInventory, SensorHistorySeries, SensorSettings, SensorSnapshot, SensorValue, SoftwareInventory, StartupItem, StorageKind, StorageScan, SystemSnapshot } from "./types";
+import type { BenchmarkPreflight, BenchmarkRecord, BenchmarkResult, CleanupPreview, DiagnosticReport, DirectoryListing, DriverAssessmentReport, DriverInventory, DriverUpdate, DuplicateScan, EventLogResult, HardwareDetails, LargeFileScan, NetworkDiagnosticReport, NvmeHealthReport, ScheduledTaskInventory, SensorHistorySeries, SensorSettings, SensorSnapshot, SensorValue, SoftwareInventory, StartupItem, StorageKind, StorageScan, SystemSnapshot } from "./types";
 
 const gib = 1024 ** 3;
 
@@ -172,8 +172,65 @@ export async function getDriverInventory(): Promise<DriverInventory> {
 }
 
 export async function scanDriverUpdates(): Promise<DriverUpdate[]> {
-  if (!isTauri()) return [{ title: "演示厂商 - Display - 32.0.2", description: "来自 Windows Update 的演示驱动候选。", updateId: "demo-update-id", revisionNumber: 1, driverClass: "Display", driverManufacturer: "演示厂商", driverModel: "演示显卡", driverProvider: "演示厂商", driverVersion: "32.0.2", driverDate: "2026-06-01", categories: ["Drivers"], downloaded: false }];
+  if (!isTauri()) return [{ title: "演示厂商 - Display - 32.0.2", description: "来自 Windows Update 的演示驱动候选。", updateId: "demo-update-id", revisionNumber: 1, driverClass: "Display", driverManufacturer: "演示厂商", driverModel: "演示显卡", driverProvider: "演示厂商", driverVersion: "32.0.2", driverDate: "2026-06-01", categories: ["Drivers"], downloaded: false, driverHardwareId: "PCI\\VEN_DEMO&DEV_0001", signed: true }];
   return invoke<DriverUpdate[]>("scan_driver_updates");
+}
+
+export async function assessDriverUpdates(): Promise<DriverAssessmentReport> {
+  if (!isTauri()) {
+    return {
+      capturedAtUnixMs: Date.now(),
+      updates: [
+        {
+          update: {
+            title: "演示厂商 - Display - 32.0.2",
+            description: "来自 Windows Update 的演示驱动候选。",
+            updateId: "demo-update-id",
+            revisionNumber: 1,
+            driverClass: "Display",
+            driverManufacturer: "演示厂商",
+            driverModel: "演示显卡",
+            driverProvider: "演示厂商",
+            driverVersion: "32.0.2",
+            driverDate: "2026-06-01",
+            categories: ["Drivers"],
+            downloaded: false,
+            driverHardwareId: "PCI\\VEN_DEMO&DEV_0001",
+            signed: true,
+          },
+          signatureOk: true,
+          status: "applicable",
+          matchingDevices: ["演示显卡（当前 32.0.1）"],
+          notes: ["候选版本 32.0.2 高于已安装的 32.0.1。"],
+        },
+        {
+          update: {
+            title: "演示厂商 - Net - 1.0.0",
+            description: "无匹配设备的演示候选。",
+            updateId: "demo-update-id-2",
+            revisionNumber: 2,
+            driverClass: "Net",
+            driverManufacturer: "演示厂商",
+            driverModel: "演示网卡",
+            driverProvider: "演示厂商",
+            driverVersion: "1.0.0",
+            driverDate: "2026-03-01",
+            categories: ["Drivers"],
+            downloaded: false,
+            driverHardwareId: "PCI\\VEN_DEMO&DEV_9999",
+            signed: true,
+          },
+          signatureOk: true,
+          status: "no_match",
+          matchingDevices: [],
+          notes: ["候选硬件 ID 未匹配到本机设备。"],
+        },
+      ],
+      inventorySource: "浏览器演示",
+      note: "只读评估：按硬件 ID 匹配设备并比较版本；不会下载、安装或回滚驱动。",
+    };
+  }
+  return invoke<DriverAssessmentReport>("assess_driver_updates");
 }
 
 export async function runBenchmark(kind: BenchmarkResult["kind"], diskSizeMiB?: number): Promise<BenchmarkResult> {
@@ -591,7 +648,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     const renderer =
       info.description || info.device || info.vendor || "WebGPU 设备";
     return {
-      schemaVersion: 2,
+      schemaVersion: 3,
       kind: "gpu",
       label: "GPU 计算（WebGPU / D3D12）",
       score: opsPerSecond / 40_000_000,
