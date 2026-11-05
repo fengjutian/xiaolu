@@ -9,6 +9,7 @@ use tauri::{menu::{Menu, MenuItem}, tray::TrayIconBuilder, Manager};
 pub fn run() {
     tauri::Builder::default()
         .manage(std::sync::Mutex::new(system::SystemCollector::new().expect("failed to initialize system collector")))
+        .manage(benchmark::BenchmarkHistoryLock(std::sync::Mutex::new(())))
         .setup(|app| {
             let show = MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
@@ -34,7 +35,7 @@ pub fn run() {
                 let _ = window.hide();
             }
         })
-        .invoke_handler(tauri::generate_handler![system::get_system_snapshot, system::get_hardware_details, system::get_startup_items, system::set_startup_enabled, sensors::get_sensor_snapshot, drivers::get_driver_inventory, benchmark::run_benchmark])
+        .invoke_handler(tauri::generate_handler![system::get_system_snapshot, system::get_hardware_details, system::get_startup_items, system::set_startup_enabled, sensors::get_sensor_snapshot, drivers::get_driver_inventory, benchmark::run_benchmark, benchmark::get_benchmark_history, benchmark::save_external_benchmark])
         .run(tauri::generate_context!())
         .expect("failed to run System Lens");
 }

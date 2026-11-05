@@ -1,5 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import type { BenchmarkResult, DriverInventory, HardwareDetails, SensorSnapshot, StartupItem, SystemSnapshot } from "./types";
+import type { BenchmarkRecord, BenchmarkResult, DriverInventory, HardwareDetails, SensorSnapshot, StartupItem, SystemSnapshot } from "./types";
 
 const gib = 1024 ** 3;
 
@@ -93,8 +93,50 @@ export async function getDriverInventory(): Promise<DriverInventory> {
 }
 
 export async function runBenchmark(kind: BenchmarkResult["kind"]): Promise<BenchmarkResult> {
+  if (kind === "gpu") return runGpuBenchmark();
   if (!isTauri()) return { schemaVersion: 1, kind, label: { "cpu-single": "CPU 单核", "cpu-multi": "CPU 多核", memory: "内存带宽", disk: "磁盘顺序读写" }[kind], score: 8560, unit: "分", durationMs: 1260, details: kind === "disk" ? { writeMiBPerSecond: 850, readMiBPerSecond: 2200, testFileMiB: 128 } : { throughput: 85.6 }, note: "浏览器演示结果" };
   return invoke<BenchmarkResult>("run_benchmark", { kind });
+}
+
+export async function getBenchmarkHistory(): Promise<BenchmarkRecord[]> {
+  if (!isTauri()) return [];
+  return invoke<BenchmarkRecord[]>("get_benchmark_history");
+}
+
+function compileShader(gl: WebGL2RenderingContext, type: number, source: string): WebGLShader {
+  const shader = gl.createShader(type);
+  if (!shader) throw new Error("无法创建 GPU 着色器");
+  gl.shaderSource(shader, source);
+  gl.compileShader(shader);
+  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(shader) || "GPU 着色器编译失败");
+  return shader;
+}
+
+export async function runGpuBenchmark(): Promise<BenchmarkResult> {
+  const width = 1024, height = 1024, frames = 90;
+  const canvas = document.createElement("canvas");
+  canvas.width = width; canvas.height = height;
+  const gl = canvas.getContext("webgl2", { antialias: false, depth: false, stencil: false, preserveDrawingBuffer: false, powerPreference: "high-performance" });
+  if (!gl) throw new Error("当前 WebView2 或显卡驱动不支持 WebGL2");
+  const vertex = compileShader(gl, gl.VERTEX_SHADER, `#version 300 es\nprecision highp float;\nconst vec2 p[3]=vec2[3](vec2(-1.,-1.),vec2(3.,-1.),vec2(-1.,3.));\nout vec2 uv;\nvoid main(){gl_Position=vec4(p[gl_VertexID],0.,1.);uv=p[gl_VertexID]*.5+.5;}`);
+  const fragment = compileShader(gl, gl.FRAGMENT_SHADER, `#version 300 es\nprecision highp float;\nin vec2 uv;uniform float frame;out vec4 color;\nvoid main(){vec2 z=uv*2.-1.;float a=frame*.001;for(int i=0;i<48;i++){z=vec2(sin(z.x*z.y*3.1+a)+cos(z.y*1.7),cos(z.x*2.3-a)-sin(z.y*z.x));a+=dot(z,z)*.0007;}color=vec4(fract(z.x),fract(z.y),fract(a),1.);}`);
+  const program = gl.createProgram();
+  if (!program) throw new Error("无法创建 GPU 测试程序");
+  gl.attachShader(program, vertex); gl.attachShader(program, fragment); gl.linkProgram(program);
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program) || "GPU 测试程序链接失败");
+  gl.useProgram(program); gl.viewport(0, 0, width, height);
+  const frameLocation = gl.getUniformLocation(program, "frame");
+  for (let frame = 0; frame < 3; frame++) { gl.uniform1f(frameLocation, frame); gl.drawArrays(gl.TRIANGLES, 0, 3); gl.finish(); }
+  const started = performance.now();
+  for (let frame = 0; frame < frames; frame++) { gl.uniform1f(frameLocation, frame + 3); gl.drawArrays(gl.TRIANGLES, 0, 3); gl.finish(); }
+  const durationMs = performance.now() - started;
+  const megapixelsPerSecond = width * height * frames / durationMs / 1000;
+  const debug = gl.getExtension("WEBGL_debug_renderer_info");
+  const renderer = debug ? String(gl.getParameter(debug.UNMASKED_RENDERER_WEBGL)) : String(gl.getParameter(gl.RENDERER));
+  gl.deleteProgram(program); gl.deleteShader(vertex); gl.deleteShader(fragment);
+  const result: BenchmarkResult = { schemaVersion: 2, kind: "gpu", label: "GPU 着色器", score: megapixelsPerSecond * 10, unit: "分", durationMs: Math.round(durationMs), details: { megapixelsPerSecond, width, height, frames, shaderIterations: 48 }, note: `WebGL2 离屏着色器；${renderer}` };
+  if (isTauri()) await invoke("save_external_benchmark", { result });
+  return result;
 }
 
 export function isDesktopRuntime(): boolean {

@@ -1,9 +1,9 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fs::{File, OpenOptions}, hint::black_box, io::{BufReader, BufWriter, Read, Write}, path::PathBuf, time::Instant};
 
 const SCHEMA_VERSION: u32 = 1;
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BenchmarkResult {
     schema_version: u32,
@@ -14,6 +14,38 @@ pub struct BenchmarkResult {
     duration_ms: u128,
     details: BTreeMap<String, f64>,
     note: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BenchmarkRecord {
+    recorded_at_unix_ms: u128,
+    result: BenchmarkResult,
+}
+
+pub struct BenchmarkHistoryLock(pub std::sync::Mutex<()>);
+
+fn history_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    use tauri::Manager;
+    let directory = app.path().app_data_dir().map_err(|error| format!("无法定位应用数据目录：{error}"))?;
+    std::fs::create_dir_all(&directory).map_err(|error| format!("无法创建应用数据目录：{error}"))?;
+    Ok(directory.join("benchmark-history.json"))
+}
+
+fn load_history_file(app: &tauri::AppHandle) -> Result<Vec<BenchmarkRecord>, String> {
+    let path = history_path(app)?;
+    if !path.exists() { return Ok(Vec::new()); }
+    let bytes = std::fs::read(path).map_err(|error| format!("无法读取跑分历史：{error}"))?;
+    serde_json::from_slice(&bytes).map_err(|error| format!("无法解析跑分历史：{error}"))
+}
+
+fn save_result(app: &tauri::AppHandle, result: &BenchmarkResult) -> Result<(), String> {
+    let path = history_path(app)?;
+    let mut history = load_history_file(app)?;
+    history.push(BenchmarkRecord { recorded_at_unix_ms: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis(), result: result.clone() });
+    if history.len() > 200 { history.drain(0..history.len() - 200); }
+    let bytes = serde_json::to_vec_pretty(&history).map_err(|error| format!("无法序列化跑分历史：{error}"))?;
+    std::fs::write(path, bytes).map_err(|error| format!("无法保存跑分历史：{error}"))
 }
 
 fn integer_workload(iterations: u64, mut value: u64) -> u64 {
@@ -100,11 +132,31 @@ fn disk_sequential() -> Result<BenchmarkResult, String> {
 }
 
 #[tauri::command]
-pub async fn run_benchmark(kind: String) -> Result<BenchmarkResult, String> {
-    tauri::async_runtime::spawn_blocking(move || match kind.as_str() {
+pub async fn run_benchmark(app: tauri::AppHandle, state: tauri::State<'_, BenchmarkHistoryLock>, kind: String) -> Result<BenchmarkResult, String> {
+    let result = tauri::async_runtime::spawn_blocking(move || match kind.as_str() {
         "cpu-single" => Ok(cpu_single()), "cpu-multi" => cpu_multi(), "memory" => Ok(memory_bandwidth()), "disk" => disk_sequential(),
         _ => Err("未知的性能测试类型".into()),
-    }).await.map_err(|error| format!("性能测试任务失败：{error}"))?
+    }).await.map_err(|error| format!("性能测试任务失败：{error}"))??;
+    let _guard = state.0.lock().map_err(|_| "跑分历史正在被占用".to_string())?;
+    save_result(&app, &result)?;
+    Ok(result)
+}
+
+#[tauri::command]
+pub fn get_benchmark_history(app: tauri::AppHandle, state: tauri::State<'_, BenchmarkHistoryLock>) -> Result<Vec<BenchmarkRecord>, String> {
+    let _guard = state.0.lock().map_err(|_| "跑分历史正在被占用".to_string())?;
+    let mut history = load_history_file(&app)?;
+    history.reverse();
+    Ok(history)
+}
+
+#[tauri::command]
+pub fn save_external_benchmark(app: tauri::AppHandle, state: tauri::State<'_, BenchmarkHistoryLock>, result: BenchmarkResult) -> Result<(), String> {
+    if result.kind != "gpu" || result.schema_version != 2 || !result.score.is_finite() || result.score <= 0.0 {
+        return Err("GPU 跑分结果格式无效".into());
+    }
+    let _guard = state.0.lock().map_err(|_| "跑分历史正在被占用".to_string())?;
+    save_result(&app, &result)
 }
 
 #[cfg(test)]

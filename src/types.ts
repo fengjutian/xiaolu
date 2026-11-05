@@ -135,11 +135,16 @@ export interface DriverInventory {
 
 export interface BenchmarkResult {
   schemaVersion: number;
-  kind: "cpu-single" | "cpu-multi" | "memory" | "disk";
+  kind: "cpu-single" | "cpu-multi" | "memory" | "disk" | "gpu";
   label: string;
   score: number;
   unit: string;
   durationMs: number;
   details: Record<string, number>;
   note: string;
+}
+
+export interface BenchmarkRecord {
+  recordedAtUnixMs: number;
+  result: BenchmarkResult;
 }

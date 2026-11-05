@@ -1,7 +1,7 @@
 # 小鲁 System Lens：完整功能规划
 
 版本：0.3 规划稿  
-状态：实施中（0.5.0 基础性能跑分）
+状态：实施中（0.6.0 GPU 跑分与综合评分 Schema 2）
 目标平台：Windows 10/11 x64  
 桌面框架：Tauri 2 + React + Rust
 
