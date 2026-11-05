@@ -8,6 +8,7 @@ mod software;
 mod storage_analysis;
 mod scheduled_tasks;
 mod cleanup_preview;
+mod storage_health;
 
 use tauri::{menu::{Menu, MenuItem}, tray::TrayIconBuilder, Manager};
 

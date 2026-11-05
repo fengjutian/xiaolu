@@ -46,7 +46,7 @@ import type {
   SystemSnapshot,
 } from "./types";
 
-const APP_VERSION = "0.18.0";
+const APP_VERSION = "0.19.0";
 const REDACTED = "[已脱敏]";
 
 type RedactionOptions = {
@@ -232,6 +232,15 @@ function cell(value: unknown): string {
   return String(value).replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
 }
 
+const healthText = (level: string) =>
+  level === "critical"
+    ? "危险"
+    : level === "caution"
+      ? "注意"
+      : level === "healthy"
+        ? "健康"
+        : "未知";
+
 function table(headers: string[], rows: unknown[][]): string[] {
   const lines = [
     `| ${headers.map(cell).join(" | ")} |`,
@@ -385,9 +394,10 @@ function buildMarkdown(
         "### 磁盘健康",
         "",
         ...table(
-          ["磁盘", "健康", "温度", "磨损", "通电时间"],
+          ["磁盘", "评估", "健康状态", "温度", "磨损", "通电时间"],
           sensors.storage.map((disk) => [
             disk.name,
+            healthText(disk.assessment.level),
             `${disk.healthStatus} / ${disk.operationalStatus}`,
             disk.temperatureC == null ? "不可用" : `${disk.temperatureC} °C`,
             disk.wearPercent == null ? "不可用" : `${disk.wearPercent}%`,
@@ -396,6 +406,12 @@ function buildMarkdown(
         ),
         "",
       );
+    }
+    const healthSignals = sensors.storage.flatMap((disk) =>
+      disk.assessment.signals.map((signal) => `${disk.name}：${signal.message}`),
+    );
+    if (healthSignals.length > 0) {
+      lines.push("### 健康信号", "", ...healthSignals.map((text) => `> ${text}`), "");
     }
     for (const limitation of sensors.limitations) {
       lines.push(`> ${limitation.code}：${limitation.message} ${limitation.remediation}`, "");
@@ -533,6 +549,12 @@ function buildMarkdown(
         task.name,
         task.state,
         task.triggers.join(" / ") || "无",
+        task.lastRunUnixMs ? new Date(task.lastRunUnixMs).toLocaleString() : "—",
+        task.lastResult == null
+          ? "—"
+          : task.lastResult === 0
+            ? "成功"
+            : `0x${(task.lastResult >>> 0).toString(16).toUpperCase()}`,
         task.runAsUser || "未指定",
       ]);
     lines.push(
@@ -545,7 +567,7 @@ function buildMarkdown(
       lines.push(
         "仅列出非 Microsoft 任务（最多 50 个）。",
         "",
-        ...table(["任务", "状态", "触发", "运行身份"], rows),
+        ...table(["任务", "状态", "触发", "上次运行", "结果", "运行身份"], rows),
         "",
       );
     }

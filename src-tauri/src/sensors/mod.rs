@@ -8,6 +8,7 @@ use tauri::{AppHandle, Manager};
 
 use alerts::{Alert, Observation};
 use history::{HistorySeries, SensorSettings};
+use crate::storage_health::HealthAssessment;
 
 pub const SCHEMA_VERSION: u32 = 2;
 
@@ -98,6 +99,7 @@ pub struct StorageHealth {
     pub read_errors_total: Option<u64>,
     pub write_errors_total: Option<u64>,
     pub source: String,
+    pub assessment: HealthAssessment,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -117,6 +119,7 @@ pub struct SmartDevice {
     pub predict_failure: Option<bool>,
     pub attributes: Vec<SmartAttribute>,
     pub source: String,
+    pub assessment: HealthAssessment,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -96,6 +96,7 @@ import type {
   DiagnosticReport,
   DuplicateScan,
   HardwareDetails,
+  HealthLevel,
   LargeFileScan,
   NetworkDiagnosticReport,
   ScheduledTaskInventory,
@@ -307,6 +308,24 @@ function sensorValueText(sensor: SensorValue): string {
   if (sensor.availability !== "ok" || sensor.value == null) return "不可用";
   return `${sensor.value.toFixed(sensor.category === "temperature" ? 0 : 1)} ${sensor.unit}`;
 }
+
+const healthColor = (level: HealthLevel) =>
+  level === "critical"
+    ? "red"
+    : level === "caution"
+      ? "orange"
+      : level === "healthy"
+        ? "teal"
+        : "gray";
+
+const healthLabel = (level: HealthLevel) =>
+  level === "critical"
+    ? "危险"
+    : level === "caution"
+      ? "注意"
+      : level === "healthy"
+        ? "健康"
+        : "未知";
 
 const sensorCategoryLabels: Record<string, string> = {
   temperature: "温度",
@@ -748,14 +767,8 @@ function SensorsPanel({ data }: { data: SensorSnapshot | null }) {
                   {disk.source}
                 </Text>
               </Box>
-              <Badge
-                color={
-                  disk.healthStatus.toLowerCase() === "healthy"
-                    ? "teal"
-                    : "yellow"
-                }
-              >
-                {disk.healthStatus} · {disk.operationalStatus}
+              <Badge color={healthColor(disk.assessment.level)}>
+                {healthLabel(disk.assessment.level)} · {disk.healthStatus}
               </Badge>
             </Group>
             <SimpleGrid cols={{ base: 2, md: 5 }}>
@@ -800,6 +813,19 @@ function SensorsPanel({ data }: { data: SensorSnapshot | null }) {
                 <Text fw={700}>{disk.writeErrorsTotal ?? "不可用"}</Text>
               </Box>
             </SimpleGrid>
+            {disk.assessment.signals.length > 0 && (
+              <Stack gap={4} mt="md">
+                {disk.assessment.signals.map((signal) => (
+                  <Text
+                    key={signal.code}
+                    size="xs"
+                    c={signal.severity === "critical" ? "red" : "orange"}
+                  >
+                    • {signal.message}
+                  </Text>
+                ))}
+              </Stack>
+            )}
           </Card>
         ))
       )}
@@ -824,23 +850,42 @@ function SensorsPanel({ data }: { data: SensorSnapshot | null }) {
                       {device.source}
                     </Text>
                   </Box>
-                  <Badge
-                    color={
-                      device.predictFailure === true
-                        ? "red"
+                  <Group gap="xs">
+                    <Badge color={healthColor(device.assessment.level)} variant="light">
+                      {healthLabel(device.assessment.level)}
+                    </Badge>
+                    <Badge
+                      color={
+                        device.predictFailure === true
+                          ? "red"
+                          : device.predictFailure === false
+                            ? "teal"
+                            : "gray"
+                      }
+                      variant="light"
+                    >
+                      {device.predictFailure === true
+                        ? "预测故障"
                         : device.predictFailure === false
-                          ? "teal"
-                          : "gray"
-                    }
-                  >
-                    {device.predictFailure === true
-                      ? "预测故障"
-                      : device.predictFailure === false
-                        ? "未预测故障"
-                        : "预测状态未知"}
-                  </Badge>
+                          ? "未预测故障"
+                          : "预测状态未知"}
+                    </Badge>
+                  </Group>
                 </Group>
               </Box>
+              {device.assessment.signals.length > 0 && (
+                <Stack gap={4} px="lg" pb="md">
+                  {device.assessment.signals.map((signal) => (
+                    <Text
+                      key={signal.code}
+                      size="xs"
+                      c={signal.severity === "critical" ? "red" : "orange"}
+                    >
+                      • {signal.message}
+                    </Text>
+                  ))}
+                </Stack>
+              )}
               <Table striped withTableBorder={false}>
                 <Table.Thead>
                   <Table.Tr>
@@ -2273,6 +2318,15 @@ function BenchmarkPanel() {
   );
 }
 
+const formatTaskTime = (value: number | null) =>
+  value ? new Date(value).toLocaleString() : "—";
+
+const formatTaskResult = (value: number | null) => {
+  if (value == null) return "—";
+  if (value === 0) return "成功 (0)";
+  return `0x${(value >>> 0).toString(16).toUpperCase()}`;
+};
+
 function ScheduledTasksPanel({
   data,
 }: {
@@ -2372,6 +2426,7 @@ function ScheduledTasksPanel({
                   <Table.Th>任务</Table.Th>
                   <Table.Th>状态</Table.Th>
                   <Table.Th>触发条件</Table.Th>
+                  <Table.Th>运行记录</Table.Th>
                   <Table.Th>运行身份</Table.Th>
                   <Table.Th>作者</Table.Th>
                 </Table.Tr>
@@ -2416,6 +2471,24 @@ function ScheduledTasksPanel({
                           ))
                         )}
                       </Group>
+                    </Table.Td>
+                    <Table.Td>
+                      <Text size="xs">上次：{formatTaskTime(task.lastRunUnixMs)}</Text>
+                      <Text size="xs" c="dimmed">
+                        下次：{formatTaskTime(task.nextRunUnixMs)}
+                      </Text>
+                      <Text
+                        size="xs"
+                        c={
+                          task.lastResult == null
+                            ? "dimmed"
+                            : task.lastResult === 0
+                              ? "dimmed"
+                              : "orange"
+                        }
+                      >
+                        结果：{formatTaskResult(task.lastResult)}
+                      </Text>
                     </Table.Td>
                     <Table.Td>
                       <Text size="xs">{task.runAsUser || "未指定"}</Text>
@@ -2636,7 +2709,7 @@ export default function App() {
           </Text>
         </Paper>
         <Text size="xs" c="dimmed">
-          v0.18.0 · 报告覆盖计划任务与清理候选
+          v0.19.0 · SMART 分级与任务运行记录
         </Text>
       </aside>
       <main className="content">

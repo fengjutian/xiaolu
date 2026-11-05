@@ -5,6 +5,7 @@ use super::{
     now_unix_ms, stable_hash, Availability, Limitation, Quality, SensorSourceStatus, SensorValue,
     SmartAttribute, SmartDevice, StorageHealth,
 };
+use crate::storage_health::{assess, DiskHealthInput};
 
 pub struct Parsed {
     pub values: Vec<SensorValue>,
@@ -260,16 +261,32 @@ pub fn parse_payload(payload: &Value, captured_at: u64) -> Parsed {
 
     for disk in items(payload.get("storage")) {
         let name = text(disk.get("name"), "未知磁盘");
+        let health_status = text(disk.get("health"), "Unknown");
+        let temperature_c = disk.get("temperature").and_then(number);
+        let wear_percent = disk.get("wear").and_then(number);
+        let power_on_hours = disk.get("hours").and_then(unsigned);
+        let read_errors_total = disk.get("readErrors").and_then(unsigned);
+        let write_errors_total = disk.get("writeErrors").and_then(unsigned);
+        let assessment = assess(&DiskHealthInput {
+            health_status: &health_status,
+            temperature_c,
+            wear_percent,
+            read_errors: read_errors_total,
+            write_errors: write_errors_total,
+            predict_failure: None,
+            attributes: &[],
+        });
         let health = StorageHealth {
             name: name.clone(),
-            health_status: text(disk.get("health"), "Unknown"),
+            health_status,
             operational_status: text(disk.get("operational"), "Unknown"),
-            temperature_c: disk.get("temperature").and_then(number),
-            wear_percent: disk.get("wear").and_then(number),
-            power_on_hours: disk.get("hours").and_then(unsigned),
-            read_errors_total: disk.get("readErrors").and_then(unsigned),
-            write_errors_total: disk.get("writeErrors").and_then(unsigned),
+            temperature_c,
+            wear_percent,
+            power_on_hours,
+            read_errors_total,
+            write_errors_total,
             source: "Windows Storage Reliability Counter".into(),
+            assessment,
         };
         if let Some(temperature) = health.temperature_c {
             parsed.values.push(reading(
@@ -302,11 +319,26 @@ pub fn parse_payload(payload: &Value, captured_at: u64) -> Parsed {
                 })
             })
             .collect::<Vec<_>>();
+        let predict_failure = device.get("predictFailure").and_then(Value::as_bool);
+        let raw_pairs = attributes
+            .iter()
+            .map(|attribute| (attribute.id, attribute.raw))
+            .collect::<Vec<_>>();
+        let assessment = assess(&DiskHealthInput {
+            health_status: "Unknown",
+            temperature_c: None,
+            wear_percent: None,
+            read_errors: None,
+            write_errors: None,
+            predict_failure,
+            attributes: &raw_pairs,
+        });
         parsed.smart_devices.push(SmartDevice {
             instance_name,
-            predict_failure: device.get("predictFailure").and_then(Value::as_bool),
+            predict_failure,
             attributes,
             source: "WMI MSStorageDriver SMART".into(),
+            assessment,
         });
     }
 

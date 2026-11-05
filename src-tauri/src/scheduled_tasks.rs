@@ -14,6 +14,9 @@ pub struct ScheduledTask {
     hidden: bool,
     enabled: bool,
     triggers: Vec<String>,
+    last_run_unix_ms: Option<u64>,
+    next_run_unix_ms: Option<u64>,
+    last_result: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -105,6 +108,9 @@ pub fn parse_payload(payload: &Value, captured_at_unix_ms: u64) -> ScheduledTask
                 run_as_user: text(item.get("user"), ""),
                 hidden: item.get("hidden").and_then(Value::as_bool).unwrap_or(false),
                 triggers,
+                last_run_unix_ms: item.get("lastRunUnixMs").and_then(Value::as_u64),
+                next_run_unix_ms: item.get("nextRunUnixMs").and_then(Value::as_u64),
+                last_result: item.get("lastResult").and_then(Value::as_i64),
             }
         })
         .collect();
@@ -153,6 +159,16 @@ Get-ScheduledTask -ErrorAction SilentlyContinue | ForEach-Object {
   foreach($trigger in @($task.Triggers)){
     if($trigger){ $triggers += ($trigger.CimClass.CimClassName -replace '^MSFT_Task','') }
   }
+  # 只为非 Microsoft 任务查询运行信息，避免数百次逐任务调用拖慢页面。
+  $lastRun=$null;$nextRun=$null;$lastResult=$null
+  if($task.TaskPath -notlike '\Microsoft\*'){
+    try{
+      $info=Get-ScheduledTaskInfo -TaskName $task.TaskName -TaskPath $task.TaskPath -ErrorAction Stop
+      if($info.LastRunTime -and $info.LastRunTime.Year -gt 2000){$lastRun=[DateTimeOffset]::new($info.LastRunTime).ToUnixTimeMilliseconds()}
+      if($info.NextRunTime -and $info.NextRunTime.Year -gt 2000){$nextRun=[DateTimeOffset]::new($info.NextRunTime).ToUnixTimeMilliseconds()}
+      $lastResult=[int64]$info.LastTaskResult
+    }catch{}
+  }
   $tasks += @{
     name=[string]$task.TaskName
     path=[string]$task.TaskPath
@@ -162,6 +178,9 @@ Get-ScheduledTask -ErrorAction SilentlyContinue | ForEach-Object {
     user=[string]$task.Principal.UserId
     hidden=[bool]$task.Settings.Hidden
     triggers=@($triggers)
+    lastRunUnixMs=$lastRun
+    nextRunUnixMs=$nextRun
+    lastResult=$lastResult
   }
 }
 @($tasks)|ConvertTo-Json -Depth 5 -Compress
@@ -212,7 +231,10 @@ mod tests {
                 "description": "",
                 "user": "DEMO\\user",
                 "hidden": false,
-                "triggers": ["LogonTrigger", "TimeTrigger"]
+                "triggers": ["LogonTrigger", "TimeTrigger"],
+                "lastRunUnixMs": 1700000000000,
+                "nextRunUnixMs": 1800000000000,
+                "lastResult": 0
             },
             {
                 "name": "DemoBoot",
@@ -245,6 +267,9 @@ mod tests {
         assert_eq!(inventory.tasks[0].name, "DemoBoot");
         assert_eq!(inventory.tasks[0].triggers, vec!["开机".to_string()]);
         assert!(inventory.tasks[1].triggers.contains(&"登录".to_string()));
+        assert_eq!(inventory.tasks[1].last_run_unix_ms, Some(1_700_000_000_000));
+        assert_eq!(inventory.tasks[1].next_run_unix_ms, Some(1_800_000_000_000));
+        assert_eq!(inventory.tasks[1].last_result, Some(0));
         // 单元素 triggers 以字符串返回时也要兼容。
         assert_eq!(inventory.tasks[2].triggers, vec!["定时".to_string()]);
     }

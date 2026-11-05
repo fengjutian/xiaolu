@@ -150,6 +150,19 @@ export interface SensorHistorySeries {
   sampleCount: number;
 }
 
+export type HealthLevel = "unknown" | "healthy" | "caution" | "critical";
+
+export interface HealthSignal {
+  code: string;
+  severity: HealthLevel;
+  message: string;
+}
+
+export interface HealthAssessment {
+  level: HealthLevel;
+  signals: HealthSignal[];
+}
+
 export interface StorageHealth {
   name: string;
   healthStatus: string;
@@ -160,6 +173,7 @@ export interface StorageHealth {
   readErrorsTotal: number | null;
   writeErrorsTotal: number | null;
   source: string;
+  assessment: HealthAssessment;
 }
 
 export interface SensorSnapshot {
@@ -187,6 +201,7 @@ export interface SmartDevice {
   predictFailure: boolean | null;
   attributes: SmartAttribute[];
   source: string;
+  assessment: HealthAssessment;
 }
 
 export interface DriverInfo {
@@ -400,6 +415,9 @@ export interface ScheduledTask {
   hidden: boolean;
   enabled: boolean;
   triggers: string[];
+  lastRunUnixMs: number | null;
+  nextRunUnixMs: number | null;
+  lastResult: number | null;
 }
 
 export interface ScheduledTaskInventory {

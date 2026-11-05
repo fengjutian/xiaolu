@@ -102,8 +102,8 @@ export async function getSensorSnapshot(): Promise<SensorSnapshot> {
         demoSensorValue(`${gpu}-power`, gpu, "演示显卡", "gpu", "power", "演示显卡 功耗", 48, "W"),
         demoSensorValue("disk-demo-temp", "disk-demo", "演示 NVMe SSD", "disk", "temperature", "演示 NVMe SSD 温度", 39, "°C"),
       ],
-      storage: [{ name: "演示 NVMe SSD", healthStatus: "Healthy", operationalStatus: "OK", temperatureC: 39, wearPercent: 4, powerOnHours: 1260, readErrorsTotal: 0, writeErrorsTotal: 0, source: "浏览器演示" }],
-      smartDevices: [{ instanceName: "演示 SATA SSD", predictFailure: false, source: "浏览器演示", attributes: [{ id: 5, name: "重映射扇区数", current: 100, worst: 100, raw: 0 }, { id: 9, name: "通电时间", current: 98, worst: 98, raw: 1260 }, { id: 194, name: "温度", current: 61, worst: 48, raw: 39 }] }],
+      storage: [{ name: "演示 NVMe SSD", healthStatus: "Healthy", operationalStatus: "OK", temperatureC: 39, wearPercent: 4, powerOnHours: 1260, readErrorsTotal: 0, writeErrorsTotal: 0, source: "浏览器演示", assessment: { level: "healthy", signals: [] } }],
+      smartDevices: [{ instanceName: "演示 SATA SSD", predictFailure: false, source: "浏览器演示", assessment: { level: "healthy", signals: [] }, attributes: [{ id: 5, name: "重映射扇区数", current: 100, worst: 100, raw: 0 }, { id: 9, name: "通电时间", current: 98, worst: 98, raw: 1260 }, { id: 194, name: "温度", current: 61, worst: 48, raw: 39 }] }],
       limitations: [
         { code: "SENSOR_UNAVAILABLE", message: "浏览器演示不包含真实 CPU/主板温度。", remediation: "在桌面应用中运行以读取本机传感器。" },
       ],
@@ -260,9 +260,9 @@ export async function scanDuplicates(kind: StorageKind, limit = 50): Promise<Dup
 export async function getScheduledTasks(): Promise<ScheduledTaskInventory> {
   if (!isTauri()) {
     const tasks = [
-      { name: "DemoUpdate", path: "\\Demo\\", state: "Ready", author: "演示厂商", description: "演示更新任务", runAsUser: "DEMO\\user", hidden: false, enabled: true, triggers: ["登录", "定时"] },
-      { name: "DemoBackup", path: "\\Demo\\", state: "Disabled", author: "演示厂商", description: "演示备份任务", runAsUser: "SYSTEM", hidden: false, enabled: false, triggers: ["每天"] },
-      { name: "DemoMaintenance", path: "\\Microsoft\\Windows\\", state: "Running", author: "Microsoft", description: "系统维护", runAsUser: "SYSTEM", hidden: true, enabled: true, triggers: ["维护"] },
+      { name: "DemoUpdate", path: "\\Demo\\", state: "Ready", author: "演示厂商", description: "演示更新任务", runAsUser: "DEMO\\user", hidden: false, enabled: true, triggers: ["登录", "定时"], lastRunUnixMs: Date.now() - 3_600_000, nextRunUnixMs: Date.now() + 3_600_000, lastResult: 0 },
+      { name: "DemoBackup", path: "\\Demo\\", state: "Disabled", author: "演示厂商", description: "演示备份任务", runAsUser: "SYSTEM", hidden: false, enabled: false, triggers: ["每天"], lastRunUnixMs: null, nextRunUnixMs: null, lastResult: null },
+      { name: "DemoMaintenance", path: "\\Microsoft\\Windows\\", state: "Running", author: "Microsoft", description: "系统维护", runAsUser: "SYSTEM", hidden: true, enabled: true, triggers: ["维护"], lastRunUnixMs: null, nextRunUnixMs: null, lastResult: null },
     ];
     return {
       capturedAtUnixMs: Date.now(),
