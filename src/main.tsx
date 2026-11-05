@@ -11,5 +11,9 @@ const theme = createTheme({
 });
 
 createRoot(document.getElementById("root")!).render(
-  <StrictMode><MantineProvider theme={theme} defaultColorScheme="dark"><App /></MantineProvider></StrictMode>,
+  <StrictMode>
+    <MantineProvider theme={theme} defaultColorScheme="dark">
+      <App />
+    </MantineProvider>
+  </StrictMode>,
 );

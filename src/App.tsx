@@ -22,6 +22,7 @@ import {
   ThemeIcon,
   Title,
   Tooltip,
+  useMantineColorScheme,
 } from "@mantine/core";
 import {
   IconActivity,
@@ -31,8 +32,8 @@ import {
   IconApps,
   IconBolt,
   IconCpu,
-  IconDeviceDesktop,
   IconDownload,
+  IconFolder,
   IconGauge,
   IconHeartbeat,
   IconNetwork,
@@ -44,6 +45,8 @@ import {
   IconShieldCheck,
   IconTemperature,
   IconTool,
+  IconMoon,
+  IconSun,
   IconWind,
 } from "@tabler/icons-react";
 import {
@@ -68,6 +71,7 @@ import {
   isDesktopRuntime,
   runBenchmark,
   scanDriverUpdates,
+  scanStorage,
   setStartupEnabled,
 } from "./api";
 import type {
@@ -81,10 +85,12 @@ import type {
   SensorReading,
   SensorSnapshot,
   SoftwareInventory,
+  StorageScan,
   StartupItem,
   SystemSnapshot,
 } from "./types";
 import "./styles.css";
+import logoUrl from "../src-tauri/icons/system-lens.svg";
 
 type Tab =
   | "overview"
@@ -94,6 +100,7 @@ type Tab =
   | "diagnostics"
   | "network"
   | "software"
+  | "storage"
   | "hardware"
   | "processes"
   | "startup"
@@ -116,6 +123,7 @@ const nav = [
   ["diagnostics", "系统诊断", IconHeartbeat],
   ["network", "网络诊断", IconNetwork],
   ["software", "软件清单", IconApps],
+  ["storage", "空间分析", IconFolder],
   ["hardware", "硬件详情", IconCpu],
   ["processes", "运行进程", IconActivity],
   ["startup", "启动项管理", IconRocket],
@@ -688,6 +696,119 @@ function DriversPanel({ data }: { data: DriverInventory | null }) {
           </Table>
         </ScrollArea>
       </Card>
+    </Stack>
+  );
+}
+
+function StoragePanel() {
+  const [running, setRunning] = useState<StorageScan["kind"] | null>(null);
+  const [results, setResults] = useState<Record<string, StorageScan>>({});
+  const [failure, setFailure] = useState<string | null>(null);
+  const scan = async (kind: StorageScan["kind"]) => {
+    setRunning(kind);
+    setFailure(null);
+    try {
+      const result = await scanStorage(kind);
+      setResults((old) => ({ ...old, [kind]: result }));
+    } catch (error) {
+      setFailure(error instanceof Error ? error.message : String(error));
+    } finally {
+      setRunning(null);
+    }
+  };
+  return (
+    <Stack gap="md">
+      <Alert color="blue" icon={<IconShieldCheck />}>
+        只扫描下载、文档和桌面三个标准目录；结果按扩展名聚合，不显示文件名，也不会删除文件。每次最多统计
+        25 万个文件。
+      </Alert>
+      {failure && (
+        <Alert color="red" icon={<IconAlertCircle />}>
+          {failure}
+        </Alert>
+      )}
+      <SimpleGrid cols={{ base: 1, md: 3 }}>
+        {(["downloads", "documents", "desktop"] as const).map((kind) => {
+          const result = results[kind];
+          const label = {
+            downloads: "下载",
+            documents: "文档",
+            desktop: "桌面",
+          }[kind];
+          return (
+            <Card key={kind} className="glass-card" radius="lg">
+              <Group justify="space-between">
+                <Box>
+                  <Text fw={800}>{label}</Text>
+                  <Text size="xs" c="dimmed">
+                    {result?.path || "尚未扫描"}
+                  </Text>
+                </Box>
+                <ThemeIcon variant="light" size={40}>
+                  <IconFolder />
+                </ThemeIcon>
+              </Group>
+              {result && (
+                <Box mt="lg">
+                  <Title order={2}>{bytes(result.totalBytes)}</Title>
+                  <Text size="xs" c="dimmed">
+                    {result.fileCount} 个文件 · {result.directoryCount} 个目录 ·{" "}
+                    {result.errorCount} 个读取错误
+                  </Text>
+                  {result.truncated && (
+                    <Badge color="orange" mt="sm">
+                      已达到 25 万文件上限
+                    </Badge>
+                  )}
+                </Box>
+              )}
+              <Button
+                fullWidth
+                mt="lg"
+                variant={result ? "light" : "filled"}
+                loading={running === kind}
+                disabled={running !== null && running !== kind}
+                onClick={() => void scan(kind)}
+              >
+                {result ? "重新扫描" : "开始扫描"}
+              </Button>
+            </Card>
+          );
+        })}
+      </SimpleGrid>
+      {Object.values(results).map((result) => (
+        <Card key={result.kind} className="glass-card" radius="lg">
+          <Group justify="space-between" mb="md">
+            <Box>
+              <Text fw={800}>{result.label} · 文件类型占用</Text>
+              <Text size="xs" c="dimmed">
+                仅显示占用最大的 30 种扩展名
+              </Text>
+            </Box>
+            <Badge variant="light">{bytes(result.totalBytes)}</Badge>
+          </Group>
+          <Stack gap="sm">
+            {result.categories.map((category) => {
+              const percent = result.totalBytes
+                ? (category.totalBytes / result.totalBytes) * 100
+                : 0;
+              return (
+                <Box key={category.extension}>
+                  <Group justify="space-between">
+                    <Text size="sm" fw={600}>
+                      {category.extension}
+                    </Text>
+                    <Text size="xs" c="dimmed">
+                      {category.fileCount} 个 · {bytes(category.totalBytes)}
+                    </Text>
+                  </Group>
+                  <Progress value={percent} mt={5} />
+                </Box>
+              );
+            })}
+          </Stack>
+        </Card>
+      ))}
     </Stack>
   );
 }
@@ -1276,6 +1397,7 @@ function BenchmarkPanel() {
 }
 
 export default function App() {
+  const { colorScheme, setColorScheme } = useMantineColorScheme();
   const [tab, setTab] = useState<Tab>("overview");
   const [snapshot, setSnapshot] = useState<SystemSnapshot | null>(null);
   const [history, setHistory] = useState<Sample[]>([]);
@@ -1453,14 +1575,7 @@ export default function App() {
     <div className="shell">
       <aside className="side">
         <Group gap="sm" className="logo">
-          <ThemeIcon
-            size={42}
-            radius={14}
-            variant="gradient"
-            gradient={{ from: "indigo", to: "cyan" }}
-          >
-            <IconDeviceDesktop />
-          </ThemeIcon>
+          <img className="brand-logo" src={logoUrl} alt="小鲁 System Lens Logo" />
           <Box>
             <Text fw={800}>小鲁</Text>
             <Text size="xs" c="dimmed">
@@ -1491,7 +1606,7 @@ export default function App() {
           </Text>
         </Paper>
         <Text size="xs" c="dimmed">
-          v0.10.0 · 软件清单
+          v0.11.0 · 空间分析
         </Text>
       </aside>
       <main className="content">
@@ -1504,6 +1619,16 @@ export default function App() {
           </Box>
           <Group>
             {!isDesktopRuntime() && <Badge variant="light">浏览器演示</Badge>}
+            <Tooltip label={colorScheme === "dark" ? "切换到浅色模式" : "切换到深色模式"}>
+              <ActionIcon
+                size="lg"
+                variant="light"
+                aria-label={colorScheme === "dark" ? "切换到浅色模式" : "切换到深色模式"}
+                onClick={() => setColorScheme(colorScheme === "dark" ? "light" : "dark")}
+              >
+                {colorScheme === "dark" ? <IconSun size={19} /> : <IconMoon size={19} />}
+              </ActionIcon>
+            </Tooltip>
             <Tooltip label="立即刷新">
               <ActionIcon
                 size="lg"
@@ -1626,6 +1751,7 @@ export default function App() {
         {tab === "diagnostics" && <DiagnosticsPanel data={diagnostics} />}
         {tab === "network" && <NetworkPanel data={networkDiagnostics} />}
         {tab === "software" && <SoftwarePanel data={software} />}
+        {tab === "storage" && <StoragePanel />}
         {tab === "processes" && (
           <Card className="glass-card" radius="lg" p={0}>
             <ScrollArea h="calc(100vh - 180px)">

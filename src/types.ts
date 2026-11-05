@@ -225,3 +225,15 @@ export interface SoftwareInventory {
   }>;
   source: string;
 }
+
+export interface StorageScan {
+  kind: "downloads" | "documents" | "desktop";
+  label: string;
+  path: string;
+  fileCount: number;
+  directoryCount: number;
+  totalBytes: number;
+  errorCount: number;
+  truncated: boolean;
+  categories: Array<{ extension: string; fileCount: number; totalBytes: number }>;
+}

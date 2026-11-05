@@ -3004,13 +3004,14 @@ dependencies = [
 
 [[package]]
 name = "system-lens"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "serde",
  "serde_json",
  "sysinfo",
  "tauri",
  "tauri-build",
+ "walkdir",
  "winreg 0.55.0",
 ]
 
