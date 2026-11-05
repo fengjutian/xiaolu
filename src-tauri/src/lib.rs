@@ -18,8 +18,7 @@ pub fn run() {
             let show = MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show, &quit])?;
-            TrayIconBuilder::new()
-                .id("main")
+            TrayIconBuilder::with_id("main")
                 .icon(app.default_window_icon().expect("app icon").clone())
                 .tooltip("小鲁 · 系统透镜")
                 .menu(&menu)

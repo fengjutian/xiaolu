@@ -214,9 +214,9 @@ pub fn load_settings(connection: &Connection) -> Result<SensorSettings, String> 
         .optional()
         .map_err(|error| format!("无法读取传感器设置：{error}"))?;
     match stored {
-        Some(json) => serde_json::from_str::<SensorSettings>(&json)
+        Some(json) => Ok(serde_json::from_str::<SensorSettings>(&json)
             .map(|settings| settings.sanitize())
-            .map_err(|error| format!("传感器设置格式无效：{error}")),
+            .unwrap_or_default()),
         None => Ok(SensorSettings::default()),
     }
 }

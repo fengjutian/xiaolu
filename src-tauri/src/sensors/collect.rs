@@ -336,7 +336,11 @@ pub fn parse_payload(payload: &Value, captured_at: u64) -> Parsed {
             .iter()
             .any(|item| item.source == "windows-acpi"),
         last_error: None,
-        last_success_at_unix_ms: None,
+        last_success_at_unix_ms: parsed
+            .values
+            .iter()
+            .find(|item| item.source == "windows-acpi")
+            .map(|_| captured_at),
     });
     parsed.sources.push(SensorSourceStatus {
         source: "windows-storage".into(),
@@ -437,5 +441,28 @@ mod tests {
         let second = parse_payload(&payload, 20);
         assert_eq!(first.values[0].id, second.values[0].id);
         assert_ne!(first.values[0].captured_at_unix_ms, second.values[0].captured_at_unix_ms);
+    }
+
+    /// 手动冒烟测试：真实执行一次 PowerShell 采集。
+    /// 运行方式：cargo test live_collect_smoke -- --ignored --nocapture
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "需要在本机真实执行 PowerShell 采集"]
+    fn live_collect_smoke() {
+        let parsed = collect().expect("live collect should succeed");
+        for value in &parsed.values {
+            if let Some(number) = value.value {
+                assert!(number.is_finite(), "non-finite value for {}", value.id);
+            }
+        }
+        println!(
+            "values={} storage={} smart={} limitations={}",
+            parsed.values.len(),
+            parsed.storage.len(),
+            parsed.smart_devices.len(),
+            parsed.limitations.len()
+        );
+        assert!(!parsed.sources.is_empty());
+        assert!(parsed.sources.iter().all(|source| !source.source.is_empty()));
     }
 }

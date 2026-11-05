@@ -6,7 +6,7 @@ pub const RISE_DEBOUNCE_SAMPLES: u32 = 3;
 /// 回落到阈值以下多少度才解除告警（滞回）。
 pub const HYSTERESIS_C: f64 = 5.0;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AlertLevel {
     Normal,
@@ -260,14 +260,21 @@ mod tests {
     fn rises_only_after_debounce() {
         let mut states = BTreeMap::new();
         let thresholds = Thresholds::default();
-        for step in 0..RISE_DEBOUNCE_SAMPLES {
-            let alerts = evaluate(&mut states, &[observation("cpu.temp", "cpu", 90.0)], &thresholds, step as u64);
+        // 前两个样本只累计计数，不升级。
+        for step in 0..2u32 {
+            let alerts = evaluate(
+                &mut states,
+                &[observation("cpu.temp", "cpu", 90.0)],
+                &thresholds,
+                u64::from(step),
+            );
             assert!(alerts.is_empty(), "sample {step} must not alert yet");
         }
-        let alerts = evaluate(&mut states, &[observation("cpu.temp", "cpu", 90.0)], &thresholds, 99);
+        // 第三个连续越限样本触发升级。
+        let alerts = evaluate(&mut states, &[observation("cpu.temp", "cpu", 90.0)], &thresholds, 2);
         assert_eq!(alerts.len(), 1);
         assert_eq!(alerts[0].level, AlertLevel::Warning);
-        assert_eq!(alerts[0].since_unix_ms, 99);
+        assert_eq!(alerts[0].since_unix_ms, 2);
     }
 
     #[test]
@@ -275,7 +282,12 @@ mod tests {
         let mut states = BTreeMap::new();
         let thresholds = Thresholds::default();
         for step in 0..RISE_DEBOUNCE_SAMPLES {
-            evaluate(&mut states, &[observation("cpu.temp", "cpu", 90.0)], &thresholds, step);
+            evaluate(
+                &mut states,
+                &[observation("cpu.temp", "cpu", 90.0)],
+                &thresholds,
+                u64::from(step),
+            );
         }
         // 90 -> 81 仍高于 warning 阈值，保持告警。
         let alerts = evaluate(&mut states, &[observation("cpu.temp", "cpu", 81.0)], &thresholds, 10);
@@ -291,10 +303,15 @@ mod tests {
         let mut states = BTreeMap::new();
         let thresholds = Thresholds::default();
         for step in 0..RISE_DEBOUNCE_SAMPLES {
-            evaluate(&mut states, &[observation("gpu.temp", "gpu", 96.0)], &thresholds, step);
+            evaluate(
+                &mut states,
+                &[observation("gpu.temp", "gpu", 96.0)],
+                &thresholds,
+                u64::from(step),
+            );
         }
         assert_eq!(states["gpu.temp"].level, AlertLevel::Critical);
-        // 91 仍高于 critical 阈值 90，但低于 90 + 5，保持 critical。
+        // 91 高于 critical 阈值 90，保持 critical。
         let alerts = evaluate(&mut states, &[observation("gpu.temp", "gpu", 91.0)], &thresholds, 10);
         assert_eq!(alerts[0].level, AlertLevel::Critical);
         // 84 低于 90 - 5，降到 warning（仍高于 80）。

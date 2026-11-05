@@ -62,13 +62,92 @@ export interface StartupItem {
 
 export type HardwareDetails = Record<string, unknown>;
 
-export interface SensorReading {
+export type SensorAvailability =
+  | "ok"
+  | "unavailable"
+  | "denied"
+  | "unsupported"
+  | "stale";
+
+export type SensorQuality = "measured" | "derived";
+
+export interface SensorValue {
   id: string;
-  name: string;
+  hardwareId: string;
+  hardwareName: string;
+  hardwareClass: "cpu" | "gpu" | "disk" | "system" | string;
   category: "temperature" | "fan" | "power" | "clock" | string;
-  value: number;
+  name: string;
+  value: number | null;
   unit: string;
   source: string;
+  capturedAtUnixMs: number;
+  availability: SensorAvailability;
+  errorCode: string | null;
+  quality: SensorQuality;
+}
+
+export interface SensorLimitation {
+  code: string;
+  message: string;
+  remediation: string;
+}
+
+export interface SensorSourceStatus {
+  source: string;
+  ok: boolean;
+  lastError: string | null;
+  lastSuccessAtUnixMs: number | null;
+}
+
+export type SensorAlertLevel = "normal" | "warning" | "critical";
+
+export interface SensorAlert {
+  id: string;
+  sensorId: string;
+  sensorName: string;
+  level: SensorAlertLevel;
+  value: number;
+  threshold: number;
+  message: string;
+  sinceUnixMs: number;
+  lastNotifiedUnixMs: number;
+}
+
+export interface SensorThresholdClass {
+  warningC: number;
+  criticalC: number;
+}
+
+export interface SensorThresholds {
+  cpu: SensorThresholdClass;
+  gpu: SensorThresholdClass;
+  disk: SensorThresholdClass;
+}
+
+export interface SensorSettings {
+  samplingIntervalMs: number;
+  retentionHours: number;
+  alertsEnabled: boolean;
+  thresholds: SensorThresholds;
+}
+
+export interface SensorHistoryPoint {
+  t: number;
+  min: number;
+  max: number;
+  avg: number;
+  count: number;
+}
+
+export interface SensorHistorySeries {
+  sensorId: string;
+  bucketMs: number;
+  points: SensorHistoryPoint[];
+  min: number | null;
+  max: number | null;
+  avg: number | null;
+  sampleCount: number;
 }
 
 export interface StorageHealth {
@@ -84,11 +163,15 @@ export interface StorageHealth {
 }
 
 export interface SensorSnapshot {
+  schemaVersion: number;
   capturedAtUnixMs: number;
-  readings: SensorReading[];
+  values: SensorValue[];
   storage: StorageHealth[];
   smartDevices: SmartDevice[];
-  limitations: string[];
+  limitations: SensorLimitation[];
+  sources: SensorSourceStatus[];
+  alerts: SensorAlert[];
+  elevated: boolean;
 }
 
 export interface SmartAttribute {

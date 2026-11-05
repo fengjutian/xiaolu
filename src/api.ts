@@ -1,5 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import type { BenchmarkRecord, BenchmarkResult, DiagnosticReport, DriverInventory, DriverUpdate, HardwareDetails, NetworkDiagnosticReport, SensorSnapshot, SoftwareInventory, StartupItem, StorageScan, SystemSnapshot } from "./types";
+import type { BenchmarkRecord, BenchmarkResult, DiagnosticReport, DriverInventory, DriverUpdate, HardwareDetails, NetworkDiagnosticReport, SensorHistorySeries, SensorSettings, SensorSnapshot, SensorValue, SoftwareInventory, StartupItem, StorageScan, SystemSnapshot } from "./types";
 
 const gib = 1024 ** 3;
 
@@ -65,19 +65,98 @@ export async function setStartupEnabled(name: string, enabled: boolean): Promise
   return invoke("set_startup_enabled", { name, enabled });
 }
 
+const demoSensorValue = (
+  id: string,
+  hardwareId: string,
+  hardwareName: string,
+  hardwareClass: string,
+  category: string,
+  name: string,
+  value: number,
+  unit: string,
+): SensorValue => ({
+  id,
+  hardwareId,
+  hardwareName,
+  hardwareClass,
+  category,
+  name,
+  value,
+  unit,
+  source: "浏览器演示",
+  capturedAtUnixMs: Date.now(),
+  availability: "ok",
+  errorCode: null,
+  quality: "measured",
+});
+
 export async function getSensorSnapshot(): Promise<SensorSnapshot> {
-  if (!isTauri()) return {
-    capturedAtUnixMs: Date.now(),
-    readings: [
-      { id: "demo-gpu-temp", name: "演示 GPU 温度", category: "temperature", value: 54, unit: "°C", source: "浏览器演示" },
-      { id: "demo-gpu-fan", name: "演示 GPU 风扇", category: "fan", value: 32, unit: "%", source: "浏览器演示" },
-      { id: "demo-gpu-power", name: "演示 GPU 功耗", category: "power", value: 48, unit: "W", source: "浏览器演示" },
-    ],
-    storage: [{ name: "演示 NVMe SSD", healthStatus: "Healthy", operationalStatus: "OK", temperatureC: 39, wearPercent: 4, powerOnHours: 1260, readErrorsTotal: 0, writeErrorsTotal: 0, source: "浏览器演示" }],
-    smartDevices: [{ instanceName: "演示 SATA SSD", predictFailure: false, source: "浏览器演示", attributes: [{ id: 5, name: "重映射扇区数", current: 100, worst: 100, raw: 0 }, { id: 9, name: "通电时间", current: 98, worst: 98, raw: 1260 }, { id: 194, name: "温度", current: 61, worst: 48, raw: 39 }] }],
-    limitations: [],
-  };
+  if (!isTauri()) {
+    const gpu = "gpu-demo";
+    return {
+      schemaVersion: 2,
+      capturedAtUnixMs: Date.now(),
+      values: [
+        demoSensorValue(`${gpu}-temp`, gpu, "演示显卡", "gpu", "temperature", "演示显卡 温度", 54, "°C"),
+        demoSensorValue(`${gpu}-fan`, gpu, "演示显卡", "gpu", "fan", "演示显卡 风扇", 32, "%"),
+        demoSensorValue(`${gpu}-power`, gpu, "演示显卡", "gpu", "power", "演示显卡 功耗", 48, "W"),
+        demoSensorValue("disk-demo-temp", "disk-demo", "演示 NVMe SSD", "disk", "temperature", "演示 NVMe SSD 温度", 39, "°C"),
+      ],
+      storage: [{ name: "演示 NVMe SSD", healthStatus: "Healthy", operationalStatus: "OK", temperatureC: 39, wearPercent: 4, powerOnHours: 1260, readErrorsTotal: 0, writeErrorsTotal: 0, source: "浏览器演示" }],
+      smartDevices: [{ instanceName: "演示 SATA SSD", predictFailure: false, source: "浏览器演示", attributes: [{ id: 5, name: "重映射扇区数", current: 100, worst: 100, raw: 0 }, { id: 9, name: "通电时间", current: 98, worst: 98, raw: 1260 }, { id: 194, name: "温度", current: 61, worst: 48, raw: 39 }] }],
+      limitations: [
+        { code: "SENSOR_UNAVAILABLE", message: "浏览器演示不包含真实 CPU/主板温度。", remediation: "在桌面应用中运行以读取本机传感器。" },
+      ],
+      sources: [
+        { source: "nvidia-smi", ok: true, lastError: null, lastSuccessAtUnixMs: Date.now() },
+        { source: "windows-acpi", ok: false, lastError: null, lastSuccessAtUnixMs: null },
+      ],
+      alerts: [],
+      elevated: false,
+    };
+  }
   return invoke<SensorSnapshot>("get_sensor_snapshot");
+}
+
+export async function getSensorHistory(sensorId: string, hours: number): Promise<SensorHistorySeries> {
+  if (!isTauri()) {
+    const now = Date.now();
+    const points = Array.from({ length: 30 }, (_, index) => {
+      const avg = 45 + Math.sin(index / 3) * 6;
+      return { t: now - (29 - index) * 60_000, min: avg - 2, max: avg + 2, avg, count: 6 };
+    });
+    return {
+      sensorId,
+      bucketMs: 60_000,
+      points,
+      min: Math.min(...points.map((point) => point.min)),
+      max: Math.max(...points.map((point) => point.max)),
+      avg: points.reduce((sum, point) => sum + point.avg, 0) / points.length,
+      sampleCount: points.reduce((sum, point) => sum + point.count, 0),
+    };
+  }
+  return invoke<SensorHistorySeries>("get_sensor_history", { sensorId, hours });
+}
+
+export async function getSensorSettings(): Promise<SensorSettings> {
+  if (!isTauri()) {
+    return {
+      samplingIntervalMs: 10_000,
+      retentionHours: 24,
+      alertsEnabled: true,
+      thresholds: {
+        cpu: { warningC: 85, criticalC: 95 },
+        gpu: { warningC: 80, criticalC: 90 },
+        disk: { warningC: 55, criticalC: 65 },
+      },
+    };
+  }
+  return invoke<SensorSettings>("get_sensor_settings");
+}
+
+export async function saveSensorSettings(settings: SensorSettings): Promise<SensorSettings> {
+  if (!isTauri()) return settings;
+  return invoke<SensorSettings>("save_sensor_settings", { settings });
 }
 
 export async function getDriverInventory(): Promise<DriverInventory> {
