@@ -100,6 +100,7 @@ import type {
   SystemSnapshot,
 } from "./types";
 import "./styles.css";
+import ReportPanel from "./report";
 import logoUrl from "../src-tauri/app-icon.png";
 
 type Tab =
@@ -2065,36 +2066,6 @@ export default function App() {
     if (tab === "startup") void loadStartup();
   }, [tab, loadStartup]);
 
-  const report = useMemo(
-    () =>
-      snapshot
-        ? JSON.stringify(
-            {
-              schemaVersion: 2,
-              generatedAt: new Date(snapshot.capturedAtUnixMs).toISOString(),
-              privacy: "主机名和 PID 已脱敏",
-              system: {
-                ...snapshot,
-                hostName: "[已脱敏]",
-                processes: snapshot.processes.map(({ pid: _, ...p }) => p),
-              },
-            },
-            null,
-            2,
-          )
-        : "",
-    [snapshot],
-  );
-  const downloadReport = () => {
-    const url = URL.createObjectURL(
-      new Blob([report], { type: "application/json" }),
-    );
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `system-lens-${new Date().toISOString().slice(0, 10)}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
   const toggleStartup = async (item: StartupItem, enabled: boolean) => {
     if (
       !window.confirm(
@@ -2168,7 +2139,7 @@ export default function App() {
           </Text>
         </Paper>
         <Text size="xs" c="dimmed">
-          v0.13.0 · 温度历史与告警
+          v0.14.0 · 报告预览与导出
         </Text>
       </aside>
       <main className="content">
@@ -2390,28 +2361,7 @@ export default function App() {
             ))}
           </Stack>
         )}
-        {tab === "report" && (
-          <SimpleGrid cols={{ base: 1, lg: 2 }}>
-            <Card className="glass-card" radius="lg">
-              <IconShieldCheck size={40} color="#748ffc" />
-              <Title order={2} mt="md">
-                隐私优先诊断报告
-              </Title>
-              <Text c="dimmed" mt="sm">
-                包含系统、硬件、存储、网络和进程摘要。导出时自动移除主机名和
-                PID。
-              </Text>
-              <Button
-                mt="xl"
-                leftSection={<IconDownload size={18} />}
-                onClick={downloadReport}
-              >
-                导出 JSON 报告
-              </Button>
-            </Card>
-            <pre className="report">{report}</pre>
-          </SimpleGrid>
-        )}
+        {tab === "report" && <ReportPanel />}
       </main>
     </div>
   );
