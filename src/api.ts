@@ -1,5 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import type { HardwareDetails, SensorSnapshot, StartupItem, SystemSnapshot } from "./types";
+import type { DriverInventory, HardwareDetails, SensorSnapshot, StartupItem, SystemSnapshot } from "./types";
 
 const gib = 1024 ** 3;
 
@@ -77,6 +77,18 @@ export async function getSensorSnapshot(): Promise<SensorSnapshot> {
     limitations: [],
   };
   return invoke<SensorSnapshot>("get_sensor_snapshot");
+}
+
+export async function getDriverInventory(): Promise<DriverInventory> {
+  if (!isTauri()) return {
+    capturedAtUnixMs: Date.now(), total: 3, signed: 2, unsigned: 0, missing: 1, problems: 1, source: "浏览器演示",
+    items: [
+      { deviceName: "未知 PCI 设备", deviceClass: "System", manufacturer: "", driverProvider: "", driverVersion: "", driverDate: "", infName: "", signer: "", signed: false, deviceId: "PCI\\VEN_DEMO", status: "Error", errorCode: 28, missingDriver: true },
+      { deviceName: "演示显卡", deviceClass: "Display", manufacturer: "演示厂商", driverProvider: "演示厂商", driverVersion: "32.0.1", driverDate: "2026-01-01", infName: "oem1.inf", signer: "Microsoft Windows Hardware Compatibility Publisher", signed: true, deviceId: "PCI\\VEN_0000", status: "OK", errorCode: 0, missingDriver: false },
+      { deviceName: "演示网卡", deviceClass: "Net", manufacturer: "演示厂商", driverProvider: "演示厂商", driverVersion: "1.0.0", driverDate: "2025-08-01", infName: "oem2.inf", signer: "Microsoft Windows Hardware Compatibility Publisher", signed: true, deviceId: "PCI\\VEN_0001", status: "OK", errorCode: 0, missingDriver: false },
+    ],
+  };
+  return invoke<DriverInventory>("get_driver_inventory");
 }
 
 export function isDesktopRuntime(): boolean {

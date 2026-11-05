@@ -89,3 +89,30 @@ export interface SensorSnapshot {
   storage: StorageHealth[];
   limitations: string[];
 }
+
+export interface DriverInfo {
+  deviceName: string;
+  deviceClass: string;
+  manufacturer: string;
+  driverProvider: string;
+  driverVersion: string;
+  driverDate: string;
+  infName: string;
+  signer: string;
+  signed: boolean;
+  deviceId: string;
+  status: string;
+  errorCode: number;
+  missingDriver: boolean;
+}
+
+export interface DriverInventory {
+  capturedAtUnixMs: number;
+  total: number;
+  signed: number;
+  unsigned: number;
+  missing: number;
+  problems: number;
+  items: DriverInfo[];
+  source: string;
+}
