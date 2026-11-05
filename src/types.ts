@@ -452,3 +452,22 @@ export interface CleanupPreview {
   totalFiles: number;
   source: string;
 }
+
+export interface EventLogEntry {
+  timeCreatedUnixMs: number;
+  logName: string;
+  provider: string;
+  eventId: number;
+  level: string;
+  message: string;
+}
+
+export interface EventLogResult {
+  logName: string;
+  level: string;
+  hours: number;
+  total: number;
+  events: EventLogEntry[];
+  truncated: boolean;
+  source: string;
+}

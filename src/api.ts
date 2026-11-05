@@ -1,5 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import type { BenchmarkRecord, BenchmarkResult, CleanupPreview, DiagnosticReport, DriverInventory, DriverUpdate, DuplicateScan, HardwareDetails, LargeFileScan, NetworkDiagnosticReport, ScheduledTaskInventory, SensorHistorySeries, SensorSettings, SensorSnapshot, SensorValue, SoftwareInventory, StartupItem, StorageKind, StorageScan, SystemSnapshot } from "./types";
+import type { BenchmarkRecord, BenchmarkResult, CleanupPreview, DiagnosticReport, DriverInventory, DriverUpdate, DuplicateScan, EventLogResult, HardwareDetails, LargeFileScan, NetworkDiagnosticReport, ScheduledTaskInventory, SensorHistorySeries, SensorSettings, SensorSnapshot, SensorValue, SoftwareInventory, StartupItem, StorageKind, StorageScan, SystemSnapshot } from "./types";
 
 const gib = 1024 ** 3;
 
@@ -295,6 +295,38 @@ export async function scanCleanupCandidates(): Promise<CleanupPreview> {
     };
   }
   return invoke<CleanupPreview>("scan_cleanup_candidates");
+}
+
+export async function queryEventLog(
+  logName: string,
+  level: string,
+  hours: number,
+  search: string,
+  limit = 100,
+): Promise<EventLogResult> {
+  if (!isTauri()) {
+    const events = [
+      { timeCreatedUnixMs: Date.now() - 3_600_000, logName, provider: "Demo-Provider", eventId: 41, level: "错误", message: "演示事件：系统服务启动失败。" },
+      { timeCreatedUnixMs: Date.now() - 7_200_000, logName, provider: "Demo-Driver", eventId: 219, level: "警告", message: "演示事件：驱动加载耗时过长。" },
+      { timeCreatedUnixMs: Date.now() - 10_800_000, logName, provider: "Demo-App", eventId: 1000, level: "信息", message: "演示事件：应用正常启动。" },
+    ].filter((event) => !search || event.message.includes(search));
+    return {
+      logName,
+      level,
+      hours,
+      total: events.length,
+      events,
+      truncated: false,
+      source: "浏览器演示",
+    };
+  }
+  return invoke<EventLogResult>("query_event_log", {
+    logName,
+    level,
+    hours,
+    search,
+    limit,
+  });
 }
 
 function compileShader(gl: WebGL2RenderingContext, type: number, source: string): WebGLShader {

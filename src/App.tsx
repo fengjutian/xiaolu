@@ -78,6 +78,7 @@ import {
   getSoftwareInventory,
   getStartupItems,
   getSystemSnapshot,
+  queryEventLog,
   isDesktopRuntime,
   runBenchmark,
   scanCleanupCandidates,
@@ -95,6 +96,7 @@ import type {
   DriverUpdate,
   DiagnosticReport,
   DuplicateScan,
+  EventLogResult,
   HardwareDetails,
   HealthLevel,
   LargeFileScan,
@@ -1884,6 +1886,26 @@ function NetworkPanel({ data }: { data: NetworkDiagnosticReport | null }) {
 }
 
 function DiagnosticsPanel({ data }: { data: DiagnosticReport | null }) {
+  const [logName, setLogName] = useState("System");
+  const [logLevel, setLogLevel] = useState("error");
+  const [logHours, setLogHours] = useState("24");
+  const [logSearch, setLogSearch] = useState("");
+  const [logResult, setLogResult] = useState<EventLogResult | null>(null);
+  const [logLoading, setLogLoading] = useState(false);
+  const [logError, setLogError] = useState<string | null>(null);
+  const runLogQuery = async () => {
+    setLogLoading(true);
+    setLogError(null);
+    try {
+      setLogResult(
+        await queryEventLog(logName, logLevel, Number(logHours), logSearch, 100),
+      );
+    } catch (error) {
+      setLogError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLogLoading(false);
+    }
+  };
   if (!data)
     return (
       <Center h={260}>
@@ -2121,6 +2143,137 @@ function DiagnosticsPanel({ data }: { data: DiagnosticReport | null }) {
               ))}
             </Table.Tbody>
           </Table>
+        </Card>
+      )}
+
+      <Group justify="space-between" mt="md">
+        <Title order={3}>事件日志查询</Title>
+        <Text size="xs" c="dimmed">
+          {logResult ? `${logResult.total} 条匹配` : "只读，不修改日志"}
+        </Text>
+      </Group>
+      <Alert color="blue" icon={<IconShieldCheck />}>
+        直接读取 Windows 事件日志；Security 日志通常需要管理员权限，普通权限下会返回空结果。
+      </Alert>
+      <Group align="flex-end" wrap="wrap">
+        <Select
+          size="xs"
+          label="日志"
+          w={150}
+          allowDeselect={false}
+          value={logName}
+          onChange={(value) => setLogName(value ?? "System")}
+          data={[
+            { value: "System", label: "System" },
+            { value: "Application", label: "Application" },
+            { value: "Setup", label: "Setup" },
+            { value: "Security", label: "Security" },
+          ]}
+        />
+        <Select
+          size="xs"
+          label="级别"
+          w={150}
+          allowDeselect={false}
+          value={logLevel}
+          onChange={(value) => setLogLevel(value ?? "error")}
+          data={[
+            { value: "all", label: "全部" },
+            { value: "critical", label: "严重" },
+            { value: "error", label: "错误" },
+            { value: "warning", label: "警告" },
+            { value: "information", label: "信息" },
+          ]}
+        />
+        <SegmentedControl
+          size="xs"
+          value={logHours}
+          onChange={setLogHours}
+          data={[
+            { label: "1 小时", value: "1" },
+            { label: "24 小时", value: "24" },
+            { label: "7 天", value: "168" },
+          ]}
+        />
+        <TextInput
+          size="xs"
+          label="关键词"
+          w={240}
+          value={logSearch}
+          onChange={(event) => setLogSearch(event.currentTarget.value)}
+          placeholder="按消息或来源过滤"
+        />
+        <Button size="xs" loading={logLoading} onClick={() => void runLogQuery()}>
+          查询
+        </Button>
+      </Group>
+      {logError && (
+        <Alert color="red" icon={<IconAlertCircle />}>
+          {logError}
+        </Alert>
+      )}
+      {logResult && (
+        <Card className="glass-card" radius="lg" p={0}>
+          <Group justify="space-between" p="md">
+            <Text fw={700} size="sm">
+              {logResult.logName} · 显示 {logResult.events.length} / 共 {logResult.total} 条
+            </Text>
+            <Group gap="xs">
+              {logResult.truncated && <Badge color="orange">已截断到 100 条</Badge>}
+              <Badge variant="light">{logResult.source}</Badge>
+            </Group>
+          </Group>
+          <ScrollArea h={420}>
+            <Table stickyHeader highlightOnHover verticalSpacing="xs">
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>时间</Table.Th>
+                  <Table.Th>级别</Table.Th>
+                  <Table.Th>来源</Table.Th>
+                  <Table.Th>事件</Table.Th>
+                  <Table.Th>说明</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {logResult.events.map((entry, index) => (
+                  <Table.Tr key={`${entry.timeCreatedUnixMs}-${entry.eventId}-${index}`}>
+                    <Table.Td>
+                      <Text size="xs">
+                        {new Date(entry.timeCreatedUnixMs).toLocaleString()}
+                      </Text>
+                    </Table.Td>
+                    <Table.Td>
+                      <Badge
+                        size="xs"
+                        color={
+                          entry.level.includes("严重") || entry.level.includes("Critical")
+                            ? "red"
+                            : entry.level.includes("错误") || entry.level.includes("Error")
+                              ? "orange"
+                              : entry.level.includes("警告") || entry.level.includes("Warning")
+                                ? "yellow"
+                                : "gray"
+                        }
+                      >
+                        {entry.level}
+                      </Badge>
+                    </Table.Td>
+                    <Table.Td>
+                      <Text size="xs" truncate maw={160}>
+                        {entry.provider}
+                      </Text>
+                    </Table.Td>
+                    <Table.Td>{entry.eventId}</Table.Td>
+                    <Table.Td>
+                      <Text size="xs" lineClamp={3} maw={620}>
+                        {entry.message || "事件没有提供说明。"}
+                      </Text>
+                    </Table.Td>
+                  </Table.Tr>
+                ))}
+              </Table.Tbody>
+            </Table>
+          </ScrollArea>
         </Card>
       )}
     </Stack>
@@ -2709,7 +2862,7 @@ export default function App() {
           </Text>
         </Paper>
         <Text size="xs" c="dimmed">
-          v0.19.0 · SMART 分级与任务运行记录
+          v0.20.0 · 事件日志查询
         </Text>
       </aside>
       <main className="content">
