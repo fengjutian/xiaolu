@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "id": "privacy_protection",
+  "name": "隐私保护",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "description": "只读检查诊断数据、广告 ID 与位置/相机/麦克风权限",
+  "category": "privacy",
+  "risk": "read_only",
+  "entry": "privacy_protection.exe",
+  "arguments": ["--stdio"],
+  "permissions": {
+    "readPaths": [],
+    "writePaths": [],
+    "registry": [
+      "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\DataCollection",
+      "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\AdvertisingInfo",
+      "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore"
+    ],
+    "network": false,
+    "elevation": "none"
+  },
+  "actions": [{ "id": "preview", "label": "预览", "write": false }],
+  "limits": { "timeoutMs": 60000, "maxOutputBytes": 1048576 },
+  "ui": { "kind": "table" },
+  "rollback": "none",
+  "hash": "",
+  "signature": null
+}

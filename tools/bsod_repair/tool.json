@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "bsod_repair",
+  "name": "蓝屏修复",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "description": "只读列出最近转储文件与蓝屏/异常关机事件",
+  "category": "repair",
+  "risk": "read_only",
+  "entry": "bsod_repair.exe",
+  "arguments": ["--stdio"],
+  "permissions": {
+    "readPaths": ["%SystemRoot%\\Minidump"],
+    "writePaths": [],
+    "registry": [],
+    "network": false,
+    "elevation": "none"
+  },
+  "actions": [{ "id": "preview", "label": "预览", "write": false }],
+  "limits": { "timeoutMs": 60000, "maxOutputBytes": 1048576 },
+  "ui": { "kind": "table" },
+  "rollback": "none",
+  "hash": "",
+  "signature": null
+}

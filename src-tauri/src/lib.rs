@@ -44,6 +44,13 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                // 开发模式下关闭窗口即退出进程。否则上一次 `tauri dev` 的实例会
+                // 留在托盘里继续占用 WebView2 用户数据目录，导致下一次启动时
+                // 创建 WebView 失败（HRESULT 0x8007139F / 0x800700AA）。
+                if cfg!(debug_assertions) {
+                    let _ = api;
+                    return;
+                }
                 api.prevent_close();
                 let _ = window.hide();
             }
