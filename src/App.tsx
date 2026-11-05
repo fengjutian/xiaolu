@@ -73,6 +73,7 @@ import {
   getDiagnosticReport,
   getHardwareDetails,
   getNetworkDiagnostics,
+  getNvmeHealth,
   getSensorHistory,
   getSensorSettings,
   getSensorSnapshot,
@@ -106,6 +107,7 @@ import type {
   HealthLevel,
   LargeFileScan,
   NetworkDiagnosticReport,
+  NvmeHealthReport,
   ScheduledTaskInventory,
   SensorHistorySeries,
   SensorSettings,
@@ -357,6 +359,9 @@ function SensorsPanel({ data }: { data: SensorSnapshot | null }) {
   const [history, setHistory] = useState<SensorHistorySeries | null>(null);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [nvme, setNvme] = useState<NvmeHealthReport | null>(null);
+  const [nvmeLoading, setNvmeLoading] = useState(false);
+  const [nvmeError, setNvmeError] = useState<string | null>(null);
 
   const temperatures = useMemo(
     () =>
@@ -480,6 +485,17 @@ function SensorsPanel({ data }: { data: SensorSnapshot | null }) {
       setSettingsStatus(error instanceof Error ? error.message : String(error));
     } finally {
       setSaving(false);
+    }
+  };
+  const loadNvme = async () => {
+    setNvmeLoading(true);
+    setNvmeError(null);
+    try {
+      setNvme(await getNvmeHealth());
+    } catch (error) {
+      setNvmeError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setNvmeLoading(false);
     }
   };
 
@@ -919,6 +935,121 @@ function SensorsPanel({ data }: { data: SensorSnapshot | null }) {
           ))}
         </>
       )}
+
+      <Card className="glass-card" radius="lg">
+        <Group justify="space-between" align="flex-start" wrap="wrap">
+          <Box>
+            <Text fw={800}>NVMe 健康日志（直读）</Text>
+            <Text size="xs" c="dimmed">
+              IOCTL_STORAGE_QUERY_PROPERTY · 读取固件 Health Information Log
+            </Text>
+          </Box>
+          <Button
+            size="xs"
+            loading={nvmeLoading}
+            onClick={() => void loadNvme()}
+          >
+            读取 NVMe 健康日志
+          </Button>
+        </Group>
+        {nvmeError && (
+          <Alert color="red" icon={<IconAlertCircle />} mt="md">
+            {nvmeError}
+          </Alert>
+        )}
+        {nvme && (
+          <>
+            <Alert
+              color={
+                nvme.accessDenied
+                  ? "orange"
+                  : nvme.unsupported
+                    ? "gray"
+                    : "blue"
+              }
+              icon={<IconShieldCheck />}
+              mt="md"
+            >
+              {nvme.note}
+              {nvme.lastError && (
+                <Text size="xs" c="dimmed" mt={4}>
+                  {nvme.lastError}
+                </Text>
+              )}
+            </Alert>
+            {nvme.devices.length > 0 && (
+              <Table mt="md" highlightOnHover verticalSpacing="xs">
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>设备</Table.Th>
+                    <Table.Th>温度</Table.Th>
+                    <Table.Th>寿命消耗</Table.Th>
+                    <Table.Th>备用空间</Table.Th>
+                    <Table.Th>累计写入</Table.Th>
+                    <Table.Th>通电 / 次数</Table.Th>
+                    <Table.Th>介质错误</Table.Th>
+                    <Table.Th>严重警告</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {nvme.devices.map((device) => (
+                    <Table.Tr key={device.device}>
+                      <Table.Td>
+                        <Text size="sm" fw={600}>
+                          {device.device}
+                        </Text>
+                        <Text size="xs" c="dimmed" truncate maw={220}>
+                          {device.source}
+                        </Text>
+                      </Table.Td>
+                      <Table.Td>
+                        {device.temperatureC == null
+                          ? "不可用"
+                          : `${device.temperatureC.toFixed(0)} °C`}
+                      </Table.Td>
+                      <Table.Td>{device.percentageUsed}%</Table.Td>
+                      <Table.Td>
+                        {device.availableSparePercent}%
+                        <Text size="xs" c="dimmed">
+                          阈值 {device.spareThresholdPercent}%
+                        </Text>
+                      </Table.Td>
+                      <Table.Td>{bytes(device.dataWrittenBytes)}</Table.Td>
+                      <Table.Td>
+                        {device.powerOnHours} 小时
+                        <Text size="xs" c="dimmed">
+                          {device.powerCycles} 次上电
+                        </Text>
+                      </Table.Td>
+                      <Table.Td>
+                        {device.mediaErrors}
+                        <Text size="xs" c="dimmed">
+                          日志 {device.errorLogEntries} 条
+                        </Text>
+                      </Table.Td>
+                      <Table.Td>
+                        <Badge
+                          color={device.criticalWarning === 0 ? "teal" : "red"}
+                          variant="light"
+                        >
+                          {device.criticalWarning === 0
+                            ? "正常"
+                            : `0x${device.criticalWarning.toString(16).toUpperCase()}`}
+                        </Badge>
+                        {device.unsafeShutdowns > 0 && (
+                          <Text size="xs" c="dimmed">
+                            异常断电 {device.unsafeShutdowns}
+                          </Text>
+                        )}
+                      </Table.Td>
+                    </Table.Tr>
+                  ))}
+                </Table.Tbody>
+              </Table>
+            )}
+          </>
+        )}
+      </Card>
 
       {draft && (
         <Card className="glass-card" radius="lg">
@@ -3098,7 +3229,7 @@ export default function App() {
           </Text>
         </Paper>
         <Text size="xs" c="dimmed">
-          v0.23.0 · 跑分环境记录
+          v0.24.0 · NVMe 健康日志直读
         </Text>
       </aside>
       <main className="content">

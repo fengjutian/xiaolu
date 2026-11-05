@@ -1,5 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import type { BenchmarkPreflight, BenchmarkRecord, BenchmarkResult, CleanupPreview, DiagnosticReport, DirectoryListing, DriverInventory, DriverUpdate, DuplicateScan, EventLogResult, HardwareDetails, LargeFileScan, NetworkDiagnosticReport, ScheduledTaskInventory, SensorHistorySeries, SensorSettings, SensorSnapshot, SensorValue, SoftwareInventory, StartupItem, StorageKind, StorageScan, SystemSnapshot } from "./types";
+import type { BenchmarkPreflight, BenchmarkRecord, BenchmarkResult, CleanupPreview, DiagnosticReport, DirectoryListing, DriverInventory, DriverUpdate, DuplicateScan, EventLogResult, HardwareDetails, LargeFileScan, NetworkDiagnosticReport, NvmeHealthReport, ScheduledTaskInventory, SensorHistorySeries, SensorSettings, SensorSnapshot, SensorValue, SoftwareInventory, StartupItem, StorageKind, StorageScan, SystemSnapshot } from "./types";
 
 const gib = 1024 ** 3;
 
@@ -400,6 +400,37 @@ export async function queryEventLog(
     search,
     limit,
   });
+}
+
+export async function getNvmeHealth(): Promise<NvmeHealthReport> {
+  if (!isTauri()) {
+    return {
+      capturedAtUnixMs: Date.now(),
+      devices: [
+        {
+          device: "\\\\.\\PhysicalDrive0",
+          criticalWarning: 0,
+          temperatureC: 41,
+          availableSparePercent: 100,
+          spareThresholdPercent: 10,
+          percentageUsed: 3,
+          dataReadBytes: 1.8 * 1024 ** 4,
+          dataWrittenBytes: 640 * gib,
+          powerOnHours: 1260,
+          powerCycles: 128,
+          unsafeShutdowns: 2,
+          mediaErrors: 0,
+          errorLogEntries: 4,
+          source: "浏览器演示",
+        },
+      ],
+      accessDenied: false,
+      unsupported: false,
+      lastError: null,
+      note: "浏览器演示数据",
+    };
+  }
+  return invoke<NvmeHealthReport>("get_nvme_health");
 }
 
 function compileShader(gl: WebGL2RenderingContext, type: number, source: string): WebGLShader {

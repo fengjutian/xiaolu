@@ -511,3 +511,29 @@ export interface EventLogResult {
   truncated: boolean;
   source: string;
 }
+
+export interface NvmeHealth {
+  device: string;
+  criticalWarning: number;
+  temperatureC: number | null;
+  availableSparePercent: number;
+  spareThresholdPercent: number;
+  percentageUsed: number;
+  dataReadBytes: number;
+  dataWrittenBytes: number;
+  powerOnHours: number;
+  powerCycles: number;
+  unsafeShutdowns: number;
+  mediaErrors: number;
+  errorLogEntries: number;
+  source: string;
+}
+
+export interface NvmeHealthReport {
+  capturedAtUnixMs: number;
+  devices: NvmeHealth[];
+  accessDenied: boolean;
+  unsupported: boolean;
+  lastError: string | null;
+  note: string;
+}
