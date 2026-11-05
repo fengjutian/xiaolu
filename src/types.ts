@@ -207,3 +207,21 @@ export interface NetworkDiagnosticReport {
   }>;
   source: string;
 }
+
+export interface SoftwareInventory {
+  capturedAtUnixMs: number;
+  total: number;
+  estimatedSizeBytes: number;
+  items: Array<{
+    name: string;
+    version: string;
+    publisher: string;
+    installDate: string;
+    installLocation: string;
+    estimatedSizeBytes: number;
+    scope: string;
+    architecture: string;
+    uninstallAvailable: boolean;
+  }>;
+  source: string;
+}

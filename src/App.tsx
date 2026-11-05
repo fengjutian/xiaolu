@@ -28,6 +28,7 @@ import {
   IconAlertCircle,
   IconArrowDown,
   IconArrowUp,
+  IconApps,
   IconBolt,
   IconCpu,
   IconDeviceDesktop,
@@ -61,6 +62,7 @@ import {
   getHardwareDetails,
   getNetworkDiagnostics,
   getSensorSnapshot,
+  getSoftwareInventory,
   getStartupItems,
   getSystemSnapshot,
   isDesktopRuntime,
@@ -78,6 +80,7 @@ import type {
   NetworkDiagnosticReport,
   SensorReading,
   SensorSnapshot,
+  SoftwareInventory,
   StartupItem,
   SystemSnapshot,
 } from "./types";
@@ -90,6 +93,7 @@ type Tab =
   | "drivers"
   | "diagnostics"
   | "network"
+  | "software"
   | "hardware"
   | "processes"
   | "startup"
@@ -111,6 +115,7 @@ const nav = [
   ["drivers", "驱动检测", IconTool],
   ["diagnostics", "系统诊断", IconHeartbeat],
   ["network", "网络诊断", IconNetwork],
+  ["software", "软件清单", IconApps],
   ["hardware", "硬件详情", IconCpu],
   ["processes", "运行进程", IconActivity],
   ["startup", "启动项管理", IconRocket],
@@ -687,6 +692,111 @@ function DriversPanel({ data }: { data: DriverInventory | null }) {
   );
 }
 
+function SoftwarePanel({ data }: { data: SoftwareInventory | null }) {
+  const [query, setQuery] = useState("");
+  if (!data)
+    return (
+      <Center h={260}>
+        <Loader />
+      </Center>
+    );
+  const needle = query.trim().toLowerCase();
+  const items = data.items.filter(
+    (item) =>
+      !needle ||
+      [item.name, item.version, item.publisher, item.installLocation].some(
+        (value) => value.toLowerCase().includes(needle),
+      ),
+  );
+  const dated = [...data.items]
+    .filter((item) => item.installDate)
+    .sort((a, b) => b.installDate.localeCompare(a.installDate));
+  return (
+    <Stack gap="md">
+      <SimpleGrid cols={{ base: 1, md: 3 }}>
+        <Stat
+          icon={IconApps}
+          label="已安装程序"
+          value={String(data.total)}
+          hint={data.source}
+          color="indigo"
+        />
+        <Stat
+          icon={IconServer}
+          label="登记占用空间"
+          value={bytes(data.estimatedSizeBytes)}
+          hint="仅统计提供 EstimatedSize 的程序"
+          color="teal"
+        />
+        <Stat
+          icon={IconActivity}
+          label="最近登记安装"
+          value={dated[0]?.installDate || "日期不可用"}
+          hint={dated[0]?.name || "没有安装日期记录"}
+          color="blue"
+        />
+      </SimpleGrid>
+      <Alert color="blue" icon={<IconShieldCheck />}>
+        清单直接读取 HKLM/HKCU 卸载注册表，不调用可能触发 MSI 修复的
+        Win32_Product，也不会执行卸载。
+      </Alert>
+      <TextInput
+        value={query}
+        onChange={(event) => setQuery(event.currentTarget.value)}
+        leftSection={<IconSearch size={17} />}
+        placeholder="搜索软件、版本、发布者或安装位置"
+      />
+      <Card className="glass-card" radius="lg" p={0}>
+        <ScrollArea h="calc(100vh - 360px)">
+          <Table stickyHeader highlightOnHover verticalSpacing="sm">
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>软件</Table.Th>
+                <Table.Th>版本与发布者</Table.Th>
+                <Table.Th>范围</Table.Th>
+                <Table.Th>登记大小</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {items.map((item, index) => (
+                <Table.Tr
+                  key={`${item.name}-${item.version}-${item.scope}-${index}`}
+                >
+                  <Table.Td>
+                    <Text fw={700}>{item.name}</Text>
+                    <Text size="xs" c="dimmed" truncate maw={360}>
+                      {item.installLocation || "未登记安装位置"}
+                    </Text>
+                  </Table.Td>
+                  <Table.Td>
+                    <Text size="sm">{item.version || "版本未知"}</Text>
+                    <Text size="xs" c="dimmed">
+                      {item.publisher || "发布者未知"}
+                    </Text>
+                  </Table.Td>
+                  <Table.Td>
+                    <Badge variant="light">
+                      {item.scope} · {item.architecture}
+                    </Badge>
+                    <Text size="xs" c="dimmed" mt={5}>
+                      {item.uninstallAvailable ? "提供卸载入口" : "无卸载入口"}
+                    </Text>
+                  </Table.Td>
+                  <Table.Td>
+                    {item.estimatedSizeBytes
+                      ? bytes(item.estimatedSizeBytes)
+                      : "未登记"}
+                  </Table.Td>
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+        </ScrollArea>
+      </Card>
+    </Stack>
+  );
+}
+
 function NetworkPanel({ data }: { data: NetworkDiagnosticReport | null }) {
   const [query, setQuery] = useState("");
   if (!data)
@@ -1175,6 +1285,7 @@ export default function App() {
   const [diagnostics, setDiagnostics] = useState<DiagnosticReport | null>(null);
   const [networkDiagnostics, setNetworkDiagnostics] =
     useState<NetworkDiagnosticReport | null>(null);
+  const [software, setSoftware] = useState<SoftwareInventory | null>(null);
   const [startup, setStartup] = useState<StartupItem[]>([]);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1257,6 +1368,12 @@ export default function App() {
         .then(setNetworkDiagnostics)
         .catch((e) => setError(String(e)));
   }, [tab, networkDiagnostics]);
+  useEffect(() => {
+    if (tab === "software" && !software)
+      void getSoftwareInventory()
+        .then(setSoftware)
+        .catch((e) => setError(String(e)));
+  }, [tab, software]);
   const loadStartup = useCallback(
     () =>
       getStartupItems()
@@ -1374,7 +1491,7 @@ export default function App() {
           </Text>
         </Paper>
         <Text size="xs" c="dimmed">
-          v0.9.0 · 网络诊断
+          v0.10.0 · 软件清单
         </Text>
       </aside>
       <main className="content">
@@ -1508,6 +1625,7 @@ export default function App() {
         {tab === "drivers" && <DriversPanel data={drivers} />}
         {tab === "diagnostics" && <DiagnosticsPanel data={diagnostics} />}
         {tab === "network" && <NetworkPanel data={networkDiagnostics} />}
+        {tab === "software" && <SoftwarePanel data={software} />}
         {tab === "processes" && (
           <Card className="glass-card" radius="lg" p={0}>
             <ScrollArea h="calc(100vh - 180px)">

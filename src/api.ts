@@ -1,5 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import type { BenchmarkRecord, BenchmarkResult, DiagnosticReport, DriverInventory, DriverUpdate, HardwareDetails, NetworkDiagnosticReport, SensorSnapshot, StartupItem, SystemSnapshot } from "./types";
+import type { BenchmarkRecord, BenchmarkResult, DiagnosticReport, DriverInventory, DriverUpdate, HardwareDetails, NetworkDiagnosticReport, SensorSnapshot, SoftwareInventory, StartupItem, SystemSnapshot } from "./types";
 
 const gib = 1024 ** 3;
 
@@ -116,6 +116,11 @@ export async function getDiagnosticReport(): Promise<DiagnosticReport> {
 export async function getNetworkDiagnostics(): Promise<NetworkDiagnosticReport> {
   if (!isTauri()) return { capturedAtUnixMs: Date.now(), defaultGateways: ["192.168.1.1"], dns: [{ alias: "Wi-Fi", servers: ["1.1.1.1", "8.8.8.8"] }], proxyEnabled: false, proxyServer: "", autoConfigUrl: "", hostsCustomEntries: 2, connections: [{ processName: "browser", pid: 1234, localAddress: "192.168.1.10", localPort: 50123, remoteAddress: "93.184.216.34", remotePort: 443, state: "Established" }], source: "浏览器演示" };
   return invoke<NetworkDiagnosticReport>("get_network_diagnostics");
+}
+
+export async function getSoftwareInventory(): Promise<SoftwareInventory> {
+  if (!isTauri()) return { capturedAtUnixMs: Date.now(), total: 2, estimatedSizeBytes: 2.4 * gib, source: "浏览器演示", items: [{ name: "演示应用", version: "1.2.0", publisher: "演示厂商", installDate: "20260101", installLocation: "C:\\Apps\\Demo", estimatedSizeBytes: 1.4 * gib, scope: "所有用户", architecture: "64-bit", uninstallAvailable: true }, { name: "示例工具", version: "3.0", publisher: "示例组织", installDate: "", installLocation: "", estimatedSizeBytes: 1 * gib, scope: "当前用户", architecture: "当前用户", uninstallAvailable: true }] };
+  return invoke<SoftwareInventory>("get_software_inventory");
 }
 
 function compileShader(gl: WebGL2RenderingContext, type: number, source: string): WebGLShader {

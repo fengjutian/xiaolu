@@ -4,6 +4,7 @@ mod drivers;
 mod benchmark;
 mod diagnostics;
 mod network_diagnostics;
+mod software;
 
 use tauri::{menu::{Menu, MenuItem}, tray::TrayIconBuilder, Manager};
 
@@ -37,7 +38,7 @@ pub fn run() {
                 let _ = window.hide();
             }
         })
-        .invoke_handler(tauri::generate_handler![system::get_system_snapshot, system::get_hardware_details, system::get_startup_items, system::set_startup_enabled, sensors::get_sensor_snapshot, drivers::get_driver_inventory, drivers::scan_driver_updates, benchmark::run_benchmark, benchmark::get_benchmark_history, benchmark::save_external_benchmark, diagnostics::get_diagnostic_report, network_diagnostics::get_network_diagnostics])
+        .invoke_handler(tauri::generate_handler![system::get_system_snapshot, system::get_hardware_details, system::get_startup_items, system::set_startup_enabled, sensors::get_sensor_snapshot, drivers::get_driver_inventory, drivers::scan_driver_updates, benchmark::run_benchmark, benchmark::get_benchmark_history, benchmark::save_external_benchmark, diagnostics::get_diagnostic_report, network_diagnostics::get_network_diagnostics, software::get_software_inventory])
         .run(tauri::generate_context!())
         .expect("failed to run System Lens");
 }
