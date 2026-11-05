@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "cclean",
+  "name": "C 盘瘦身",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "description": "只读统计 C 盘可清理位置、回收站、更新缓存与系统托管文件",
+  "category": "cleanup",
+  "risk": "read_only",
+  "entry": "cclean.exe",
+  "arguments": ["--stdio"],
+  "permissions": {
+    "readPaths": ["%TEMP%", "%WINDIR%\\Temp", "%SystemDrive%\\$Recycle.Bin"],
+    "writePaths": [],
+    "registry": [],
+    "network": false,
+    "elevation": "none"
+  },
+  "actions": [{ "id": "preview", "label": "预览", "write": false }],
+  "limits": { "timeoutMs": 120000, "maxOutputBytes": 4194304 },
+  "ui": { "kind": "table", "columns": ["label", "bytes", "category"] },
+  "rollback": "none",
+  "hash": "",
+  "signature": null
+}

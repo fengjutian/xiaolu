@@ -1,0 +1,19 @@
+[package]
+name = "cclean-tool"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "cclean"
+path = "src/main.rs"
+
+[dependencies]
+serde_json = "1"
+sysinfo = "0.40.1"
+walkdir = "2.5"
+
+[profile.release]
+panic = "abort"
+strip = true
+lto = true
+opt-level = "s"

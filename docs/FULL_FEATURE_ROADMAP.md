@@ -1,7 +1,7 @@
 # 小鲁 System Lens：完整功能规划
 
 版本：0.3 规划稿  
-状态：实施中（0.28.0 工具箱框架与工具包规范）
+状态：实施中（0.29.0 工具箱独立工具进程）
 目标平台：Windows 10/11 x64  
 桌面框架：Tauri 2 + React + Rust
 
@@ -172,6 +172,18 @@ v0.28.0 新增（工具箱框架与工具包规范）：
 - 新增 [工具包规范](TOOL_PACKAGE_SPEC.md)：**一工具一文件夹一程序**，独立进程、
   清单校验、stdio IPC、确认令牌与回滚策略
 - 下一阶段把现有 C 盘瘦身逻辑迁到 `tools/cclean`，宿主只负责发现与渲染
+
+v0.29.0 新增（工具箱独立工具进程）：
+
+- `tools/cclean` 成为首个独立工具程序：独立 crate、独立 `cclean.exe`、独立清单
+- 宿主 `toolbox_host` 从 `tools/` 发现工具：校验目录名/id、schemaVersion、apiVersion、
+  entry 路径，缺失或非法仅禁用该工具
+- stdio JSON 协议：握手 → 请求 → 结果/错误；5 秒握手超时、动作超时、输出上限
+- 前端通过 `run_tool_action` 调用工具，不再依赖主应用内置扫描逻辑
+- `tools/build.ps1` 构建并打包到 `tools-dist/<id>/`；开发时用
+  `SYSTEM_LENS_TOOLS_DIR` 指向该目录
+- 实机验证：工具箱显示“C 盘瘦身 v0.1.0 · 独立工具进程”，扫描返回
+  可安全清理 27.5 GB、需确认 129.7 MB、系统托管 72.4 GB
 
 现有代码入口：
 

@@ -78,7 +78,7 @@ import {
   getNvmeHealth,
   getSensorHistory,
   listToolboxTools,
-  scanCDriveSlim,
+  runToolAction,
   getSensorSettings,
   getSensorSnapshot,
   getScheduledTasks,
@@ -3141,7 +3141,7 @@ function ToolboxPanel() {
     setScanning(true);
     setScanError(null);
     try {
-      setSlim(await scanCDriveSlim());
+      setSlim(await runToolAction("cclean", "preview"));
     } catch (reason) {
       setScanError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -3611,7 +3611,7 @@ export default function App() {
           </Text>
         </Paper>
         <Text size="xs" c="dimmed">
-          v0.28.0 · 工具箱（C 盘瘦身）
+          v0.29.0 · 工具箱独立工具进程
         </Text>
       </aside>
       <main className="content">

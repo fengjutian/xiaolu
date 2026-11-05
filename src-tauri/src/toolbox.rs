@@ -3,43 +3,14 @@ use serde::Serialize;
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolDescriptor {
-    id: String,
-    name: String,
-    category: String,
-    description: String,
-    risk: String,
-    requires_admin: bool,
-    status: String,
-    note: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SlimItem {
-    id: String,
-    label: String,
-    path: String,
-    bytes: u64,
-    file_count: usize,
-    category: String,
-    requires_admin: bool,
-    truncated: bool,
-    note: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SlimScan {
-    captured_at_unix_ms: u64,
-    drive_letter: String,
-    drive_total_bytes: u64,
-    drive_free_bytes: u64,
-    items: Vec<SlimItem>,
-    safe_bytes: u64,
-    caution_bytes: u64,
-    system_bytes: u64,
-    file_count: usize,
-    note: String,
+    pub id: String,
+    pub name: String,
+    pub category: String,
+    pub description: String,
+    pub risk: String,
+    pub requires_admin: bool,
+    pub status: String,
+    pub note: String,
 }
 
 fn tool(
@@ -64,11 +35,12 @@ fn tool(
     }
 }
 
-/// 31 项 SuperApp 工具的注册表。只有 `available` 的项在工具箱里可执行。
+/// 31 项工具的静态注册表。实际可运行的工具由 `toolbox_host` 从 tools/ 目录发现，
+/// 并覆盖同 id 的静态条目；这里保留完整清单用于展示“规划中”的工具。
 pub fn tools() -> Vec<ToolDescriptor> {
     vec![
         tool("sys_clean", "Windows 系统瘦身", "清理", "移除系统自带的无用组件与预装应用（规划）", "write", true, "planned", "需要逐项确认与回滚设计"),
-        tool("cclean", "C 盘瘦身", "清理", "只读统计 C 盘可清理位置与系统托管文件", "read_only", false, "available", "当前仅预览，不删除"),
+        tool("cclean", "C 盘瘦身", "清理", "只读统计 C 盘可清理位置与系统托管文件", "read_only", false, "planned", "工具包未安装"),
         tool("clean_master", "清理大师", "清理", "聚合系统、应用与浏览器缓存清理（规划）", "write", true, "planned", "写操作需独立授权"),
         tool("privacy_clean", "隐私清理", "隐私", "浏览记录、Cookie 与临时痕迹清理（规划）", "write", false, "planned", "涉及浏览器数据，需逐项确认"),
         tool("privacy_incognito", "无痕模式", "隐私", "运行期间减少本地痕迹（规划）", "write", false, "planned", "需明确边界"),
@@ -101,122 +73,6 @@ pub fn tools() -> Vec<ToolDescriptor> {
     ]
 }
 
-fn category_for(id: &str) -> &'static str {
-    match id {
-        "user-temp" | "thumbnail-cache" | "edge-cache" | "inet-cache" | "crash-dumps"
-        | "error-reporting" => "safe",
-        "windows-temp" | "windows-update" | "recycle-bin" => "caution",
-        _ => "caution",
-    }
-}
-
-fn system_file(path: &str, label: &str, note: &str) -> Option<SlimItem> {
-    let metadata = std::fs::metadata(path).ok()?;
-    if !metadata.is_file() {
-        return None;
-    }
-    Some(SlimItem {
-        id: format!("system-{}", label),
-        label: label.into(),
-        path: path.into(),
-        bytes: metadata.len(),
-        file_count: 1,
-        category: "system".into(),
-        requires_admin: false,
-        truncated: false,
-        note: note.into(),
-    })
-}
-
-fn now_unix_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
-}
-
-pub fn scan_c_drive() -> SlimScan {
-    let preview = crate::cleanup_preview::build_preview(None);
-    let mut items: Vec<SlimItem> = preview
-        .candidates
-        .into_iter()
-        .filter(|candidate| candidate.exists && candidate.bytes > 0)
-        .map(|candidate| SlimItem {
-            category: category_for(&candidate.id).into(),
-            id: candidate.id,
-            label: candidate.label,
-            path: candidate.path,
-            bytes: candidate.bytes,
-            file_count: candidate.file_count,
-            requires_admin: candidate.requires_admin,
-            truncated: candidate.truncated,
-            note: candidate.note,
-        })
-        .collect();
-
-    items.extend(system_file(
-        r"C:\pagefile.sys",
-        "页面文件 pagefile.sys",
-        "由系统管理；可在“高级系统设置”中调整大小或移动到其他盘。",
-    ));
-    items.extend(system_file(
-        r"C:\hiberfil.sys",
-        "休眠文件 hiberfil.sys",
-        "由系统管理；可在电源设置中关闭休眠以释放空间。",
-    ));
-    items.extend(system_file(
-        r"C:\swapfile.sys",
-        "交换文件 swapfile.sys",
-        "由系统管理，不建议直接删除。",
-    ));
-
-    items.sort_by(|left, right| right.bytes.cmp(&left.bytes));
-
-    let safe_bytes = items.iter().filter(|item| item.category == "safe").map(|item| item.bytes).sum();
-    let caution_bytes = items.iter().filter(|item| item.category == "caution").map(|item| item.bytes).sum();
-    let system_bytes = items.iter().filter(|item| item.category == "system").map(|item| item.bytes).sum();
-    let file_count: usize = items.iter().map(|item| item.file_count).sum();
-
-    let mut drive_total_bytes = 0u64;
-    let mut drive_free_bytes = 0u64;
-    if let Ok(disks) = sysinfo::Disks::new_with_refreshed_list().map_err(|error| error.to_string()) {
-        if let Some(disk) = disks.iter().find(|disk| {
-            disk.mount_point()
-                .to_string_lossy()
-                .to_lowercase()
-                .starts_with("c:")
-        }) {
-            drive_total_bytes = disk.total_space();
-            drive_free_bytes = disk.available_space();
-        }
-    }
-
-    SlimScan {
-        captured_at_unix_ms: now_unix_ms(),
-        drive_letter: "C:".into(),
-        drive_total_bytes,
-        drive_free_bytes,
-        items,
-        safe_bytes,
-        caution_bytes,
-        system_bytes,
-        file_count,
-        note: "只读预览：只统计占用，不删除任何文件；删除能力将在后续版本按项确认后提供。".into(),
-    }
-}
-
-#[tauri::command]
-pub async fn list_toolbox_tools() -> Result<Vec<ToolDescriptor>, String> {
-    Ok(tools())
-}
-
-#[tauri::command]
-pub async fn scan_c_drive_slim() -> Result<SlimScan, String> {
-    tauri::async_runtime::spawn_blocking(scan_c_drive)
-        .await
-        .map_err(|error| format!("C 盘瘦身扫描任务失败：{error}"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -229,14 +85,6 @@ mod tests {
         ids.sort();
         ids.dedup();
         assert_eq!(ids.len(), 31);
-        assert!(tools.iter().any(|tool| tool.id == "cclean" && tool.status == "available"));
         assert!(tools.iter().all(|tool| matches!(tool.status.as_str(), "available" | "partial" | "planned")));
-    }
-
-    #[test]
-    fn classifies_cleanup_candidates() {
-        assert_eq!(category_for("user-temp"), "safe");
-        assert_eq!(category_for("windows-update"), "caution");
-        assert_eq!(category_for("unknown-id"), "caution");
     }
 }

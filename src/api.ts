@@ -758,7 +758,10 @@ export async function listToolboxTools(): Promise<ToolDescriptor[]> {
   return invoke<ToolDescriptor[]>("list_toolbox_tools");
 }
 
-export async function scanCDriveSlim(): Promise<SlimScan> {
+export async function runToolAction(
+  toolId: string,
+  action: string,
+): Promise<SlimScan> {
   if (!isTauri()) {
     const items = [
       { id: "user-temp", label: "用户临时文件", path: "C:\\Users\\Demo\\AppData\\Local\\Temp", bytes: 3.4 * gib, fileCount: 8421, category: "safe", requiresAdmin: false, truncated: false, note: "应用运行时可能仍在写入。" },
@@ -779,7 +782,7 @@ export async function scanCDriveSlim(): Promise<SlimScan> {
       note: "只读预览：只统计占用，不删除任何文件。",
     };
   }
-  return invoke<SlimScan>("scan_c_drive_slim");
+  return invoke<SlimScan>("run_tool_action", { toolId, action });
 }
 
 export function isDesktopRuntime(): boolean {
