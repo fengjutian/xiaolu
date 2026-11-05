@@ -3178,6 +3178,7 @@ function ToolboxPanel() {
 
   const available = tools.filter((tool) => tool.status !== "planned");
   const planned = tools.filter((tool) => tool.status === "planned");
+  const runnable = available.filter((tool) => tool.status === "available").length;
   const usedBytes = slim
     ? Math.max(0, slim.driveTotalBytes - slim.driveFreeBytes)
     : 0;
@@ -3185,8 +3186,8 @@ function ToolboxPanel() {
   return (
     <Stack gap="md">
       <Alert color="blue" icon={<IconShieldCheck />}>
-        工具箱按“只读预览 → 逐项确认 → 可回滚执行”推进。当前仅 C
-        盘瘦身可运行，且不会删除任何文件。
+        工具箱按“只读预览 → 逐项确认 → 可回滚执行”推进。当前有 {runnable}{" "}
+        个可运行工具，预览均不会删除或修改任何文件。
       </Alert>
       {error && (
         <Alert color="red" icon={<IconAlertCircle />}>
@@ -3694,7 +3695,7 @@ export default function App() {
           </Text>
         </Paper>
         <Text size="xs" c="dimmed">
-          v0.29.0 · 工具箱独立工具进程
+          v0.30.0 · 4 个只读工具
         </Text>
       </aside>
       <main className="content">
