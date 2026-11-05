@@ -336,3 +336,56 @@ export interface StorageScan {
   truncated: boolean;
   categories: Array<{ extension: string; fileCount: number; totalBytes: number }>;
 }
+
+export type StorageKind = StorageScan["kind"];
+
+export interface LargeFileEntry {
+  path: string;
+  name: string;
+  bytes: number;
+  modifiedUnixMs: number | null;
+}
+
+export interface DirectoryUsage {
+  path: string;
+  name: string;
+  bytes: number;
+  fileCount: number;
+}
+
+export interface LargeFileScan {
+  kind: StorageKind;
+  label: string;
+  root: string;
+  minBytes: number;
+  files: LargeFileEntry[];
+  directories: DirectoryUsage[];
+  totalBytes: number;
+  fileCount: number;
+  errorCount: number;
+  truncated: boolean;
+}
+
+export interface DuplicateFile {
+  path: string;
+  name: string;
+  bytes: number;
+}
+
+export interface DuplicateGroup {
+  sizeBytes: number;
+  hash: string;
+  files: DuplicateFile[];
+  wastedBytes: number;
+}
+
+export interface DuplicateScan {
+  kind: StorageKind;
+  label: string;
+  root: string;
+  groups: DuplicateGroup[];
+  candidateFiles: number;
+  scannedBytes: number;
+  errorCount: number;
+  truncated: boolean;
+}

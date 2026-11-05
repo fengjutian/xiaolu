@@ -79,6 +79,8 @@ import {
   isDesktopRuntime,
   runBenchmark,
   scanDriverUpdates,
+  scanDuplicates,
+  scanLargeFiles,
   scanStorage,
   setStartupEnabled,
 } from "./api";
@@ -88,7 +90,9 @@ import type {
   DriverInventory,
   DriverUpdate,
   DiagnosticReport,
+  DuplicateScan,
   HardwareDetails,
+  LargeFileScan,
   NetworkDiagnosticReport,
   SensorHistorySeries,
   SensorSettings,
@@ -1168,6 +1172,13 @@ function StoragePanel() {
   const [running, setRunning] = useState<StorageScan["kind"] | null>(null);
   const [results, setResults] = useState<Record<string, StorageScan>>({});
   const [failure, setFailure] = useState<string | null>(null);
+  const [deepKind, setDeepKind] = useState<StorageScan["kind"]>("downloads");
+  const [minMb, setMinMb] = useState("10");
+  const [large, setLarge] = useState<LargeFileScan | null>(null);
+  const [dupes, setDupes] = useState<DuplicateScan | null>(null);
+  const [loadingLarge, setLoadingLarge] = useState(false);
+  const [loadingDupes, setLoadingDupes] = useState(false);
+  const [deepFailure, setDeepFailure] = useState<string | null>(null);
   const scan = async (kind: StorageScan["kind"]) => {
     setRunning(kind);
     setFailure(null);
@@ -1180,6 +1191,32 @@ function StoragePanel() {
       setRunning(null);
     }
   };
+  const runLarge = async () => {
+    setLoadingLarge(true);
+    setDeepFailure(null);
+    try {
+      setLarge(await scanLargeFiles(deepKind, Number(minMb) * 1024 ** 2, 50));
+    } catch (error) {
+      setDeepFailure(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoadingLarge(false);
+    }
+  };
+  const runDupes = async () => {
+    setLoadingDupes(true);
+    setDeepFailure(null);
+    try {
+      setDupes(await scanDuplicates(deepKind, 50));
+    } catch (error) {
+      setDeepFailure(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoadingDupes(false);
+    }
+  };
+  const maxDirectoryBytes = Math.max(
+    1,
+    ...(large?.directories.map((item) => item.bytes) ?? []),
+  );
   return (
     <Stack gap="md">
       <Alert color="blue" icon={<IconShieldCheck />}>
@@ -1273,6 +1310,189 @@ function StoragePanel() {
           </Stack>
         </Card>
       ))}
+
+      <Card className="glass-card" radius="lg">
+        <Group justify="space-between" align="flex-start" wrap="wrap">
+          <Box>
+            <Text fw={800}>大文件与重复文件</Text>
+            <Text size="xs" c="dimmed">
+              只读扫描，不删除任何文件；重复文件按大小分组后做全量哈希
+            </Text>
+          </Box>
+          <Group gap="sm">
+            <Select
+              size="xs"
+              w={120}
+              allowDeselect={false}
+              value={deepKind}
+              onChange={(value) => {
+                if (!value) return;
+                setDeepKind(value as StorageScan["kind"]);
+                setLarge(null);
+                setDupes(null);
+              }}
+              data={[
+                { value: "downloads", label: "下载" },
+                { value: "documents", label: "文档" },
+                { value: "desktop", label: "桌面" },
+              ]}
+            />
+            <Select
+              size="xs"
+              w={140}
+              allowDeselect={false}
+              value={minMb}
+              onChange={(value) => setMinMb(value ?? "10")}
+              data={[
+                { value: "10", label: "≥ 10 MB" },
+                { value: "100", label: "≥ 100 MB" },
+                { value: "1024", label: "≥ 1 GB" },
+              ]}
+            />
+            <Button size="xs" loading={loadingLarge} onClick={() => void runLarge()}>
+              扫描大文件
+            </Button>
+            <Button
+              size="xs"
+              variant="light"
+              loading={loadingDupes}
+              onClick={() => void runDupes()}
+            >
+              查找重复文件
+            </Button>
+          </Group>
+        </Group>
+
+        {deepFailure && (
+          <Alert color="red" icon={<IconAlertCircle />} mt="md">
+            {deepFailure}
+          </Alert>
+        )}
+
+        {large && (
+          <Box mt="lg">
+            <Group gap="lg" mb="sm">
+              <Badge variant="light">{large.label}</Badge>
+              <Text size="xs" c="dimmed">
+                {large.fileCount} 个文件 · 总计 {bytes(large.totalBytes)}
+              </Text>
+              {large.truncated && <Badge color="orange">已达 25 万文件上限</Badge>}
+            </Group>
+            <SimpleGrid cols={{ base: 1, lg: 2 }}>
+              <Box>
+                <Text fw={700} size="sm" mb="xs">
+                  目录占用
+                </Text>
+                <Stack gap="sm">
+                  {large.directories.map((directory) => (
+                    <Box key={directory.path}>
+                      <Group justify="space-between">
+                        <Text size="sm" fw={600}>
+                          {directory.name}
+                        </Text>
+                        <Text size="xs" c="dimmed">
+                          {directory.fileCount} 个 · {bytes(directory.bytes)}
+                        </Text>
+                      </Group>
+                      <Progress
+                        value={(directory.bytes / maxDirectoryBytes) * 100}
+                        mt={5}
+                      />
+                    </Box>
+                  ))}
+                </Stack>
+              </Box>
+              <Box>
+                <Text fw={700} size="sm" mb="xs">
+                  最大的文件
+                </Text>
+                {large.files.length === 0 ? (
+                  <Text c="dimmed" size="sm">
+                    没有超过阈值的文件。
+                  </Text>
+                ) : (
+                  <Table highlightOnHover verticalSpacing="xs">
+                    <Table.Thead>
+                      <Table.Tr>
+                        <Table.Th>文件</Table.Th>
+                        <Table.Th>大小</Table.Th>
+                        <Table.Th>修改时间</Table.Th>
+                      </Table.Tr>
+                    </Table.Thead>
+                    <Table.Tbody>
+                      {large.files.map((file) => (
+                        <Table.Tr key={file.path}>
+                          <Table.Td>
+                            <Text size="sm" fw={600} truncate maw={220}>
+                              {file.name}
+                            </Text>
+                            <Text size="xs" c="dimmed" truncate maw={260}>
+                              {file.path}
+                            </Text>
+                          </Table.Td>
+                          <Table.Td>{bytes(file.bytes)}</Table.Td>
+                          <Table.Td>
+                            <Text size="xs" c="dimmed">
+                              {file.modifiedUnixMs
+                                ? new Date(file.modifiedUnixMs).toLocaleDateString()
+                                : "未知"}
+                            </Text>
+                          </Table.Td>
+                        </Table.Tr>
+                      ))}
+                    </Table.Tbody>
+                  </Table>
+                )}
+              </Box>
+            </SimpleGrid>
+          </Box>
+        )}
+
+        {dupes && (
+          <Box mt="lg">
+            <Group gap="lg" mb="sm">
+              <Badge variant="light">{dupes.label}</Badge>
+              <Text size="xs" c="dimmed">
+                已哈希 {dupes.candidateFiles} 个文件 · {bytes(dupes.scannedBytes)} ·{" "}
+                {dupes.groups.length} 组重复
+              </Text>
+              {dupes.truncated && (
+                <Badge color="orange">已达哈希上限，结果可能不完整</Badge>
+              )}
+            </Group>
+            {dupes.groups.length === 0 ? (
+              <Alert color="teal" icon={<IconShieldCheck />}>
+                未发现重复文件（只比较 ≥1 MiB 且内容哈希一致的文件）。
+              </Alert>
+            ) : (
+              <Stack gap="sm">
+                {dupes.groups.map((group) => (
+                  <Paper
+                    key={`${group.hash}-${group.sizeBytes}`}
+                    p="md"
+                    radius="md"
+                    withBorder
+                  >
+                    <Group justify="space-between">
+                      <Text fw={700} size="sm">
+                        {group.files.length} 个相同文件 · 每个 {bytes(group.sizeBytes)}
+                      </Text>
+                      <Badge color="orange">可释放 {bytes(group.wastedBytes)}</Badge>
+                    </Group>
+                    <Stack gap={4} mt="xs">
+                      {group.files.map((file) => (
+                        <Text key={file.path} size="xs" c="dimmed" truncate>
+                          {file.path}
+                        </Text>
+                      ))}
+                    </Stack>
+                  </Paper>
+                ))}
+              </Stack>
+            )}
+          </Box>
+        )}
+      </Card>
     </Stack>
   );
 }
@@ -2139,7 +2359,7 @@ export default function App() {
           </Text>
         </Paper>
         <Text size="xs" c="dimmed">
-          v0.14.0 · 报告预览与导出
+          v0.15.0 · 大文件与重复文件
         </Text>
       </aside>
       <main className="content">

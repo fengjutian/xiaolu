@@ -1,5 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import type { BenchmarkRecord, BenchmarkResult, DiagnosticReport, DriverInventory, DriverUpdate, HardwareDetails, NetworkDiagnosticReport, SensorHistorySeries, SensorSettings, SensorSnapshot, SensorValue, SoftwareInventory, StartupItem, StorageScan, SystemSnapshot } from "./types";
+import type { BenchmarkRecord, BenchmarkResult, DiagnosticReport, DriverInventory, DriverUpdate, DuplicateScan, HardwareDetails, LargeFileScan, NetworkDiagnosticReport, SensorHistorySeries, SensorSettings, SensorSnapshot, SensorValue, SoftwareInventory, StartupItem, StorageKind, StorageScan, SystemSnapshot } from "./types";
 
 const gib = 1024 ** 3;
 
@@ -205,6 +205,57 @@ export async function getSoftwareInventory(): Promise<SoftwareInventory> {
 export async function scanStorage(kind: StorageScan["kind"]): Promise<StorageScan> {
   if (!isTauri()) return { kind, label: { downloads: "下载", documents: "文档", desktop: "桌面" }[kind], path: `C:\\Users\\Demo\\${kind}`, fileCount: 1280, directoryCount: 94, totalBytes: 12.4 * gib, errorCount: 0, truncated: false, categories: [{ extension: ".zip", fileCount: 18, totalBytes: 4.2 * gib }, { extension: ".mp4", fileCount: 12, totalBytes: 3.8 * gib }, { extension: ".exe", fileCount: 21, totalBytes: 2.1 * gib }] };
   return invoke<StorageScan>("scan_storage", { kind });
+}
+
+export async function scanLargeFiles(kind: StorageKind, minBytes: number, limit = 50): Promise<LargeFileScan> {
+  if (!isTauri()) {
+    return {
+      kind,
+      label: { downloads: "下载", documents: "文档", desktop: "桌面" }[kind],
+      root: `C:\\Users\\Demo\\${kind}`,
+      minBytes,
+      files: [
+        { path: `C:\\Users\\Demo\\${kind}\\demo-setup.exe`, name: "demo-setup.exe", bytes: 2.4 * gib, modifiedUnixMs: Date.now() - 86400000 },
+        { path: `C:\\Users\\Demo\\${kind}\\movie.mp4`, name: "movie.mp4", bytes: 1.8 * gib, modifiedUnixMs: Date.now() - 3 * 86400000 },
+        { path: `C:\\Users\\Demo\\${kind}\\archive.zip`, name: "archive.zip", bytes: 900 * 1024 ** 2, modifiedUnixMs: Date.now() - 10 * 86400000 },
+      ],
+      directories: [
+        { path: `C:\\Users\\Demo\\${kind}\\Videos`, name: "Videos", bytes: 1.8 * gib, fileCount: 4 },
+        { path: `C:\\Users\\Demo\\${kind}`, name: "(根目录)", bytes: 3.3 * gib, fileCount: 12 },
+      ],
+      totalBytes: 12.4 * gib,
+      fileCount: 1280,
+      errorCount: 0,
+      truncated: false,
+    };
+  }
+  return invoke<LargeFileScan>("scan_large_files", { kind, minBytes, limit });
+}
+
+export async function scanDuplicates(kind: StorageKind, limit = 50): Promise<DuplicateScan> {
+  if (!isTauri()) {
+    return {
+      kind,
+      label: { downloads: "下载", documents: "文档", desktop: "桌面" }[kind],
+      root: `C:\\Users\\Demo\\${kind}`,
+      groups: [
+        {
+          sizeBytes: 1.2 * gib,
+          hash: "demo",
+          wastedBytes: 1.2 * gib,
+          files: [
+            { path: `C:\\Users\\Demo\\${kind}\\setup.exe`, name: "setup.exe", bytes: 1.2 * gib },
+            { path: `C:\\Users\\Demo\\${kind}\\setup (1).exe`, name: "setup (1).exe", bytes: 1.2 * gib },
+          ],
+        },
+      ],
+      candidateFiles: 24,
+      scannedBytes: 3.6 * gib,
+      errorCount: 0,
+      truncated: false,
+    };
+  }
+  return invoke<DuplicateScan>("scan_duplicates", { kind, limit });
 }
 
 function compileShader(gl: WebGL2RenderingContext, type: number, source: string): WebGLShader {
