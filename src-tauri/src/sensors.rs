@@ -28,10 +28,30 @@ pub struct StorageHealth {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SmartAttribute {
+    id: u8,
+    name: String,
+    current: u8,
+    worst: u8,
+    raw: u64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SmartDevice {
+    instance_name: String,
+    predict_failure: Option<bool>,
+    attributes: Vec<SmartAttribute>,
+    source: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SensorSnapshot {
     captured_at_unix_ms: u128,
     readings: Vec<SensorReading>,
     storage: Vec<StorageHealth>,
+    smart_devices: Vec<SmartDevice>,
     limitations: Vec<String>,
 }
 
@@ -82,7 +102,25 @@ Get-PhysicalDisk -ErrorAction SilentlyContinue | ForEach-Object {
   try{$counter=$disk|Get-StorageReliabilityCounter -ErrorAction Stop}catch{}
   $storage+=@{name=$disk.FriendlyName;health=[string]$disk.HealthStatus;operational=([string]::Join(', ',@($disk.OperationalStatus)));temperature=if($counter){$counter.Temperature}else{$null};wear=if($counter){$counter.Wear}else{$null};hours=if($counter){$counter.PowerOnHours}else{$null};readErrors=if($counter){$counter.ReadErrorsTotal}else{$null};writeErrors=if($counter){$counter.WriteErrorsTotal}else{$null}}
 }
-@{gpu=$gpu;thermal=$thermal;storage=$storage}|ConvertTo-Json -Depth 5 -Compress
+$smartStatus=@{}
+Get-CimInstance -Namespace root/wmi -ClassName MSStorageDriver_FailurePredictStatus -ErrorAction SilentlyContinue | ForEach-Object {$smartStatus[$_.InstanceName]=[bool]$_.PredictFailure}
+$smart=@()
+Get-CimInstance -Namespace root/wmi -ClassName MSStorageDriver_FailurePredictData -ErrorAction SilentlyContinue | ForEach-Object {
+  $bytes=$_.VendorSpecific;$attributes=@()
+  if($bytes){
+    for($offset=2;$offset+11 -lt $bytes.Count;$offset+=12){
+      $id=[int]$bytes[$offset]
+      if($id -gt 0){
+        [uint64]$raw=0
+        for($j=0;$j -lt 6;$j++){$raw=$raw -bor ([uint64]$bytes[$offset+5+$j] -shl (8*$j))}
+        $attributes+=@{id=$id;current=[int]$bytes[$offset+3];worst=[int]$bytes[$offset+4];raw=$raw}
+      }
+    }
+  }
+  $prediction=$null;if($smartStatus.ContainsKey($_.InstanceName)){$prediction=$smartStatus[$_.InstanceName]}
+  $smart+=@{instanceName=[string]$_.InstanceName;predictFailure=$prediction;attributes=@($attributes)}
+}
+@{gpu=$gpu;thermal=$thermal;storage=$storage;smart=@($smart)}|ConvertTo-Json -Depth 7 -Compress
 "#;
     let value = powershell_json(script)?;
     let mut readings = Vec::new();
@@ -110,14 +148,35 @@ Get-PhysicalDisk -ErrorAction SilentlyContinue | ForEach-Object {
         power_on_hours: disk.get("hours").and_then(unsigned), read_errors_total: disk.get("readErrors").and_then(unsigned),
         write_errors_total: disk.get("writeErrors").and_then(unsigned), source: "Windows Storage Reliability Counter".into(),
     }).collect();
+    let smart_name = |id: u8| match id {
+        1 => "原始读取错误率", 3 => "主轴启动时间", 4 => "启动/停止次数", 5 => "重映射扇区数",
+        7 => "寻道错误率", 9 => "通电时间", 10 => "主轴重试次数", 12 => "通电次数",
+        171 => "程序失败计数", 172 => "擦除失败计数", 173 => "磨损均衡计数", 174 => "意外断电次数",
+        175 => "断电保护失败", 177 => "磨损范围", 179 => "已用保留块", 181 => "程序失败总数",
+        182 => "擦除失败总数", 183 => "SATA 降速错误", 184 => "端到端错误", 187 => "不可校正错误",
+        188 => "命令超时", 189 => "高飞写入", 190 => "气流温度", 191 => "冲击错误",
+        192 => "断电回缩次数", 193 => "磁头加载次数", 194 => "温度", 196 => "重映射事件数",
+        197 => "待处理扇区数", 198 => "离线不可校正扇区", 199 => "接口 CRC 错误", 200 => "多区域错误率",
+        202 => "寿命剩余", 206 => "飞行高度", 210 => "振动写入", 231 => "SSD 剩余寿命",
+        232 => "可用保留空间", 233 => "介质磨损指标", 241 => "主机写入总量", 242 => "主机读取总量",
+        _ => "厂商属性",
+    }.to_string();
+    let smart_devices = value.get("smart").and_then(serde_json::Value::as_array).into_iter().flatten().map(|device| {
+        let attributes = device.get("attributes").and_then(serde_json::Value::as_array).into_iter().flatten().filter_map(|attribute| {
+            let id = attribute.get("id")?.as_u64()? as u8;
+            Some(SmartAttribute { id, name: smart_name(id), current: attribute.get("current").and_then(serde_json::Value::as_u64).unwrap_or_default() as u8, worst: attribute.get("worst").and_then(serde_json::Value::as_u64).unwrap_or_default() as u8, raw: attribute.get("raw").and_then(unsigned).unwrap_or_default() })
+        }).collect();
+        SmartDevice { instance_name: text(device.get("instanceName"), "未知 SMART 设备"), predict_failure: device.get("predictFailure").and_then(serde_json::Value::as_bool), attributes, source: "WMI MSStorageDriver SMART".into() }
+    }).collect::<Vec<_>>();
     let mut limitations = Vec::new();
     if !readings.iter().any(|item| item.category == "temperature") { limitations.push("当前硬件未通过 Windows 标准接口公开温度；CPU 温度需要后续可选传感器 helper。".into()); }
-    Ok(SensorSnapshot { captured_at_unix_ms: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis(), readings, storage, limitations })
+    if smart_devices.is_empty() { limitations.push("存储控制器未向 Windows WMI 公开 ATA SMART 原始属性；NVMe/RAID/USB 设备可能只提供健康摘要。".into()); }
+    Ok(SensorSnapshot { captured_at_unix_ms: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis(), readings, storage, smart_devices, limitations })
 }
 
 #[cfg(not(windows))]
 pub fn collect() -> Result<SensorSnapshot, String> {
-    Ok(SensorSnapshot { captured_at_unix_ms: 0, readings: vec![], storage: vec![], limitations: vec!["传感器采集当前仅支持 Windows。".into()] })
+    Ok(SensorSnapshot { captured_at_unix_ms: 0, readings: vec![], storage: vec![], smart_devices: vec![], limitations: vec!["传感器采集当前仅支持 Windows。".into()] })
 }
 
 #[tauri::command]

@@ -74,6 +74,7 @@ export async function getSensorSnapshot(): Promise<SensorSnapshot> {
       { id: "demo-gpu-power", name: "演示 GPU 功耗", category: "power", value: 48, unit: "W", source: "浏览器演示" },
     ],
     storage: [{ name: "演示 NVMe SSD", healthStatus: "Healthy", operationalStatus: "OK", temperatureC: 39, wearPercent: 4, powerOnHours: 1260, readErrorsTotal: 0, writeErrorsTotal: 0, source: "浏览器演示" }],
+    smartDevices: [{ instanceName: "演示 SATA SSD", predictFailure: false, source: "浏览器演示", attributes: [{ id: 5, name: "重映射扇区数", current: 100, worst: 100, raw: 0 }, { id: 9, name: "通电时间", current: 98, worst: 98, raw: 1260 }, { id: 194, name: "温度", current: 61, worst: 48, raw: 39 }] }],
     limitations: [],
   };
   return invoke<SensorSnapshot>("get_sensor_snapshot");

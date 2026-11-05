@@ -87,7 +87,23 @@ export interface SensorSnapshot {
   capturedAtUnixMs: number;
   readings: SensorReading[];
   storage: StorageHealth[];
+  smartDevices: SmartDevice[];
   limitations: string[];
+}
+
+export interface SmartAttribute {
+  id: number;
+  name: string;
+  current: number;
+  worst: number;
+  raw: number;
+}
+
+export interface SmartDevice {
+  instanceName: string;
+  predictFailure: boolean | null;
+  attributes: SmartAttribute[];
+  source: string;
 }
 
 export interface DriverInfo {
