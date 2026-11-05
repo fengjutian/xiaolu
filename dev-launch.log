@@ -1,22 +1,0 @@
-==== START 2026/11/05 ÖÜËÄ 20:36:39.08 ==== 
-
-> system-lens@0.18.0 tauri:dev
-> tauri dev
-
-     Running BeforeDevCommand (`npm run dev`)
-
-> system-lens@0.18.0 dev
-> vite
-
-
-  [32m[1mVITE[22m v8.3.6[39m  [2mready in [0m[1m2550[22m[2m[0m ms[22m
-
-  [32mâžœ[39m  [1mLocal[22m:   [36mhttp://127.0.0.1:[1m1420[22m/[39m
-     Running DevCommand (`cargo  run --no-default-features --color always --`)
-        Info Watching D:\github\xiaolu\src-tauri for changes...
-[1m[92m    Blocking[0m waiting for file lock on package cache
-[1m[92m    Blocking[0m waiting for file lock on package cache
-[1m[92m    Blocking[0m waiting for file lock on package cache
-[1m[92m    Blocking[0m waiting for file lock on build directory
-[1m[92m   Compiling[0m system-lens v0.18.0 (D:\github\xiaolu\src-tauri)
-[1m[96m    Building[0m [=======================> ] 367/371: system-â€¦[1m[96m    Building[0m [=======================> ] 368/371: system-â€¦[1m[96m    Building[0m [=======================> ] 369/371: system-â€¦[1m[96m    Building[0m [=======================> ] 370/371: system-â€¦^C^C
