@@ -1,6 +1,6 @@
 [package]
 name = "system-lens"
-version = "0.6.0"
+version = "0.7.0"
 description = "Local-first Windows system information and health dashboard"
 authors = ["System Lens contributors"]
 edition = "2021"

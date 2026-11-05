@@ -62,12 +62,14 @@ import {
   getSystemSnapshot,
   isDesktopRuntime,
   runBenchmark,
+  scanDriverUpdates,
   setStartupEnabled,
 } from "./api";
 import type {
   BenchmarkRecord,
   BenchmarkResult,
   DriverInventory,
+  DriverUpdate,
   HardwareDetails,
   SensorReading,
   SensorSnapshot,
@@ -457,6 +459,20 @@ function SensorsPanel({ data }: { data: SensorSnapshot | null }) {
 
 function DriversPanel({ data }: { data: DriverInventory | null }) {
   const [query, setQuery] = useState("");
+  const [updates, setUpdates] = useState<DriverUpdate[] | null>(null);
+  const [scanningUpdates, setScanningUpdates] = useState(false);
+  const [updateError, setUpdateError] = useState<string | null>(null);
+  const scanUpdates = async () => {
+    setScanningUpdates(true);
+    setUpdateError(null);
+    try {
+      setUpdates(await scanDriverUpdates());
+    } catch (error) {
+      setUpdateError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setScanningUpdates(false);
+    }
+  };
   if (!data)
     return (
       <Center h={260}>
@@ -520,6 +536,72 @@ function DriversPanel({ data }: { data: DriverInventory | null }) {
         检测结果来自 Windows CIM
         和即插即用数据库。当前版本只读，不会自动下载或安装驱动。
       </Alert>
+      <Card className="glass-card" radius="lg">
+        <Group justify="space-between" align="flex-start">
+          <Box>
+            <Text fw={800}>Windows Update 驱动候选</Text>
+            <Text size="xs" c="dimmed">
+              只读查询 Microsoft Update，不接受许可、不下载、不安装。
+            </Text>
+          </Box>
+          <Button
+            variant="light"
+            leftSection={<IconSearch size={17} />}
+            loading={scanningUpdates}
+            onClick={() => void scanUpdates()}
+          >
+            扫描官方更新
+          </Button>
+        </Group>
+        {updateError && (
+          <Alert color="red" mt="md">
+            {updateError}
+          </Alert>
+        )}
+        {updates && updates.length === 0 && (
+          <Alert color="teal" mt="md">
+            Windows Update 当前没有返回驱动更新候选。
+          </Alert>
+        )}
+        {updates && updates.length > 0 && (
+          <Stack mt="md" gap="sm">
+            {updates.map((update) => (
+              <Paper
+                key={`${update.updateId}-${update.revisionNumber}`}
+                p="md"
+                radius="md"
+                withBorder
+              >
+                <Group justify="space-between" align="flex-start">
+                  <Box maw="75%">
+                    <Text fw={700}>{update.title}</Text>
+                    <Text size="xs" c="dimmed">
+                      {update.driverManufacturer ||
+                        update.driverProvider ||
+                        "发布者未知"}{" "}
+                      ·{" "}
+                      {update.driverModel ||
+                        update.driverClass ||
+                        "设备类型未知"}
+                    </Text>
+                    <Text size="xs" c="dimmed" mt={5}>
+                      {update.description || "没有附加说明"}
+                    </Text>
+                  </Box>
+                  <Box ta="right">
+                    <Badge color={update.downloaded ? "teal" : "blue"}>
+                      {update.downloaded ? "已下载" : "可用"}
+                    </Badge>
+                    <Text size="xs" c="dimmed" mt={5}>
+                      {update.driverVersion || "版本未知"}
+                    </Text>
+                  </Box>
+                </Group>
+              </Paper>
+            ))}
+          </Stack>
+        )}
+      </Card>
       <TextInput
         value={query}
         onChange={(event) => setQuery(event.currentTarget.value)}
@@ -667,8 +749,9 @@ function BenchmarkPanel() {
   return (
     <Stack gap="md">
       <Alert color="blue" icon={<IconGauge />}>
-        跑分会在短时间内提高 CPU、内存、磁盘或 GPU 负载。综合分采用加权几何平均：单核
-        20%、多核 30%、内存 15%、磁盘 15%、GPU 20%。
+        跑分会在短时间内提高 CPU、内存、磁盘或 GPU
+        负载。综合分采用加权几何平均：单核 20%、多核 30%、内存 15%、磁盘
+        15%、GPU 20%。
       </Alert>
       {failure && (
         <Alert color="red" icon={<IconAlertCircle />}>
@@ -980,7 +1063,7 @@ export default function App() {
           </Text>
         </Paper>
         <Text size="xs" c="dimmed">
-          v0.6.0 · GPU 跑分
+          v0.7.0 · 官方驱动建议
         </Text>
       </aside>
       <main className="content">

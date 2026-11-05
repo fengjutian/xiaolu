@@ -1,5 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import type { BenchmarkRecord, BenchmarkResult, DriverInventory, HardwareDetails, SensorSnapshot, StartupItem, SystemSnapshot } from "./types";
+import type { BenchmarkRecord, BenchmarkResult, DriverInventory, DriverUpdate, HardwareDetails, SensorSnapshot, StartupItem, SystemSnapshot } from "./types";
 
 const gib = 1024 ** 3;
 
@@ -90,6 +90,11 @@ export async function getDriverInventory(): Promise<DriverInventory> {
     ],
   };
   return invoke<DriverInventory>("get_driver_inventory");
+}
+
+export async function scanDriverUpdates(): Promise<DriverUpdate[]> {
+  if (!isTauri()) return [{ title: "演示厂商 - Display - 32.0.2", description: "来自 Windows Update 的演示驱动候选。", updateId: "demo-update-id", revisionNumber: 1, driverClass: "Display", driverManufacturer: "演示厂商", driverModel: "演示显卡", driverProvider: "演示厂商", driverVersion: "32.0.2", driverDate: "2026-06-01", categories: ["Drivers"], downloaded: false }];
+  return invoke<DriverUpdate[]>("scan_driver_updates");
 }
 
 export async function runBenchmark(kind: BenchmarkResult["kind"]): Promise<BenchmarkResult> {

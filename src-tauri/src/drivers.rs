@@ -32,6 +32,26 @@ pub struct DriverInventory {
     source: String,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DriverUpdate {
+    title: String,
+    description: String,
+    update_id: String,
+    revision_number: i32,
+    driver_class: String,
+    driver_manufacturer: String,
+    driver_model: String,
+    driver_provider: String,
+    driver_version: String,
+    driver_date: String,
+    categories: Vec<String>,
+    downloaded: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdatePayload { items: Vec<DriverUpdate> }
+
 #[derive(Debug, Deserialize)]
 struct DriverPayload { items: Vec<DriverInfo> }
 
@@ -78,6 +98,38 @@ pub fn collect() -> Result<DriverInventory, String> {
 
 #[tauri::command]
 pub fn get_driver_inventory() -> Result<DriverInventory, String> { collect() }
+
+#[cfg(windows)]
+fn scan_updates() -> Result<Vec<DriverUpdate>, String> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    let script = r#"
+[Console]::OutputEncoding=[Text.Encoding]::UTF8
+$session=New-Object -ComObject Microsoft.Update.Session
+$searcher=$session.CreateUpdateSearcher()
+$result=$searcher.Search("IsInstalled=0 and Type='Driver'")
+$items=@()
+foreach($u in $result.Updates){
+  $categories=@();foreach($c in $u.Categories){$categories+=[string]$c.Name}
+  $items+=@{title=[string]$u.Title;description=[string]$u.Description;updateId=[string]$u.Identity.UpdateID;revisionNumber=[int]$u.Identity.RevisionNumber;driverClass=if($u.DriverClass){[string]$u.DriverClass}else{''};driverManufacturer=if($u.DriverManufacturer){[string]$u.DriverManufacturer}else{''};driverModel=if($u.DriverModel){[string]$u.DriverModel}else{''};driverProvider=if($u.DriverProvider){[string]$u.DriverProvider}else{''};driverVersion=if($u.DriverVerVersion){[string]$u.DriverVerVersion}else{''};driverDate=if($u.DriverVerDate){[string]$u.DriverVerDate}else{''};categories=@($categories);downloaded=[bool]$u.IsDownloaded}
+}
+@{items=@($items)}|ConvertTo-Json -Depth 5 -Compress
+"#;
+    let output = Command::new("powershell.exe").creation_flags(CREATE_NO_WINDOW)
+        .args(["-NoProfile", "-NonInteractive", "-Command", script]).output()
+        .map_err(|error| format!("无法启动 Windows Update 扫描：{error}"))?;
+    if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
+    let payload: UpdatePayload = serde_json::from_slice(&output.stdout).map_err(|error| format!("无法解析驱动更新：{error}"))?;
+    Ok(payload.items)
+}
+
+#[cfg(not(windows))]
+fn scan_updates() -> Result<Vec<DriverUpdate>, String> { Ok(vec![]) }
+
+#[tauri::command]
+pub async fn scan_driver_updates() -> Result<Vec<DriverUpdate>, String> {
+    tauri::async_runtime::spawn_blocking(scan_updates).await.map_err(|error| format!("驱动更新扫描任务失败：{error}"))?
+}
 
 #[cfg(test)]
 mod tests {

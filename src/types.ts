@@ -133,6 +133,21 @@ export interface DriverInventory {
   source: string;
 }
 
+export interface DriverUpdate {
+  title: string;
+  description: string;
+  updateId: string;
+  revisionNumber: number;
+  driverClass: string;
+  driverManufacturer: string;
+  driverModel: string;
+  driverProvider: string;
+  driverVersion: string;
+  driverDate: string;
+  categories: string[];
+  downloaded: boolean;
+}
+
 export interface BenchmarkResult {
   schemaVersion: number;
   kind: "cpu-single" | "cpu-multi" | "memory" | "disk" | "gpu";
