@@ -55,8 +55,8 @@ pub struct SystemSnapshot {
     processes: Vec<ProcessInfo>,
 }
 
-pub fn collect_snapshot() -> SystemSnapshot {
-    let mut system = System::new_all();
+pub fn collect_snapshot() -> Result<SystemSnapshot, String> {
+    let mut system = System::new_all().map_err(|error| format!("无法初始化系统信息：{error}"))?;
     system.refresh_all();
 
     let cpu_usage = system.global_cpu_usage();
@@ -66,7 +66,7 @@ pub fn collect_snapshot() -> SystemSnapshot {
     let usage_percent = if total_memory == 0 { 0.0 } else { used_memory as f64 / total_memory as f64 * 100.0 };
 
     let disks = Disks::new_with_refreshed_list()
-        .list()
+        .map_err(|error| format!("无法读取磁盘信息：{error}"))?
         .iter()
         .map(|disk| DiskInfo {
             name: disk.name().to_string_lossy().into_owned(),
@@ -94,13 +94,15 @@ pub fn collect_snapshot() -> SystemSnapshot {
     });
     processes.truncate(20);
 
-    SystemSnapshot {
-        host_name: System::host_name().unwrap_or_else(|| "未知设备".into()),
-        os_name: System::name().unwrap_or_else(|| "Windows".into()),
-        os_version: System::long_os_version().or_else(System::os_version).unwrap_or_else(|| "未知版本".into()),
-        kernel_version: System::kernel_version().unwrap_or_else(|| "未知".into()),
+    Ok(SystemSnapshot {
+        host_name: System::host_name().unwrap_or_else(|_| "未知设备".into()),
+        os_name: System::name().unwrap_or_else(|_| "Windows".into()),
+        os_version: System::long_os_version()
+            .or_else(|_| System::os_version())
+            .unwrap_or_else(|_| "未知版本".into()),
+        kernel_version: System::kernel_version().unwrap_or_else(|_| "未知".into()),
         architecture: System::cpu_arch(),
-        uptime_seconds: System::uptime(),
+        uptime_seconds: System::uptime().unwrap_or_default(),
         captured_at_unix_ms: SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis(),
         cpu: CpuInfo {
             brand: cpu.map(|item| item.brand().to_string()).unwrap_or_else(|| "未知处理器".into()),
@@ -111,11 +113,11 @@ pub fn collect_snapshot() -> SystemSnapshot {
         memory: MemoryInfo { total_bytes: total_memory, used_bytes: used_memory, usage_percent },
         disks,
         processes,
-    }
+    })
 }
 
 #[tauri::command]
-pub fn get_system_snapshot() -> SystemSnapshot {
+pub fn get_system_snapshot() -> Result<SystemSnapshot, String> {
     collect_snapshot()
 }
 
@@ -125,7 +127,7 @@ mod tests {
 
     #[test]
     fn snapshot_has_sane_memory_values() {
-        let snapshot = collect_snapshot();
+        let snapshot = collect_snapshot().expect("system snapshot should be available in tests");
         assert!(snapshot.memory.used_bytes <= snapshot.memory.total_bytes);
         assert!((0.0..=100.0).contains(&snapshot.memory.usage_percent));
     }
