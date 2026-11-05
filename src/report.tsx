@@ -26,23 +26,27 @@ import {
   getDriverInventory,
   getHardwareDetails,
   getNetworkDiagnostics,
+  getScheduledTasks,
   getSensorSnapshot,
   getSoftwareInventory,
   getStartupItems,
   getSystemSnapshot,
+  scanCleanupCandidates,
 } from "./api";
 import type {
+  CleanupPreview,
   DiagnosticReport,
   DriverInventory,
   HardwareDetails,
   NetworkDiagnosticReport,
+  ScheduledTaskInventory,
   SensorSnapshot,
   SoftwareInventory,
   StartupItem,
   SystemSnapshot,
 } from "./types";
 
-const APP_VERSION = "0.14.0";
+const APP_VERSION = "0.18.0";
 const REDACTED = "[已脱敏]";
 
 type RedactionOptions = {
@@ -63,6 +67,8 @@ type SectionOptions = {
   software: boolean;
   startup: boolean;
   processes: boolean;
+  tasks: boolean;
+  cleanup: boolean;
 };
 
 type ReportError = { section: string; message: string };
@@ -80,6 +86,8 @@ type ReportPayload = {
   network?: NetworkDiagnosticReport;
   software?: SoftwareInventory;
   startup?: StartupItem[];
+  tasks?: ScheduledTaskInventory;
+  cleanup?: CleanupPreview;
   errors: ReportError[];
 };
 
@@ -103,6 +111,8 @@ const DEFAULT_SECTIONS: SectionOptions = {
   software: true,
   startup: true,
   processes: true,
+  tasks: true,
+  cleanup: false,
 };
 
 const bytes = (value: number) =>
@@ -514,6 +524,56 @@ function buildMarkdown(
     );
   }
 
+  if (payload.tasks && payload.tasks.tasks.length > 0) {
+    const inventory = payload.tasks;
+    const rows = inventory.tasks
+      .filter((task) => !task.path.toLowerCase().startsWith("\\microsoft\\"))
+      .slice(0, 50)
+      .map((task) => [
+        task.name,
+        task.state,
+        task.triggers.join(" / ") || "无",
+        task.runAsUser || "未指定",
+      ]);
+    lines.push(
+      "## 计划任务",
+      "",
+      `共 ${inventory.total} 个任务：启用 ${inventory.enabled}，禁用 ${inventory.disabled}，运行中 ${inventory.running}，登录/开机触发 ${inventory.logonOrBoot}。`,
+      "",
+    );
+    if (rows.length > 0) {
+      lines.push(
+        "仅列出非 Microsoft 任务（最多 50 个）。",
+        "",
+        ...table(["任务", "状态", "触发", "运行身份"], rows),
+        "",
+      );
+    }
+  }
+
+  if (payload.cleanup) {
+    const preview = payload.cleanup;
+    lines.push(
+      "## 清理候选",
+      "",
+      "只读统计，不删除任何文件。",
+      "",
+      ...table(
+        ["位置", "路径", "占用", "文件数", "权限"],
+        preview.candidates.map((candidate) => [
+          candidate.label,
+          candidate.path || "—",
+          bytes(candidate.bytes),
+          `${candidate.fileCount}${candidate.truncated ? "（已截断）" : ""}`,
+          candidate.requiresAdmin ? "需要管理员" : "普通权限",
+        ]),
+      ),
+      "",
+      `合计 ${bytes(preview.totalBytes)}，${preview.totalFiles} 个文件。`,
+      "",
+    );
+  }
+
   if (payload.errors.length > 0) {
     lines.push(
       "## 采集异常",
@@ -557,6 +617,8 @@ const SECTION_LABELS: Array<[keyof SectionOptions, string]> = [
   ["software", "软件清单"],
   ["startup", "启动项"],
   ["processes", "进程列表"],
+  ["tasks", "计划任务"],
+  ["cleanup", "清理候选（较慢）"],
 ];
 
 export default function ReportPanel() {
@@ -594,6 +656,8 @@ export default function ReportPanel() {
         sections.network ? getNetworkDiagnostics() : Promise.resolve(undefined),
         sections.software ? getSoftwareInventory() : Promise.resolve(undefined),
         sections.startup ? getStartupItems() : Promise.resolve(undefined),
+        sections.tasks ? getScheduledTasks() : Promise.resolve(undefined),
+        sections.cleanup ? scanCleanupCandidates() : Promise.resolve(undefined),
       ]);
       const errors: ReportError[] = [];
       const pick = <T,>(index: number, name: string): T | undefined => {
@@ -611,7 +675,7 @@ export default function ReportPanel() {
       }
 
       const next: ReportPayload = {
-        schemaVersion: 3,
+        schemaVersion: 4,
         generatedAt: new Date().toISOString(),
         application: { name: "小鲁 · 系统透镜", version: APP_VERSION },
         privacy: {
@@ -626,6 +690,8 @@ export default function ReportPanel() {
         network: pick<NetworkDiagnosticReport>(5, "网络摘要"),
         software: pick<SoftwareInventory>(6, "软件清单"),
         startup: pick<StartupItem[]>(7, "启动项"),
+        tasks: pick<ScheduledTaskInventory>(8, "计划任务"),
+        cleanup: pick<CleanupPreview>(9, "清理候选"),
         errors,
       };
 
@@ -664,7 +730,7 @@ export default function ReportPanel() {
               导出内容与预览完全一致。
             </Text>
           </Box>
-          <Badge variant="light">Schema 3</Badge>
+          <Badge variant="light">Schema 4</Badge>
         </Group>
 
         <SimpleGrid cols={{ base: 1, md: 2 }} mt="lg">
@@ -817,7 +883,7 @@ export default function ReportPanel() {
               <Box>
                 <Text fw={800}>JSON 预览</Text>
                 <Text size="xs" c="dimmed">
-                  Schema 3 · 共 {json.length} 字符
+                  Schema 4 · 共 {json.length} 字符
                 </Text>
               </Box>
               <Button variant="light" onClick={exportJson}>

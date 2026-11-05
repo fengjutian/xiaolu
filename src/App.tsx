@@ -2636,7 +2636,7 @@ export default function App() {
           </Text>
         </Paper>
         <Text size="xs" c="dimmed">
-          v0.17.0 · 清理候选预览
+          v0.18.0 · 报告覆盖计划任务与清理候选
         </Text>
       </aside>
       <main className="content">
