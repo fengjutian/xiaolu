@@ -296,6 +296,23 @@ export interface BenchmarkPreflight {
   source: string;
 }
 
+export interface SystemHistoryPoint {
+  t: number;
+  cpuPercent: number;
+  memoryPercent: number;
+  downloadBytesPerSec: number;
+  uploadBytesPerSec: number;
+  diskReadBytesPerSec: number;
+  diskWriteBytesPerSec: number;
+}
+
+export interface SystemHistorySeries {
+  hours: number;
+  bucketMs: number;
+  points: SystemHistoryPoint[];
+  sampleCount: number;
+}
+
 export interface DiagnosticReport {
   capturedAtUnixMs: number;
   pendingReboot: boolean;

@@ -83,6 +83,7 @@ import {
   getSoftwareInventory,
   getStartupItems,
   getSystemSnapshot,
+  getSystemHistory,
   queryEventLog,
   isDesktopRuntime,
   runBenchmark,
@@ -118,6 +119,7 @@ import type {
   SoftwareInventory,
   StorageScan,
   StartupItem,
+  SystemHistorySeries,
   SystemSnapshot,
 } from "./types";
 import "./styles.css";
@@ -3104,6 +3106,11 @@ export default function App() {
   const [tab, setTab] = useState<Tab>("overview");
   const [snapshot, setSnapshot] = useState<SystemSnapshot | null>(null);
   const [history, setHistory] = useState<Sample[]>([]);
+  const [systemHistory, setSystemHistory] = useState<SystemHistorySeries | null>(
+    null,
+  );
+  const [historyRange, setHistoryRange] = useState("1");
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const [hardware, setHardware] = useState<HardwareDetails | null>(null);
   const [sensors, setSensors] = useState<SensorSnapshot | null>(null);
   const [drivers, setDrivers] = useState<DriverInventory | null>(null);
@@ -3161,6 +3168,26 @@ export default function App() {
     const timer = window.setInterval(() => void refresh(), 2000);
     return () => clearInterval(timer);
   }, [refresh]);
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => {
+      void getSystemHistory(Number(historyRange))
+        .then((series) => {
+          if (cancelled) return;
+          setSystemHistory(series);
+          setHistoryError(null);
+        })
+        .catch((reason) => {
+          if (!cancelled) setHistoryError(String(reason));
+        });
+    };
+    load();
+    const timer = window.setInterval(load, 60_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [historyRange]);
   useEffect(() => {
     if (tab === "hardware" && !hardware)
       void getHardwareDetails()
@@ -3281,6 +3308,18 @@ export default function App() {
     (sum, x) => sum + x.writtenBytesPerSec,
     0,
   );
+  const historySamples: Sample[] = (systemHistory?.points ?? []).map((point) => ({
+    time: new Date(point.t).toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+    }),
+    cpu: +point.cpuPercent.toFixed(1),
+    memory: +point.memoryPercent.toFixed(1),
+    download: +(point.downloadBytesPerSec / 1024 ** 2).toFixed(2),
+    upload: +(point.uploadBytesPerSec / 1024 ** 2).toFixed(2),
+    diskRead: point.diskReadBytesPerSec,
+    diskWrite: point.diskWriteBytesPerSec,
+  }));
 
   return (
     <div className="shell">
@@ -3321,7 +3360,7 @@ export default function App() {
           </Text>
         </Paper>
         <Text size="xs" c="dimmed">
-          v0.26.0 · 驱动预检与 GPU Schema 3
+          v0.27.0 · 系统指标历史
         </Text>
       </aside>
       <main className="content">
@@ -3437,6 +3476,53 @@ export default function App() {
                 <PerformanceChart data={history} mode="network" />
               </Card>
             </SimpleGrid>
+            <Card className="glass-card" radius="lg">
+              <Group justify="space-between" mb="md">
+                <Box>
+                  <Text fw={700}>历史趋势</Text>
+                  <Text size="xs" c="dimmed">
+                    {systemHistory
+                      ? `${systemHistory.sampleCount} 个样本 · ${systemHistory.points.length} 个数据点`
+                      : "加载中…"}
+                  </Text>
+                </Box>
+                <SegmentedControl
+                  size="xs"
+                  value={historyRange}
+                  onChange={setHistoryRange}
+                  data={[
+                    { label: "1 小时", value: "1" },
+                    { label: "6 小时", value: "6" },
+                    { label: "24 小时", value: "24" },
+                  ]}
+                />
+              </Group>
+              {historyError && (
+                <Alert color="red" icon={<IconAlertCircle />} mb="md">
+                  {historyError}
+                </Alert>
+              )}
+              {historySamples.length === 0 ? (
+                <Alert color="gray">
+                  还没有足够的指标历史；应用运行一段时间后会自动累积。
+                </Alert>
+              ) : (
+                <SimpleGrid cols={{ base: 1, lg: 2 }}>
+                  <Box>
+                    <Text size="sm" fw={600} mb={4}>
+                      CPU / 内存
+                    </Text>
+                    <PerformanceChart data={historySamples} mode="system" />
+                  </Box>
+                  <Box>
+                    <Text size="sm" fw={600} mb={4}>
+                      网络吞吐
+                    </Text>
+                    <PerformanceChart data={historySamples} mode="network" />
+                  </Box>
+                </SimpleGrid>
+              )}
+            </Card>
             <Card className="glass-card" radius="lg">
               <Group justify="space-between" mb="md">
                 <Box>

@@ -1,6 +1,7 @@
 use serde::Serialize;
 use std::{process::Command, time::{Instant, SystemTime, UNIX_EPOCH}};
 use sysinfo::{Disks, Networks, System};
+use tauri::Manager;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -93,9 +94,57 @@ impl SystemCollector {
     }
 }
 
+fn record_metrics(app: &tauri::AppHandle, snapshot: &SystemSnapshot) {
+    let Ok(directory) = app.path().app_data_dir() else {
+        return;
+    };
+    let path = crate::system_history::default_db_path(&directory);
+    let Ok(connection) = crate::system_history::open(&path) else {
+        return;
+    };
+    let input = crate::system_history::SystemSampleInput {
+        cpu_percent: snapshot.cpu.usage_percent as f64,
+        memory_percent: snapshot.memory.usage_percent,
+        download_bytes_per_sec: snapshot.network.download_bytes_per_sec,
+        upload_bytes_per_sec: snapshot.network.upload_bytes_per_sec,
+        disk_read_bytes_per_sec: snapshot.disks.iter().map(|disk| disk.read_bytes_per_sec).sum(),
+        disk_write_bytes_per_sec: snapshot.disks.iter().map(|disk| disk.written_bytes_per_sec).sum(),
+    };
+    // 指标入库失败不应影响实时视图。
+    let _ = crate::system_history::record(
+        &connection,
+        snapshot.captured_at_unix_ms as i64,
+        &input,
+        7,
+    );
+}
+
 #[tauri::command]
-pub fn get_system_snapshot(state: tauri::State<'_, std::sync::Mutex<SystemCollector>>) -> Result<SystemSnapshot, String> {
-    state.lock().map_err(|_| "系统采集器被占用".to_string())?.snapshot()
+pub fn get_system_snapshot(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, std::sync::Mutex<SystemCollector>>,
+) -> Result<SystemSnapshot, String> {
+    let snapshot = state.lock().map_err(|_| "系统采集器被占用".to_string())?.snapshot()?;
+    record_metrics(&app, &snapshot);
+    Ok(snapshot)
+}
+
+#[tauri::command]
+pub async fn get_system_history(
+    app: tauri::AppHandle,
+    hours: u32,
+) -> Result<crate::system_history::SystemHistorySeries, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let directory = app
+            .path()
+            .app_data_dir()
+            .map_err(|error| format!("无法定位应用数据目录：{error}"))?;
+        let connection =
+            crate::system_history::open(&crate::system_history::default_db_path(&directory))?;
+        crate::system_history::query(&connection, hours)
+    })
+    .await
+    .map_err(|error| format!("指标历史任务失败：{error}"))?
 }
 
 #[tauri::command]

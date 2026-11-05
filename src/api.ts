@@ -1,5 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import type { BenchmarkPreflight, BenchmarkRecord, BenchmarkResult, CleanupPreview, DiagnosticReport, DirectoryListing, DriverAssessmentReport, DriverInventory, DriverUpdate, DuplicateScan, EventLogResult, HardwareDetails, LargeFileScan, NetworkDiagnosticReport, NvmeHealthReport, ScheduledTaskInventory, SensorHistorySeries, SensorSettings, SensorSnapshot, SensorValue, SoftwareInventory, StartupItem, StorageKind, StorageScan, SystemSnapshot } from "./types";
+import type { BenchmarkPreflight, BenchmarkRecord, BenchmarkResult, CleanupPreview, DiagnosticReport, DirectoryListing, DriverAssessmentReport, DriverInventory, DriverUpdate, DuplicateScan, EventLogResult, HardwareDetails, LargeFileScan, NetworkDiagnosticReport, NvmeHealthReport, ScheduledTaskInventory, SensorHistorySeries, SensorSettings, SensorSnapshot, SensorValue, SoftwareInventory, StartupItem, StorageKind, StorageScan, SystemHistorySeries, SystemSnapshot } from "./types";
 
 const gib = 1024 ** 3;
 
@@ -48,6 +48,28 @@ function mockSnapshot(): SystemSnapshot {
 export async function getSystemSnapshot(): Promise<SystemSnapshot> {
   if (!isTauri()) return mockSnapshot();
   return invoke<SystemSnapshot>("get_system_snapshot");
+}
+
+export async function getSystemHistory(hours: number): Promise<SystemHistorySeries> {
+  if (!isTauri()) {
+    const now = Date.now();
+    const count = 60;
+    const bucketMs = Math.max(10_000, Math.floor((hours * 3_600_000) / count));
+    const points = Array.from({ length: count }, (_, index) => {
+      const cpu = 45 + Math.sin(index / 6) * 10;
+      return {
+        t: now - (count - 1 - index) * bucketMs,
+        cpuPercent: cpu,
+        memoryPercent: 60 + Math.cos(index / 8) * 5,
+        downloadBytesPerSec: 2 * 1024 ** 2 + Math.sin(index) * 1024 ** 2,
+        uploadBytesPerSec: 300 * 1024 + Math.cos(index) * 100 * 1024,
+        diskReadBytesPerSec: 5 * 1024 ** 2,
+        diskWriteBytesPerSec: 2 * 1024 ** 2,
+      };
+    });
+    return { hours, bucketMs, points, sampleCount: count };
+  }
+  return invoke<SystemHistorySeries>("get_system_history", { hours });
 }
 
 export async function getHardwareDetails(): Promise<HardwareDetails> {
