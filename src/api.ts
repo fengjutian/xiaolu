@@ -1,5 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import type { BenchmarkRecord, BenchmarkResult, DiagnosticReport, DriverInventory, DriverUpdate, DuplicateScan, HardwareDetails, LargeFileScan, NetworkDiagnosticReport, SensorHistorySeries, SensorSettings, SensorSnapshot, SensorValue, SoftwareInventory, StartupItem, StorageKind, StorageScan, SystemSnapshot } from "./types";
+import type { BenchmarkRecord, BenchmarkResult, DiagnosticReport, DriverInventory, DriverUpdate, DuplicateScan, HardwareDetails, LargeFileScan, NetworkDiagnosticReport, ScheduledTaskInventory, SensorHistorySeries, SensorSettings, SensorSnapshot, SensorValue, SoftwareInventory, StartupItem, StorageKind, StorageScan, SystemSnapshot } from "./types";
 
 const gib = 1024 ** 3;
 
@@ -232,8 +232,7 @@ export async function scanLargeFiles(kind: StorageKind, minBytes: number, limit 
   return invoke<LargeFileScan>("scan_large_files", { kind, minBytes, limit });
 }
 
-export async function scanDuplicates(kind: StorageKind, limit = 50): Promise<DuplicateScan> {
-  if (!isTauri()) {
+export async function scanDuplicates(kind: StorageKind, limit = 50): Promise<DuplicateScan> {  if (!isTauri()) {
     return {
       kind,
       label: { downloads: "下载", documents: "文档", desktop: "桌面" }[kind],
@@ -256,6 +255,27 @@ export async function scanDuplicates(kind: StorageKind, limit = 50): Promise<Dup
     };
   }
   return invoke<DuplicateScan>("scan_duplicates", { kind, limit });
+}
+
+export async function getScheduledTasks(): Promise<ScheduledTaskInventory> {
+  if (!isTauri()) {
+    const tasks = [
+      { name: "DemoUpdate", path: "\\Demo\\", state: "Ready", author: "演示厂商", description: "演示更新任务", runAsUser: "DEMO\\user", hidden: false, enabled: true, triggers: ["登录", "定时"] },
+      { name: "DemoBackup", path: "\\Demo\\", state: "Disabled", author: "演示厂商", description: "演示备份任务", runAsUser: "SYSTEM", hidden: false, enabled: false, triggers: ["每天"] },
+      { name: "DemoMaintenance", path: "\\Microsoft\\Windows\\", state: "Running", author: "Microsoft", description: "系统维护", runAsUser: "SYSTEM", hidden: true, enabled: true, triggers: ["维护"] },
+    ];
+    return {
+      capturedAtUnixMs: Date.now(),
+      total: tasks.length,
+      enabled: 2,
+      disabled: 1,
+      running: 1,
+      logonOrBoot: 1,
+      tasks,
+      source: "浏览器演示",
+    };
+  }
+  return invoke<ScheduledTaskInventory>("get_scheduled_tasks");
 }
 
 function compileShader(gl: WebGL2RenderingContext, type: number, source: string): WebGLShader {

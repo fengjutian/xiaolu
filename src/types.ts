@@ -389,3 +389,26 @@ export interface DuplicateScan {
   errorCount: number;
   truncated: boolean;
 }
+
+export interface ScheduledTask {
+  name: string;
+  path: string;
+  state: string;
+  author: string;
+  description: string;
+  runAsUser: string;
+  hidden: boolean;
+  enabled: boolean;
+  triggers: string[];
+}
+
+export interface ScheduledTaskInventory {
+  capturedAtUnixMs: number;
+  total: number;
+  enabled: number;
+  disabled: number;
+  running: number;
+  logonOrBoot: number;
+  tasks: ScheduledTask[];
+  source: string;
+}

@@ -34,6 +34,7 @@ import {
   IconArrowUp,
   IconApps,
   IconBolt,
+  IconCalendarTime,
   IconCpu,
   IconDownload,
   IconFolder,
@@ -72,6 +73,7 @@ import {
   getSensorHistory,
   getSensorSettings,
   getSensorSnapshot,
+  getScheduledTasks,
   saveSensorSettings,
   getSoftwareInventory,
   getStartupItems,
@@ -94,6 +96,7 @@ import type {
   HardwareDetails,
   LargeFileScan,
   NetworkDiagnosticReport,
+  ScheduledTaskInventory,
   SensorHistorySeries,
   SensorSettings,
   SensorSnapshot,
@@ -119,6 +122,7 @@ type Tab =
   | "hardware"
   | "processes"
   | "startup"
+  | "tasks"
   | "report";
 type Sample = {
   time: string;
@@ -142,6 +146,7 @@ const nav = [
   ["hardware", "硬件详情", IconCpu],
   ["processes", "运行进程", IconActivity],
   ["startup", "启动项管理", IconRocket],
+  ["tasks", "计划任务", IconCalendarTime],
   ["report", "诊断报告", IconShieldCheck],
 ] as const;
 
@@ -2167,6 +2172,169 @@ function BenchmarkPanel() {
   );
 }
 
+function ScheduledTasksPanel({
+  data,
+}: {
+  data: ScheduledTaskInventory | null;
+}) {
+  const [query, setQuery] = useState("");
+  const [hideMicrosoft, setHideMicrosoft] = useState(true);
+  if (!data)
+    return (
+      <Center h={260}>
+        <Loader />
+      </Center>
+    );
+  const needle = query.trim().toLowerCase();
+  const items = data.tasks.filter((task) => {
+    if (hideMicrosoft && task.path.toLowerCase().startsWith("\\microsoft\\")) {
+      return false;
+    }
+    if (!needle) return true;
+    return [
+      task.name,
+      task.path,
+      task.author,
+      task.runAsUser,
+      task.description,
+      ...task.triggers,
+    ].some((value) => value.toLowerCase().includes(needle));
+  });
+  const statusColor = (state: string) =>
+    state === "Running"
+      ? "teal"
+      : state === "Disabled"
+        ? "gray"
+        : state === "Queued"
+          ? "orange"
+          : "blue";
+  return (
+    <Stack gap="md">
+      <SimpleGrid cols={{ base: 2, xl: 4 }}>
+        <Stat
+          icon={IconCalendarTime}
+          label="任务总数"
+          value={String(data.total)}
+          hint={data.source}
+          color="indigo"
+        />
+        <Stat
+          icon={IconShieldCheck}
+          label="已启用"
+          value={String(data.enabled)}
+          hint="状态不是 Disabled"
+          color="teal"
+        />
+        <Stat
+          icon={IconPlayerPause}
+          label="已禁用"
+          value={String(data.disabled)}
+          hint="不会自动触发"
+          color="gray"
+        />
+        <Stat
+          icon={IconRocket}
+          label="登录/开机触发"
+          value={String(data.logonOrBoot)}
+          hint="含登录、开机启动的任务"
+          color="orange"
+        />
+      </SimpleGrid>
+      <Alert color="blue" icon={<IconShieldCheck />}>
+        只读枚举 Windows 计划任务，不启用、禁用或删除任何任务。触发条件来自任务计划程序；
+        隐藏任务也可能被其他程序调用。
+      </Alert>
+      <Group justify="space-between" align="flex-end" wrap="wrap">
+        <TextInput
+          value={query}
+          onChange={(event) => setQuery(event.currentTarget.value)}
+          leftSection={<IconSearch size={17} />}
+          placeholder="搜索任务、路径、作者、运行身份或触发条件"
+          w={420}
+        />
+        <Switch
+          checked={hideMicrosoft}
+          onChange={(event) => setHideMicrosoft(event.currentTarget.checked)}
+          label="隐藏 Microsoft 系统任务"
+        />
+      </Group>
+      {items.length === 0 ? (
+        <Alert color="gray">
+          没有匹配的计划任务。
+        </Alert>
+      ) : (
+        <Card className="glass-card" radius="lg" p={0}>
+          <ScrollArea h="calc(100vh - 400px)">
+            <Table stickyHeader highlightOnHover verticalSpacing="sm">
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>任务</Table.Th>
+                  <Table.Th>状态</Table.Th>
+                  <Table.Th>触发条件</Table.Th>
+                  <Table.Th>运行身份</Table.Th>
+                  <Table.Th>作者</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {items.map((task) => (
+                  <Table.Tr key={`${task.path}${task.name}`}>
+                    <Table.Td>
+                      <Text fw={700} size="sm">
+                        {task.name}
+                        {task.hidden && (
+                          <Badge size="xs" variant="light" color="gray" ml={6}>
+                            隐藏
+                          </Badge>
+                        )}
+                      </Text>
+                      <Text size="xs" c="dimmed" truncate maw={380}>
+                        {task.path}
+                      </Text>
+                      {task.description && (
+                        <Text size="xs" c="dimmed" truncate maw={420}>
+                          {task.description}
+                        </Text>
+                      )}
+                    </Table.Td>
+                    <Table.Td>
+                      <Badge color={statusColor(task.state)} variant="light">
+                        {task.state}
+                      </Badge>
+                    </Table.Td>
+                    <Table.Td>
+                      <Group gap={4}>
+                        {task.triggers.length === 0 ? (
+                          <Text size="xs" c="dimmed">
+                            无触发器
+                          </Text>
+                        ) : (
+                          task.triggers.map((trigger) => (
+                            <Badge key={trigger} size="xs" variant="outline">
+                              {trigger}
+                            </Badge>
+                          ))
+                        )}
+                      </Group>
+                    </Table.Td>
+                    <Table.Td>
+                      <Text size="xs">{task.runAsUser || "未指定"}</Text>
+                    </Table.Td>
+                    <Table.Td>
+                      <Text size="xs" c="dimmed" truncate maw={160}>
+                        {task.author || "未知"}
+                      </Text>
+                    </Table.Td>
+                  </Table.Tr>
+                ))}
+              </Table.Tbody>
+            </Table>
+          </ScrollArea>
+        </Card>
+      )}
+    </Stack>
+  );
+}
+
 export default function App() {
   const { colorScheme, setColorScheme } = useMantineColorScheme();
   const [tab, setTab] = useState<Tab>("overview");
@@ -2180,6 +2348,8 @@ export default function App() {
     useState<NetworkDiagnosticReport | null>(null);
   const [software, setSoftware] = useState<SoftwareInventory | null>(null);
   const [startup, setStartup] = useState<StartupItem[]>([]);
+  const [scheduledTasks, setScheduledTasks] =
+    useState<ScheduledTaskInventory | null>(null);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -2285,6 +2455,12 @@ export default function App() {
   useEffect(() => {
     if (tab === "startup") void loadStartup();
   }, [tab, loadStartup]);
+  useEffect(() => {
+    if (tab === "tasks" && !scheduledTasks)
+      void getScheduledTasks()
+        .then(setScheduledTasks)
+        .catch((e) => setError(String(e)));
+  }, [tab, scheduledTasks]);
 
   const toggleStartup = async (item: StartupItem, enabled: boolean) => {
     if (
@@ -2359,7 +2535,7 @@ export default function App() {
           </Text>
         </Paper>
         <Text size="xs" c="dimmed">
-          v0.15.0 · 大文件与重复文件
+          v0.16.0 · 计划任务视图
         </Text>
       </aside>
       <main className="content">
@@ -2581,6 +2757,7 @@ export default function App() {
             ))}
           </Stack>
         )}
+        {tab === "tasks" && <ScheduledTasksPanel data={scheduledTasks} />}
         {tab === "report" && <ReportPanel />}
       </main>
     </div>
