@@ -185,6 +185,22 @@ export interface DiagnosticReport {
     level: string;
     message: string;
   }>;
+  crashEvents: Array<{
+    timeCreated: string;
+    provider: string;
+    eventId: number;
+    level: string;
+    message: string;
+  }>;
+  serviceIssues: Array<{
+    name: string;
+    displayName: string;
+    state: string;
+    startMode: string;
+    exitCode: number;
+  }>;
+  minidumpCount: number;
+  latestMinidump: string;
   source: string;
 }
 

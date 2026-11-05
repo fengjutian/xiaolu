@@ -109,7 +109,7 @@ export async function getBenchmarkHistory(): Promise<BenchmarkRecord[]> {
 }
 
 export async function getDiagnosticReport(): Promise<DiagnosticReport> {
-  if (!isTauri()) return { capturedAtUnixMs: Date.now(), pendingReboot: false, pendingWindowsUpdateReboot: false, battery: { present: true, name: "演示电池", status: "OK", chargePercent: 72, designCapacityMwh: 86000, fullChargeCapacityMwh: 77400, healthPercent: 90, cycleCount: 128 }, events: [{ timeCreated: new Date().toISOString(), provider: "演示事件源", eventId: 1001, level: "错误", message: "浏览器预览事件。" }], source: "浏览器演示" };
+  if (!isTauri()) return { capturedAtUnixMs: Date.now(), pendingReboot: false, pendingWindowsUpdateReboot: false, battery: { present: true, name: "演示电池", status: "OK", chargePercent: 72, designCapacityMwh: 86000, fullChargeCapacityMwh: 77400, healthPercent: 90, cycleCount: 128 }, events: [{ timeCreated: new Date().toISOString(), provider: "演示事件源", eventId: 1001, level: "错误", message: "浏览器预览事件。" }], crashEvents: [], serviceIssues: [{ name: "DemoService", displayName: "演示服务", state: "Stopped", startMode: "Auto", exitCode: 0 }], minidumpCount: 0, latestMinidump: "", source: "浏览器演示" };
   return invoke<DiagnosticReport>("get_diagnostic_report");
 }
 

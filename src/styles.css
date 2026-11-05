@@ -7,7 +7,7 @@ body::before { content:""; position:fixed; inset:0; pointer-events:none; backgro
 .shell { min-height:100vh; display:grid; grid-template-columns:238px 1fr; position:relative; }
 .side { height:100vh; padding:26px 18px 20px; border-right:1px solid var(--side-border); background:var(--side-bg); backdrop-filter:blur(24px); display:flex; flex-direction:column; transition:background-color .25s ease,border-color .25s ease; }
 .logo { padding:0 8px; }
-.brand-logo { width:44px; height:44px; display:block; border-radius:13px; box-shadow:0 8px 22px rgba(35,78,201,.22); }
+.brand-logo { width:44px; height:44px; display:block; object-fit:contain; border-radius:50%; box-shadow:0 8px 22px rgba(35,78,201,.22); }
 .side .mantine-NavLink-root { border-radius:12px; color:var(--nav-color); transition:.18s ease; }
 .side .mantine-NavLink-root:hover { background:var(--nav-hover-bg); color:var(--nav-hover-color); }
 .side .mantine-NavLink-root[data-active] { color:var(--nav-active-color); background:linear-gradient(100deg,rgba(76,110,245,.24),rgba(34,139,230,.1)); box-shadow:inset 2px 0 #748ffc; }

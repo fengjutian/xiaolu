@@ -90,7 +90,7 @@ import type {
   SystemSnapshot,
 } from "./types";
 import "./styles.css";
-import logoUrl from "../src-tauri/icons/system-lens.svg";
+import logoUrl from "../src-tauri/app-icon.png";
 
 type Tab =
   | "overview"
@@ -1201,6 +1201,93 @@ function DiagnosticsPanel({ data }: { data: DiagnosticReport | null }) {
           </Card>
         ))
       )}
+      <Group justify="space-between" mt="sm">
+        <Title order={3}>最近 7 天崩溃与意外关机</Title>
+        <Badge
+          color={data.crashEvents.length || data.minidumpCount ? "red" : "teal"}
+          variant="light"
+        >
+          {data.crashEvents.length} 个事件 · {data.minidumpCount} 个转储
+        </Badge>
+      </Group>
+      {data.latestMinidump && (
+        <Alert color="orange" icon={<IconAlertCircle />}>
+          最近蓝屏转储时间：{new Date(data.latestMinidump).toLocaleString()}
+          。应用只读取转储文件元数据，不打开转储内容。
+        </Alert>
+      )}
+      {data.crashEvents.length === 0 ? (
+        <Alert color="teal" icon={<IconShieldCheck />}>
+          没有找到最近 7 天的意外关机或应用崩溃事件。
+        </Alert>
+      ) : (
+        data.crashEvents.map((event, index) => (
+          <Card
+            key={`crash-${event.timeCreated}-${event.eventId}-${index}`}
+            className="glass-card"
+            radius="lg"
+          >
+            <Group justify="space-between">
+              <Box>
+                <Text fw={700}>
+                  {event.provider} · 事件 {event.eventId}
+                </Text>
+                <Text size="xs" c="dimmed">
+                  {new Date(event.timeCreated).toLocaleString()}
+                </Text>
+              </Box>
+              <Badge color="red">{event.level}</Badge>
+            </Group>
+            <Text size="sm" c="dimmed" mt="md">
+              {event.message || "事件没有提供说明。"}
+            </Text>
+          </Card>
+        ))
+      )}
+      <Group justify="space-between" mt="sm">
+        <Title order={3}>自动启动服务异常</Title>
+        <Badge
+          color={data.serviceIssues.length ? "orange" : "teal"}
+          variant="light"
+        >
+          {data.serviceIssues.length} 项
+        </Badge>
+      </Group>
+      {data.serviceIssues.length === 0 ? (
+        <Alert color="teal" icon={<IconShieldCheck />}>
+          没有发现应自动启动但当前未运行的服务。
+        </Alert>
+      ) : (
+        <Card className="glass-card" radius="lg" p={0}>
+          <Table highlightOnHover>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>服务</Table.Th>
+                <Table.Th>状态</Table.Th>
+                <Table.Th>启动模式</Table.Th>
+                <Table.Th>退出码</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {data.serviceIssues.map((service) => (
+                <Table.Tr key={service.name}>
+                  <Table.Td>
+                    <Text fw={700}>{service.displayName}</Text>
+                    <Text size="xs" c="dimmed">
+                      {service.name}
+                    </Text>
+                  </Table.Td>
+                  <Table.Td>
+                    <Badge color="orange">{service.state}</Badge>
+                  </Table.Td>
+                  <Table.Td>{service.startMode}</Table.Td>
+                  <Table.Td>{service.exitCode}</Table.Td>
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+        </Card>
+      )}
     </Stack>
   );
 }
@@ -1575,7 +1662,11 @@ export default function App() {
     <div className="shell">
       <aside className="side">
         <Group gap="sm" className="logo">
-          <img className="brand-logo" src={logoUrl} alt="小鲁 System Lens Logo" />
+          <img
+            className="brand-logo"
+            src={logoUrl}
+            alt="小鲁 System Lens Logo"
+          />
           <Box>
             <Text fw={800}>小鲁</Text>
             <Text size="xs" c="dimmed">
@@ -1606,7 +1697,7 @@ export default function App() {
           </Text>
         </Paper>
         <Text size="xs" c="dimmed">
-          v0.11.0 · 空间分析
+          v0.12.0 · 崩溃诊断
         </Text>
       </aside>
       <main className="content">
@@ -1619,14 +1710,26 @@ export default function App() {
           </Box>
           <Group>
             {!isDesktopRuntime() && <Badge variant="light">浏览器演示</Badge>}
-            <Tooltip label={colorScheme === "dark" ? "切换到浅色模式" : "切换到深色模式"}>
+            <Tooltip
+              label={
+                colorScheme === "dark" ? "切换到浅色模式" : "切换到深色模式"
+              }
+            >
               <ActionIcon
                 size="lg"
                 variant="light"
-                aria-label={colorScheme === "dark" ? "切换到浅色模式" : "切换到深色模式"}
-                onClick={() => setColorScheme(colorScheme === "dark" ? "light" : "dark")}
+                aria-label={
+                  colorScheme === "dark" ? "切换到浅色模式" : "切换到深色模式"
+                }
+                onClick={() =>
+                  setColorScheme(colorScheme === "dark" ? "light" : "dark")
+                }
               >
-                {colorScheme === "dark" ? <IconSun size={19} /> : <IconMoon size={19} />}
+                {colorScheme === "dark" ? (
+                  <IconSun size={19} />
+                ) : (
+                  <IconMoon size={19} />
+                )}
               </ActionIcon>
             </Tooltip>
             <Tooltip label="立即刷新">
