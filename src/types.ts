@@ -262,6 +262,13 @@ export interface BenchmarkRecord {
   result: BenchmarkResult;
 }
 
+export interface BenchmarkPreflight {
+  maxTemperatureC: number | null;
+  onBattery: boolean | null;
+  warnings: string[];
+  source: string;
+}
+
 export interface DiagnosticReport {
   capturedAtUnixMs: number;
   pendingReboot: boolean;

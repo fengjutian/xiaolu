@@ -67,6 +67,8 @@ import {
 } from "recharts";
 import {
   getBenchmarkHistory,
+  benchmarkPreflight,
+  cancelBenchmark,
   getDriverInventory,
   getDiagnosticReport,
   getHardwareDetails,
@@ -2446,7 +2448,7 @@ const benchmarkKinds: Array<{
   {
     kind: "disk",
     label: "磁盘顺序读写",
-    description: "临时创建并删除 128 MiB 文件",
+    description: "临时创建并删除测试文件（默认 1 GiB，可配置）",
   },
   { kind: "gpu", label: "GPU 着色器", description: "WebGL2 离屏像素着色器" },
 ];
@@ -2458,6 +2460,8 @@ function BenchmarkPanel() {
     [],
   );
   const [failure, setFailure] = useState<string | null>(null);
+  const [diskSize, setDiskSize] = useState("1024");
+  const [cancelling, setCancelling] = useState(false);
   useEffect(() => {
     void getBenchmarkHistory()
       .then(setBenchmarkHistory)
@@ -2467,11 +2471,30 @@ function BenchmarkPanel() {
     setRunning(kind);
     setFailure(null);
     try {
-      const result = await runBenchmark(kind);
+      const preflight = await benchmarkPreflight();
+      if (preflight.warnings.length > 0) {
+        const proceed = window.confirm(
+          [
+            ...preflight.warnings,
+            "",
+            "跑分期间请勿运行其他高负载程序。仍要继续吗？",
+          ].join("\n"),
+        );
+        if (!proceed) return;
+      }
+      const result = await runBenchmark(
+        kind,
+        kind === "disk" ? Number(diskSize) : undefined,
+      );
       setResults((old) => ({ ...old, [kind]: result }));
       setBenchmarkHistory(await getBenchmarkHistory());
     } catch (error) {
-      setFailure(error instanceof Error ? error.message : String(error));
+      const message = error instanceof Error ? error.message : String(error);
+      setFailure(
+        message.includes("BENCHMARK_CANCELLED")
+          ? "已取消本次跑分。"
+          : message,
+      );
     } finally {
       setRunning(null);
     }
@@ -2502,6 +2525,46 @@ function BenchmarkPanel() {
         负载。综合分采用加权几何平均：单核 20%、多核 30%、内存 15%、磁盘
         15%、GPU 20%。
       </Alert>
+      <Group justify="space-between" align="flex-end" wrap="wrap">
+        <Group align="flex-end">
+          <Box>
+            <Text size="xs" c="dimmed" mb={4}>
+              磁盘测试大小
+            </Text>
+            <Select
+              size="xs"
+              w={170}
+              allowDeselect={false}
+              value={diskSize}
+              onChange={(value) => setDiskSize(value ?? "1024")}
+              data={[
+                { value: "128", label: "128 MiB" },
+                { value: "512", label: "512 MiB" },
+                { value: "1024", label: "1 GiB（默认）" },
+                { value: "2048", label: "2 GiB" },
+                { value: "4096", label: "4 GiB" },
+              ]}
+            />
+          </Box>
+          <Text size="xs" c="dimmed" mb={6}>
+            仅影响磁盘顺序读写；文件在系统临时目录创建并自动删除。
+          </Text>
+        </Group>
+        {running && running !== "gpu" && (
+          <Button
+            size="xs"
+            color="red"
+            variant="light"
+            loading={cancelling}
+            onClick={() => {
+              setCancelling(true);
+              void cancelBenchmark().finally(() => setCancelling(false));
+            }}
+          >
+            取消测试
+          </Button>
+        )}
+      </Group>
       {failure && (
         <Alert color="red" icon={<IconAlertCircle />}>
           {failure}
@@ -3009,7 +3072,7 @@ export default function App() {
           </Text>
         </Paper>
         <Text size="xs" c="dimmed">
-          v0.21.0 · 目录钻取与 Treemap
+          v0.22.0 · 跑分可配置与取消
         </Text>
       </aside>
       <main className="content">

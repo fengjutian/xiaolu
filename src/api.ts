@@ -1,5 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import type { BenchmarkRecord, BenchmarkResult, CleanupPreview, DiagnosticReport, DirectoryListing, DriverInventory, DriverUpdate, DuplicateScan, EventLogResult, HardwareDetails, LargeFileScan, NetworkDiagnosticReport, ScheduledTaskInventory, SensorHistorySeries, SensorSettings, SensorSnapshot, SensorValue, SoftwareInventory, StartupItem, StorageKind, StorageScan, SystemSnapshot } from "./types";
+import type { BenchmarkPreflight, BenchmarkRecord, BenchmarkResult, CleanupPreview, DiagnosticReport, DirectoryListing, DriverInventory, DriverUpdate, DuplicateScan, EventLogResult, HardwareDetails, LargeFileScan, NetworkDiagnosticReport, ScheduledTaskInventory, SensorHistorySeries, SensorSettings, SensorSnapshot, SensorValue, SoftwareInventory, StartupItem, StorageKind, StorageScan, SystemSnapshot } from "./types";
 
 const gib = 1024 ** 3;
 
@@ -176,10 +176,22 @@ export async function scanDriverUpdates(): Promise<DriverUpdate[]> {
   return invoke<DriverUpdate[]>("scan_driver_updates");
 }
 
-export async function runBenchmark(kind: BenchmarkResult["kind"]): Promise<BenchmarkResult> {
+export async function runBenchmark(kind: BenchmarkResult["kind"], diskSizeMiB?: number): Promise<BenchmarkResult> {
   if (kind === "gpu") return runGpuBenchmark();
-  if (!isTauri()) return { schemaVersion: 1, kind, label: { "cpu-single": "CPU 单核", "cpu-multi": "CPU 多核", memory: "内存带宽", disk: "磁盘顺序读写" }[kind], score: 8560, unit: "分", durationMs: 1260, details: kind === "disk" ? { writeMiBPerSecond: 850, readMiBPerSecond: 2200, testFileMiB: 128 } : { throughput: 85.6 }, note: "浏览器演示结果" };
-  return invoke<BenchmarkResult>("run_benchmark", { kind });
+  if (!isTauri()) return { schemaVersion: 1, kind, label: { "cpu-single": "CPU 单核", "cpu-multi": "CPU 多核", memory: "内存带宽", disk: "磁盘顺序读写" }[kind], score: 8560, unit: "分", durationMs: 1260, details: kind === "disk" ? { writeMiBPerSecond: 850, readMiBPerSecond: 2200, testFileMiB: diskSizeMiB ?? 1024 } : { throughput: 85.6 }, note: "浏览器演示结果" };
+  return invoke<BenchmarkResult>("run_benchmark", { kind, diskSizeMiB: diskSizeMiB ?? null });
+}
+
+export async function benchmarkPreflight(): Promise<BenchmarkPreflight> {
+  if (!isTauri()) {
+    return { maxTemperatureC: 61, onBattery: false, warnings: [], source: "浏览器演示" };
+  }
+  return invoke<BenchmarkPreflight>("benchmark_preflight");
+}
+
+export async function cancelBenchmark(): Promise<void> {
+  if (!isTauri()) return;
+  await invoke("cancel_benchmark");
 }
 
 export async function getBenchmarkHistory(): Promise<BenchmarkRecord[]> {
