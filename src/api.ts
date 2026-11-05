@@ -1,5 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import type { BenchmarkPreflight, BenchmarkRecord, BenchmarkResult, CleanupPreview, DiagnosticReport, DirectoryListing, DriverAssessmentReport, DriverInventory, DriverUpdate, DuplicateScan, EventLogResult, HardwareDetails, LargeFileScan, NetworkDiagnosticReport, NvmeHealthReport, ScheduledTaskInventory, SensorHistorySeries, SensorSettings, SensorSnapshot, SensorValue, SoftwareInventory, StartupItem, StorageKind, StorageScan, SystemHistorySeries, SystemSnapshot } from "./types";
+import type { BenchmarkPreflight, BenchmarkRecord, BenchmarkResult, CleanupPreview, DiagnosticReport, DirectoryListing, DriverAssessmentReport, DriverInventory, DriverUpdate, DuplicateScan, EventLogResult, HardwareDetails, LargeFileScan, NetworkDiagnosticReport, NvmeHealthReport, ScheduledTaskInventory, SensorHistorySeries, SensorSettings, SensorSnapshot, SensorValue, SlimScan, SoftwareInventory, StartupItem, StorageKind, StorageScan, SystemHistorySeries, SystemSnapshot, ToolDescriptor } from "./types";
 
 const gib = 1024 ** 3;
 
@@ -743,6 +743,44 @@ export async function runGpuBenchmark(): Promise<BenchmarkResult> {
   return result;
 }
 
+
+export async function listToolboxTools(): Promise<ToolDescriptor[]> {
+  if (!isTauri()) {
+    return [
+      { id: "cclean", name: "C 盘瘦身", category: "清理", description: "只读统计 C 盘可清理位置与系统托管文件", risk: "read_only", requiresAdmin: false, status: "available", note: "当前仅预览，不删除" },
+      { id: "DuplicateFileClean", name: "重复文件清理", category: "清理", description: "重复文件检测与清理（规划）", risk: "read_only", requiresAdmin: false, status: "partial", note: "已具备只读检测" },
+      { id: "driver_manager", name: "驱动管理", category: "驱动", description: "驱动检测、更新预检与安装（规划）", risk: "system", requiresAdmin: true, status: "partial", note: "已具备检测与只读预检" },
+      { id: "sys_clean", name: "Windows 系统瘦身", category: "清理", description: "移除系统自带的无用组件与预装应用（规划）", risk: "write", requiresAdmin: true, status: "planned", note: "需要逐项确认与回滚设计" },
+      { id: "privacy_clean", name: "隐私清理", category: "隐私", description: "浏览记录、Cookie 与临时痕迹清理（规划）", risk: "write", requiresAdmin: false, status: "planned", note: "涉及浏览器数据，需逐项确认" },
+      { id: "defrag", name: "磁盘碎片整理", category: "优化", description: "HDD 碎片整理与 SSD TRIM（规划）", risk: "system", requiresAdmin: true, status: "planned", note: "调用系统 API，需确认磁盘类型" },
+    ];
+  }
+  return invoke<ToolDescriptor[]>("list_toolbox_tools");
+}
+
+export async function scanCDriveSlim(): Promise<SlimScan> {
+  if (!isTauri()) {
+    const items = [
+      { id: "user-temp", label: "用户临时文件", path: "C:\\Users\\Demo\\AppData\\Local\\Temp", bytes: 3.4 * gib, fileCount: 8421, category: "safe", requiresAdmin: false, truncated: false, note: "应用运行时可能仍在写入。" },
+      { id: "windows-update", label: "Windows Update 下载缓存", path: "C:\\Windows\\SoftwareDistribution\\Download", bytes: 1.2 * gib, fileCount: 10, category: "caution", requiresAdmin: true, truncated: false, note: "更新缓存由系统管理。" },
+      { id: "recycle-bin", label: "回收站", path: "C:\\$Recycle.Bin", bytes: 900 * 1024 ** 2, fileCount: 64, category: "caution", requiresAdmin: true, truncated: false, note: "普通权限只能看到部分内容。" },
+      { id: "system-hiberfil.sys", label: "休眠文件 hiberfil.sys", path: "C:\\hiberfil.sys", bytes: 6.4 * gib, fileCount: 1, category: "system", requiresAdmin: false, truncated: false, note: "可在电源设置中关闭休眠以释放空间。" },
+    ];
+    return {
+      capturedAtUnixMs: Date.now(),
+      driveLetter: "C:",
+      driveTotalBytes: 512 * gib,
+      driveFreeBytes: 120 * gib,
+      items,
+      safeBytes: 3.4 * gib,
+      cautionBytes: 2.1 * gib,
+      systemBytes: 6.4 * gib,
+      fileCount: 8496,
+      note: "只读预览：只统计占用，不删除任何文件。",
+    };
+  }
+  return invoke<SlimScan>("scan_c_drive_slim");
+}
 
 export function isDesktopRuntime(): boolean {
   return isTauri();

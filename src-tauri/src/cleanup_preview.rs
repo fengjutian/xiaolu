@@ -7,27 +7,27 @@ const MAX_FILES_PER_CANDIDATE: usize = 150_000;
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CleanupCandidate {
-    id: String,
-    label: String,
-    path: String,
-    exists: bool,
-    bytes: u64,
-    file_count: usize,
-    error_count: usize,
-    requires_admin: bool,
-    truncated: bool,
-    note: String,
-    error: Option<String>,
+    pub id: String,
+    pub label: String,
+    pub path: String,
+    pub exists: bool,
+    pub bytes: u64,
+    pub file_count: usize,
+    pub error_count: usize,
+    pub requires_admin: bool,
+    pub truncated: bool,
+    pub note: String,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CleanupPreview {
-    captured_at_unix_ms: u64,
-    candidates: Vec<CleanupCandidate>,
-    total_bytes: u64,
-    total_files: usize,
-    source: String,
+    pub captured_at_unix_ms: u64,
+    pub candidates: Vec<CleanupCandidate>,
+    pub total_bytes: u64,
+    pub total_files: usize,
+    pub source: String,
 }
 
 fn now_unix_ms() -> u64 {

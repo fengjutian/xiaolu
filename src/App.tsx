@@ -41,6 +41,7 @@ import {
   IconGauge,
   IconHeartbeat,
   IconNetwork,
+  IconPackage,
   IconPlayerPause,
   IconRefresh,
   IconRocket,
@@ -76,6 +77,8 @@ import {
   getNetworkDiagnostics,
   getNvmeHealth,
   getSensorHistory,
+  listToolboxTools,
+  scanCDriveSlim,
   getSensorSettings,
   getSensorSnapshot,
   getScheduledTasks,
@@ -116,11 +119,13 @@ import type {
   SensorSettings,
   SensorSnapshot,
   SensorValue,
+  SlimScan,
   SoftwareInventory,
   StorageScan,
   StartupItem,
   SystemHistorySeries,
   SystemSnapshot,
+  ToolDescriptor,
 } from "./types";
 import "./styles.css";
 import ReportPanel from "./report";
@@ -140,6 +145,7 @@ type Tab =
   | "processes"
   | "startup"
   | "tasks"
+  | "toolbox"
   | "report";
 type Sample = {
   time: string;
@@ -164,6 +170,7 @@ const nav = [
   ["processes", "运行进程", IconActivity],
   ["startup", "启动项管理", IconRocket],
   ["tasks", "计划任务", IconCalendarTime],
+  ["toolbox", "工具箱", IconPackage],
   ["report", "诊断报告", IconShieldCheck],
 ] as const;
 
@@ -3101,6 +3108,250 @@ function ScheduledTasksPanel({
   );
 }
 
+const riskLabel = (risk: string) =>
+  risk === "read_only" ? "只读" : risk === "write" ? "写操作" : "系统级";
+
+const riskColor = (risk: string) =>
+  risk === "read_only" ? "teal" : risk === "write" ? "orange" : "red";
+
+const slimCategoryLabel = (category: string) =>
+  category === "safe"
+    ? "可安全清理"
+    : category === "caution"
+      ? "需确认/管理员"
+      : "系统托管";
+
+const slimCategoryColor = (category: string) =>
+  category === "safe" ? "teal" : category === "caution" ? "orange" : "gray";
+
+function ToolboxPanel() {
+  const [tools, setTools] = useState<ToolDescriptor[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [slim, setSlim] = useState<SlimScan | null>(null);
+  const [scanning, setScanning] = useState(false);
+  const [scanError, setScanError] = useState<string | null>(null);
+
+  useEffect(() => {
+    void listToolboxTools()
+      .then(setTools)
+      .catch((reason) => setError(String(reason)));
+  }, []);
+
+  const scan = async () => {
+    setScanning(true);
+    setScanError(null);
+    try {
+      setSlim(await scanCDriveSlim());
+    } catch (reason) {
+      setScanError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setScanning(false);
+    }
+  };
+
+  if (!tools)
+    return (
+      <Center h={260}>
+        <Loader />
+      </Center>
+    );
+
+  const available = tools.filter((tool) => tool.status !== "planned");
+  const planned = tools.filter((tool) => tool.status === "planned");
+  const usedBytes = slim
+    ? Math.max(0, slim.driveTotalBytes - slim.driveFreeBytes)
+    : 0;
+
+  return (
+    <Stack gap="md">
+      <Alert color="blue" icon={<IconShieldCheck />}>
+        工具箱按“只读预览 → 逐项确认 → 可回滚执行”推进。当前仅 C
+        盘瘦身可运行，且不会删除任何文件。
+      </Alert>
+      {error && (
+        <Alert color="red" icon={<IconAlertCircle />}>
+          {error}
+        </Alert>
+      )}
+
+      <Title order={3}>可用工具</Title>
+      <SimpleGrid cols={{ base: 1, md: 2, xl: 3 }}>
+        {available.map((tool) => (
+          <Card key={tool.id} className="glass-card" radius="lg">
+            <Group justify="space-between" align="flex-start">
+              <Box>
+                <Text fw={800}>{tool.name}</Text>
+                <Text size="xs" c="dimmed" mt={3}>
+                  {tool.category} ·{" "}
+                  <Text component="span" c={riskColor(tool.risk)}>
+                    {riskLabel(tool.risk)}
+                  </Text>
+                  {tool.requiresAdmin ? " · 需要管理员" : ""}
+                </Text>
+              </Box>
+              <Badge
+                color={tool.status === "available" ? "teal" : "orange"}
+                variant="light"
+              >
+                {tool.status === "available" ? "可用" : "部分可用"}
+              </Badge>
+            </Group>
+            <Text size="sm" mt="sm">
+              {tool.description}
+            </Text>
+            <Text size="xs" c="dimmed" mt={4}>
+              {tool.note}
+            </Text>
+            {tool.id === "cclean" && (
+              <Button
+                size="xs"
+                mt="md"
+                loading={scanning}
+                onClick={() => void scan()}
+              >
+                扫描 C 盘
+              </Button>
+            )}
+          </Card>
+        ))}
+      </SimpleGrid>
+
+      {scanError && (
+        <Alert color="red" icon={<IconAlertCircle />}>
+          {scanError}
+        </Alert>
+      )}
+
+      {slim && (
+        <Card className="glass-card" radius="lg">
+          <Group justify="space-between" align="flex-start" wrap="wrap">
+            <Box>
+              <Text fw={800}>C 盘瘦身预览</Text>
+              <Text size="xs" c="dimmed">
+                {slim.driveLetter} 已用 {bytes(usedBytes)} / {bytes(slim.driveTotalBytes)} · 可用{" "}
+                {bytes(slim.driveFreeBytes)}
+              </Text>
+            </Box>
+            <Group gap="xs">
+              <Badge color="teal" variant="light">
+                可安全清理 {bytes(slim.safeBytes)}
+              </Badge>
+              <Badge color="orange" variant="light">
+                需确认 {bytes(slim.cautionBytes)}
+              </Badge>
+              <Badge color="gray" variant="light">
+                系统托管 {bytes(slim.systemBytes)}
+              </Badge>
+            </Group>
+          </Group>
+          <Progress
+            mt="md"
+            value={
+              slim.driveTotalBytes
+                ? (usedBytes / slim.driveTotalBytes) * 100
+                : 0
+            }
+          />
+          <Text size="xs" c="dimmed" mt="sm">
+            {slim.items.length} 个位置 · {slim.fileCount} 个文件
+          </Text>
+          <Table mt="md" highlightOnHover verticalSpacing="xs">
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>位置</Table.Th>
+                <Table.Th>占用</Table.Th>
+                <Table.Th>类别</Table.Th>
+                <Table.Th>权限</Table.Th>
+                <Table.Th>说明</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {slim.items.map((item) => (
+                <Table.Tr key={item.id}>
+                  <Table.Td>
+                    <Text size="sm" fw={600}>
+                      {item.label}
+                    </Text>
+                    <Text size="xs" c="dimmed" truncate maw={360}>
+                      {item.path}
+                    </Text>
+                  </Table.Td>
+                  <Table.Td>{bytes(item.bytes)}</Table.Td>
+                  <Table.Td>
+                    <Badge
+                      size="xs"
+                      color={slimCategoryColor(item.category)}
+                      variant="light"
+                    >
+                      {slimCategoryLabel(item.category)}
+                    </Badge>
+                  </Table.Td>
+                  <Table.Td>
+                    <Text size="xs">
+                      {item.requiresAdmin ? "需要管理员" : "普通权限"}
+                    </Text>
+                  </Table.Td>
+                  <Table.Td>
+                    <Text size="xs" c="dimmed" maw={320}>
+                      {item.note}
+                    </Text>
+                  </Table.Td>
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+          <Text size="xs" c="dimmed" mt="md">
+            {slim.note}
+          </Text>
+        </Card>
+      )}
+
+      <Title order={3} mt="md">
+        规划中（{planned.length}）
+      </Title>
+      <Card className="glass-card" radius="lg" p={0}>
+        <ScrollArea h={360}>
+          <Table highlightOnHover verticalSpacing="xs">
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>工具</Table.Th>
+                <Table.Th>分类</Table.Th>
+                <Table.Th>风险</Table.Th>
+                <Table.Th>说明</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {planned.map((tool) => (
+                <Table.Tr key={tool.id}>
+                  <Table.Td>
+                    <Text size="sm" fw={600}>
+                      {tool.name}
+                    </Text>
+                    <Text size="xs" c="dimmed">
+                      {tool.id}
+                    </Text>
+                  </Table.Td>
+                  <Table.Td>{tool.category}</Table.Td>
+                  <Table.Td>
+                    <Badge size="xs" color={riskColor(tool.risk)} variant="light">
+                      {riskLabel(tool.risk)}
+                    </Badge>
+                  </Table.Td>
+                  <Table.Td>
+                    <Text size="xs" c="dimmed">
+                      {tool.description} · {tool.note}
+                    </Text>
+                  </Table.Td>
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+        </ScrollArea>
+      </Card>
+    </Stack>
+  );
+}
+
 export default function App() {
   const { colorScheme, setColorScheme } = useMantineColorScheme();
   const [tab, setTab] = useState<Tab>("overview");
@@ -3360,7 +3611,7 @@ export default function App() {
           </Text>
         </Paper>
         <Text size="xs" c="dimmed">
-          v0.27.0 · 系统指标历史
+          v0.28.0 · 工具箱（C 盘瘦身）
         </Text>
       </aside>
       <main className="content">
@@ -3630,6 +3881,7 @@ export default function App() {
           </Stack>
         )}
         {tab === "tasks" && <ScheduledTasksPanel data={scheduledTasks} />}
+        {tab === "toolbox" && <ToolboxPanel />}
         {tab === "report" && <ReportPanel />}
       </main>
     </div>

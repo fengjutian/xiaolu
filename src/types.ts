@@ -313,6 +313,42 @@ export interface SystemHistorySeries {
   sampleCount: number;
 }
 
+export interface ToolDescriptor {
+  id: string;
+  name: string;
+  category: string;
+  description: string;
+  risk: "read_only" | "write" | "system" | string;
+  requiresAdmin: boolean;
+  status: "available" | "partial" | "planned" | string;
+  note: string;
+}
+
+export interface SlimItem {
+  id: string;
+  label: string;
+  path: string;
+  bytes: number;
+  fileCount: number;
+  category: "safe" | "caution" | "system" | string;
+  requiresAdmin: boolean;
+  truncated: boolean;
+  note: string;
+}
+
+export interface SlimScan {
+  capturedAtUnixMs: number;
+  driveLetter: string;
+  driveTotalBytes: number;
+  driveFreeBytes: number;
+  items: SlimItem[];
+  safeBytes: number;
+  cautionBytes: number;
+  systemBytes: number;
+  fileCount: number;
+  note: string;
+}
+
 export interface DiagnosticReport {
   capturedAtUnixMs: number;
   pendingReboot: boolean;
