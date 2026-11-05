@@ -2,15 +2,15 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ActionIcon, Alert, Badge, Box, Button, Card, Center, Group, Loader, NavLink, Paper, Progress, ScrollArea, SimpleGrid, Stack, Switch, Table, Text, TextInput, ThemeIcon, Title, Tooltip } from "@mantine/core";
 import { IconActivity, IconAlertCircle, IconArrowDown, IconArrowUp, IconBolt, IconCpu, IconDeviceDesktop, IconDownload, IconGauge, IconNetwork, IconPlayerPause, IconRefresh, IconRocket, IconSearch, IconServer, IconShieldCheck, IconTemperature, IconTool, IconWind } from "@tabler/icons-react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip as ChartTooltip, XAxis, YAxis } from "recharts";
-import { getDriverInventory, getHardwareDetails, getSensorSnapshot, getStartupItems, getSystemSnapshot, isDesktopRuntime, setStartupEnabled } from "./api";
-import type { DriverInventory, HardwareDetails, SensorReading, SensorSnapshot, StartupItem, SystemSnapshot } from "./types";
+import { getDriverInventory, getHardwareDetails, getSensorSnapshot, getStartupItems, getSystemSnapshot, isDesktopRuntime, runBenchmark, setStartupEnabled } from "./api";
+import type { BenchmarkResult, DriverInventory, HardwareDetails, SensorReading, SensorSnapshot, StartupItem, SystemSnapshot } from "./types";
 import "./styles.css";
 
-type Tab = "overview" | "sensors" | "drivers" | "hardware" | "processes" | "startup" | "report";
+type Tab = "overview" | "benchmark" | "sensors" | "drivers" | "hardware" | "processes" | "startup" | "report";
 type Sample = { time: string; cpu: number; memory: number; download: number; upload: number; diskRead: number; diskWrite: number };
 
 const nav = [
-  ["overview", "性能概览", IconGauge], ["sensors", "温度与健康", IconTemperature], ["drivers", "驱动检测", IconTool], ["hardware", "硬件详情", IconCpu], ["processes", "运行进程", IconActivity],
+  ["overview", "性能概览", IconGauge], ["benchmark", "性能跑分", IconActivity], ["sensors", "温度与健康", IconTemperature], ["drivers", "驱动检测", IconTool], ["hardware", "硬件详情", IconCpu], ["processes", "运行进程", IconActivity],
   ["startup", "启动项管理", IconRocket], ["report", "诊断报告", IconShieldCheck],
 ] as const;
 
@@ -57,6 +57,26 @@ function DriversPanel({ data }: { data: DriverInventory | null }) {
   return <Stack gap="md"><SimpleGrid cols={{ base: 2, xl: 5 }}><Stat icon={IconTool} label="设备总数" value={String(data.total)} hint={data.source} color="indigo"/><Stat icon={IconShieldCheck} label="已签名驱动" value={String(data.signed)} hint="Windows 报告为已签名" color="teal"/><Stat icon={IconAlertCircle} label="未签名" value={String(data.unsigned)} hint="建议核对发布者" color="orange"/><Stat icon={IconDownload} label="缺少驱动" value={String(data.missing)} hint="没有匹配驱动记录" color="red"/><Stat icon={IconActivity} label="设备异常" value={String(data.problems)} hint="PnP 错误码非 0" color="yellow"/></SimpleGrid><Alert color="blue" icon={<IconShieldCheck/>}>检测结果来自 Windows CIM 和即插即用数据库。当前版本只读，不会自动下载或安装驱动。</Alert><TextInput value={query} onChange={event => setQuery(event.currentTarget.value)} leftSection={<IconSearch size={17}/>} placeholder="搜索设备、厂商、版本、INF 或硬件 ID"/><Card className="glass-card" radius="lg" p={0}><ScrollArea h="calc(100vh - 390px)"><Table stickyHeader highlightOnHover verticalSpacing="sm"><Table.Thead><Table.Tr><Table.Th>设备</Table.Th><Table.Th>驱动</Table.Th><Table.Th>签名</Table.Th><Table.Th>状态</Table.Th></Table.Tr></Table.Thead><Table.Tbody>{items.map(item => <Table.Tr key={item.deviceId}><Table.Td><Text fw={700} size="sm">{item.deviceName}</Text><Text size="xs" c="dimmed">{item.deviceClass || "未分类"} · {item.manufacturer || "未知厂商"}</Text><Text size="xs" c="dimmed" truncate maw={380}>{item.deviceId}</Text></Table.Td><Table.Td><Text size="sm">{item.missingDriver ? "缺少驱动" : item.driverVersion || "版本未知"}</Text><Text size="xs" c="dimmed">{item.driverProvider || "提供商未知"} · {item.infName || "无 INF"}</Text></Table.Td><Table.Td><Badge color={item.signed ? "teal" : item.missingDriver ? "red" : "orange"} variant="light">{item.signed ? "已签名" : item.missingDriver ? "缺失" : "未签名"}</Badge></Table.Td><Table.Td><Badge color={item.errorCode === 0 ? "gray" : "red"}>{item.status} · {item.errorCode}</Badge></Table.Td></Table.Tr>)}</Table.Tbody></Table></ScrollArea></Card></Stack>;
 }
 
+const benchmarkKinds: Array<{ kind: BenchmarkResult["kind"]; label: string; description: string }> = [
+  { kind: "cpu-single", label: "CPU 单核", description: "固定整数混合工作负载" },
+  { kind: "cpu-multi", label: "CPU 多核", description: "最多使用 32 个逻辑线程" },
+  { kind: "memory", label: "内存带宽", description: "64 MiB 缓冲区复制测试" },
+  { kind: "disk", label: "磁盘顺序读写", description: "临时创建并删除 128 MiB 文件" },
+];
+
+function BenchmarkPanel() {
+  const [running, setRunning] = useState<BenchmarkResult["kind"] | null>(null);
+  const [results, setResults] = useState<Record<string, BenchmarkResult>>({});
+  const [failure, setFailure] = useState<string | null>(null);
+  const run = async (kind: BenchmarkResult["kind"]) => {
+    setRunning(kind); setFailure(null);
+    try { const result = await runBenchmark(kind); setResults(old => ({ ...old, [kind]: result })); }
+    catch (error) { setFailure(error instanceof Error ? error.message : String(error)); }
+    finally { setRunning(null); }
+  };
+  return <Stack gap="md"><Alert color="blue" icon={<IconGauge/>}>跑分会在短时间内提高 CPU、内存或磁盘负载。分数公式公开且版本化，仅适合与 System Lens 相同版本结果比较。</Alert>{failure && <Alert color="red" icon={<IconAlertCircle/>}>{failure}</Alert>}<SimpleGrid cols={{ base: 1, md: 2 }}>{benchmarkKinds.map(item => { const result = results[item.kind]; return <Card key={item.kind} className="glass-card" radius="lg"><Group justify="space-between" align="flex-start"><Box><Text fw={800}>{item.label}</Text><Text size="xs" c="dimmed">{item.description}</Text></Box>{result && <Badge variant="light" color="teal">Schema {result.schemaVersion}</Badge>}</Group>{result ? <Box mt="xl"><Title order={1}>{result.score.toFixed(0)} <Text component="span" size="sm" c="dimmed">{result.unit}</Text></Title><SimpleGrid cols={2} mt="md">{Object.entries(result.details).filter(([key]) => key !== "checksum").map(([key, value]) => <Box key={key}><Text size="xs" c="dimmed">{key}</Text><Text fw={700}>{Number(value).toFixed(2)}</Text></Box>)}</SimpleGrid><Text size="xs" c="dimmed" mt="md">耗时 {result.durationMs} ms · {result.note}</Text></Box> : <Text c="dimmed" mt="xl">尚未运行</Text>}<Button fullWidth mt="xl" variant={result ? "light" : "filled"} loading={running === item.kind} disabled={running !== null && running !== item.kind} onClick={() => void run(item.kind)}>{result ? "重新测试" : "开始测试"}</Button></Card>; })}</SimpleGrid></Stack>;
+}
+
 export default function App() {
   const [tab, setTab] = useState<Tab>("overview");
   const [snapshot, setSnapshot] = useState<SystemSnapshot | null>(null);
@@ -99,9 +119,10 @@ export default function App() {
   const diskRead = snapshot.disks.reduce((sum, x) => sum + x.readBytesPerSec, 0);
   const diskWrite = snapshot.disks.reduce((sum, x) => sum + x.writtenBytesPerSec, 0);
 
-  return <div className="shell"><aside className="side"><Group gap="sm" className="logo"><ThemeIcon size={42} radius={14} variant="gradient" gradient={{ from: "indigo", to: "cyan" }}><IconDeviceDesktop/></ThemeIcon><Box><Text fw={800}>小鲁</Text><Text size="xs" c="dimmed">SYSTEM LENS</Text></Box></Group><Stack gap={5} mt="xl">{nav.map(([id, label, Icon]) => <NavLink key={id} active={tab === id} label={label} leftSection={<Icon size={19}/>} onClick={() => setTab(id)} />)}</Stack><Paper className="privacy" radius="lg" p="md"><Group gap="xs"><IconShieldCheck size={18}/><Text fw={700} size="sm">本地优先</Text></Group><Text size="xs" c="dimmed" mt="xs">数据仅在本机采集和处理。</Text></Paper><Text size="xs" c="dimmed">v0.4.0 · SMART</Text></aside>
+  return <div className="shell"><aside className="side"><Group gap="sm" className="logo"><ThemeIcon size={42} radius={14} variant="gradient" gradient={{ from: "indigo", to: "cyan" }}><IconDeviceDesktop/></ThemeIcon><Box><Text fw={800}>小鲁</Text><Text size="xs" c="dimmed">SYSTEM LENS</Text></Box></Group><Stack gap={5} mt="xl">{nav.map(([id, label, Icon]) => <NavLink key={id} active={tab === id} label={label} leftSection={<Icon size={19}/>} onClick={() => setTab(id)} />)}</Stack><Paper className="privacy" radius="lg" p="md"><Group gap="xs"><IconShieldCheck size={18}/><Text fw={700} size="sm">本地优先</Text></Group><Text size="xs" c="dimmed" mt="xs">数据仅在本机采集和处理。</Text></Paper><Text size="xs" c="dimmed">v0.5.0 · 性能测试</Text></aside>
     <main className="content"><Group justify="space-between" mb="xl"><Box><Text size="sm" c="dimmed">{snapshot.hostName} · {snapshot.osName}</Text><Title order={1}>{nav.find(x => x[0] === tab)?.[1]}</Title></Box><Group>{!isDesktopRuntime() && <Badge variant="light">浏览器演示</Badge>}<Tooltip label="立即刷新"><ActionIcon size="lg" variant="light" onClick={() => void refresh()} loading={busy}><IconRefresh size={19}/></ActionIcon></Tooltip></Group></Group>{error && <Alert icon={<IconAlertCircle/>} color="red" withCloseButton onClose={() => setError(null)} mb="md">{error}</Alert>}
       {tab === "overview" && <Stack gap="md"><SimpleGrid cols={{ base: 2, xl: 4 }}><Stat icon={IconCpu} label="CPU 使用率" value={`${snapshot.cpu.usagePercent.toFixed(1)}%`} hint={`${snapshot.cpu.logicalCores} 线程 · ${snapshot.cpu.frequencyMhz} MHz`} color="indigo"/><Stat icon={IconServer} label="内存使用率" value={`${snapshot.memory.usagePercent.toFixed(1)}%`} hint={`${bytes(snapshot.memory.usedBytes)} / ${bytes(snapshot.memory.totalBytes)}`} color="grape"/><Stat icon={IconArrowDown} label="实时下载" value={speed(snapshot.network.downloadBytesPerSec)} hint={`累计 ${bytes(snapshot.network.totalReceivedBytes)}`} color="teal"/><Stat icon={IconArrowUp} label="实时上传" value={speed(snapshot.network.uploadBytesPerSec)} hint={`累计 ${bytes(snapshot.network.totalTransmittedBytes)}`} color="yellow"/></SimpleGrid><SimpleGrid cols={{ base: 1, lg: 2 }}><Card className="glass-card" radius="lg"><Group justify="space-between" mb="sm"><Box><Text fw={700}>系统负载</Text><Text size="xs" c="dimmed">最近 60 秒</Text></Box><Badge variant="dot">实时</Badge></Group><PerformanceChart data={history} mode="system"/></Card><Card className="glass-card" radius="lg"><Group justify="space-between" mb="sm"><Box><Text fw={700}>网络吞吐</Text><Text size="xs" c="dimmed">MB/s · {snapshot.network.interfaces} 个接口</Text></Box><IconNetwork size={21}/></Group><PerformanceChart data={history} mode="network"/></Card></SimpleGrid><Card className="glass-card" radius="lg"><Group justify="space-between" mb="md"><Box><Text fw={700}>磁盘活动</Text><Text size="xs" c="dimmed">读取 {speed(diskRead)} · 写入 {speed(diskWrite)}</Text></Box><Badge color="gray">运行 {duration(snapshot.uptimeSeconds)}</Badge></Group>{snapshot.disks.map(d => { const used = d.totalBytes - d.availableBytes; return <Box key={d.mountPoint} mb="md"><Group justify="space-between"><Text size="sm" fw={600}>{d.name || d.mountPoint} · {d.fileSystem}</Text><Text size="xs" c="dimmed">{bytes(used)} / {bytes(d.totalBytes)}</Text></Group><Progress mt={8} value={d.totalBytes ? used / d.totalBytes * 100 : 0}/></Box>; })}</Card></Stack>}
+      {tab === "benchmark" && <BenchmarkPanel/>}
       {tab === "hardware" && <HardwarePanel details={hardware}/>}
       {tab === "sensors" && <SensorsPanel data={sensors}/>}
       {tab === "drivers" && <DriversPanel data={drivers}/>}

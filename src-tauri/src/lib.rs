@@ -1,6 +1,7 @@
 mod system;
 mod sensors;
 mod drivers;
+mod benchmark;
 
 use tauri::{menu::{Menu, MenuItem}, tray::TrayIconBuilder, Manager};
 
@@ -33,7 +34,7 @@ pub fn run() {
                 let _ = window.hide();
             }
         })
-        .invoke_handler(tauri::generate_handler![system::get_system_snapshot, system::get_hardware_details, system::get_startup_items, system::set_startup_enabled, sensors::get_sensor_snapshot, drivers::get_driver_inventory])
+        .invoke_handler(tauri::generate_handler![system::get_system_snapshot, system::get_hardware_details, system::get_startup_items, system::set_startup_enabled, sensors::get_sensor_snapshot, drivers::get_driver_inventory, benchmark::run_benchmark])
         .run(tauri::generate_context!())
         .expect("failed to run System Lens");
 }

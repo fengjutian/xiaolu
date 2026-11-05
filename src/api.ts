@@ -1,5 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import type { DriverInventory, HardwareDetails, SensorSnapshot, StartupItem, SystemSnapshot } from "./types";
+import type { BenchmarkResult, DriverInventory, HardwareDetails, SensorSnapshot, StartupItem, SystemSnapshot } from "./types";
 
 const gib = 1024 ** 3;
 
@@ -90,6 +90,11 @@ export async function getDriverInventory(): Promise<DriverInventory> {
     ],
   };
   return invoke<DriverInventory>("get_driver_inventory");
+}
+
+export async function runBenchmark(kind: BenchmarkResult["kind"]): Promise<BenchmarkResult> {
+  if (!isTauri()) return { schemaVersion: 1, kind, label: { "cpu-single": "CPU 单核", "cpu-multi": "CPU 多核", memory: "内存带宽", disk: "磁盘顺序读写" }[kind], score: 8560, unit: "分", durationMs: 1260, details: kind === "disk" ? { writeMiBPerSecond: 850, readMiBPerSecond: 2200, testFileMiB: 128 } : { throughput: 85.6 }, note: "浏览器演示结果" };
+  return invoke<BenchmarkResult>("run_benchmark", { kind });
 }
 
 export function isDesktopRuntime(): boolean {

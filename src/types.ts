@@ -132,3 +132,14 @@ export interface DriverInventory {
   items: DriverInfo[];
   source: string;
 }
+
+export interface BenchmarkResult {
+  schemaVersion: number;
+  kind: "cpu-single" | "cpu-multi" | "memory" | "disk";
+  label: string;
+  score: number;
+  unit: string;
+  durationMs: number;
+  details: Record<string, number>;
+  note: string;
+}
