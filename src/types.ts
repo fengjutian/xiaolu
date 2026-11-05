@@ -163,3 +163,27 @@ export interface BenchmarkRecord {
   recordedAtUnixMs: number;
   result: BenchmarkResult;
 }
+
+export interface DiagnosticReport {
+  capturedAtUnixMs: number;
+  pendingReboot: boolean;
+  pendingWindowsUpdateReboot: boolean;
+  battery: {
+    present: boolean;
+    name: string;
+    status: string;
+    chargePercent: number | null;
+    designCapacityMwh: number | null;
+    fullChargeCapacityMwh: number | null;
+    healthPercent: number | null;
+    cycleCount: number | null;
+  };
+  events: Array<{
+    timeCreated: string;
+    provider: string;
+    eventId: number;
+    level: string;
+    message: string;
+  }>;
+  source: string;
+}

@@ -33,6 +33,7 @@ import {
   IconDeviceDesktop,
   IconDownload,
   IconGauge,
+  IconHeartbeat,
   IconNetwork,
   IconPlayerPause,
   IconRefresh,
@@ -56,6 +57,7 @@ import {
 import {
   getBenchmarkHistory,
   getDriverInventory,
+  getDiagnosticReport,
   getHardwareDetails,
   getSensorSnapshot,
   getStartupItems,
@@ -70,6 +72,7 @@ import type {
   BenchmarkResult,
   DriverInventory,
   DriverUpdate,
+  DiagnosticReport,
   HardwareDetails,
   SensorReading,
   SensorSnapshot,
@@ -83,6 +86,7 @@ type Tab =
   | "benchmark"
   | "sensors"
   | "drivers"
+  | "diagnostics"
   | "hardware"
   | "processes"
   | "startup"
@@ -102,6 +106,7 @@ const nav = [
   ["benchmark", "性能跑分", IconActivity],
   ["sensors", "温度与健康", IconTemperature],
   ["drivers", "驱动检测", IconTool],
+  ["diagnostics", "系统诊断", IconHeartbeat],
   ["hardware", "硬件详情", IconCpu],
   ["processes", "运行进程", IconActivity],
   ["startup", "启动项管理", IconRocket],
@@ -678,6 +683,163 @@ function DriversPanel({ data }: { data: DriverInventory | null }) {
   );
 }
 
+function DiagnosticsPanel({ data }: { data: DiagnosticReport | null }) {
+  if (!data)
+    return (
+      <Center h={260}>
+        <Loader />
+      </Center>
+    );
+  const battery = data.battery;
+  return (
+    <Stack gap="md">
+      <SimpleGrid cols={{ base: 1, md: 3 }}>
+        <Stat
+          icon={IconHeartbeat}
+          label="待重启状态"
+          value={data.pendingReboot ? "需要重启" : "无需重启"}
+          hint={
+            data.pendingWindowsUpdateReboot
+              ? "Windows Update 请求重启"
+              : "未发现更新重启标记"
+          }
+          color={data.pendingReboot ? "orange" : "teal"}
+        />
+        <Stat
+          icon={IconBolt}
+          label="电池电量"
+          value={
+            battery.present && battery.chargePercent != null
+              ? `${battery.chargePercent.toFixed(0)}%`
+              : "无电池"
+          }
+          hint={
+            battery.present
+              ? `${battery.name} · ${battery.status}`
+              : "台式机或电池接口不可用"
+          }
+          color="blue"
+        />
+        <Stat
+          icon={IconShieldCheck}
+          label="电池健康"
+          value={
+            battery.healthPercent == null
+              ? "不可用"
+              : `${battery.healthPercent.toFixed(1)}%`
+          }
+          hint={
+            battery.cycleCount == null
+              ? "循环次数不可用"
+              : `${battery.cycleCount} 次循环`
+          }
+          color={
+            battery.healthPercent != null && battery.healthPercent < 70
+              ? "red"
+              : "teal"
+          }
+        />
+      </SimpleGrid>
+      {battery.present && (
+        <Card className="glass-card" radius="lg">
+          <Group justify="space-between">
+            <Box>
+              <Text fw={800}>电池容量</Text>
+              <Text size="xs" c="dimmed">
+                {data.source}
+              </Text>
+            </Box>
+            <Badge
+              color={
+                battery.healthPercent != null && battery.healthPercent < 70
+                  ? "red"
+                  : "teal"
+              }
+            >
+              {battery.status}
+            </Badge>
+          </Group>
+          <SimpleGrid cols={3} mt="lg">
+            <Box>
+              <Text size="xs" c="dimmed">
+                设计容量
+              </Text>
+              <Text fw={700}>
+                {battery.designCapacityMwh == null
+                  ? "不可用"
+                  : `${battery.designCapacityMwh} mWh`}
+              </Text>
+            </Box>
+            <Box>
+              <Text size="xs" c="dimmed">
+                满充容量
+              </Text>
+              <Text fw={700}>
+                {battery.fullChargeCapacityMwh == null
+                  ? "不可用"
+                  : `${battery.fullChargeCapacityMwh} mWh`}
+              </Text>
+            </Box>
+            <Box>
+              <Text size="xs" c="dimmed">
+                损耗率
+              </Text>
+              <Text fw={700}>
+                {battery.healthPercent == null
+                  ? "不可用"
+                  : `${Math.max(0, 100 - battery.healthPercent).toFixed(1)}%`}
+              </Text>
+            </Box>
+          </SimpleGrid>
+        </Card>
+      )}
+      <Group justify="space-between" mt="sm">
+        <Title order={3}>最近 24 小时系统错误</Title>
+        <Badge variant="light" color={data.events.length ? "orange" : "teal"}>
+          {data.events.length} 条
+        </Badge>
+      </Group>
+      {data.events.length === 0 ? (
+        <Alert color="teal" icon={<IconShieldCheck />}>
+          系统日志中没有找到最近 24 小时的严重或错误事件。
+        </Alert>
+      ) : (
+        data.events.map((event, index) => (
+          <Card
+            key={`${event.timeCreated}-${event.eventId}-${index}`}
+            className="glass-card"
+            radius="lg"
+          >
+            <Group justify="space-between" align="flex-start">
+              <Box>
+                <Text fw={700}>
+                  {event.provider} · 事件 {event.eventId}
+                </Text>
+                <Text size="xs" c="dimmed">
+                  {new Date(event.timeCreated).toLocaleString()}
+                </Text>
+              </Box>
+              <Badge
+                color={
+                  event.level.includes("严重") ||
+                  event.level.toLowerCase().includes("critical")
+                    ? "red"
+                    : "orange"
+                }
+              >
+                {event.level}
+              </Badge>
+            </Group>
+            <Text size="sm" c="dimmed" mt="md" className="event-message">
+              {event.message || "事件没有提供说明。"}
+            </Text>
+          </Card>
+        ))
+      )}
+    </Stack>
+  );
+}
+
 const benchmarkKinds: Array<{
   kind: BenchmarkResult["kind"];
   label: string;
@@ -876,6 +1038,7 @@ export default function App() {
   const [hardware, setHardware] = useState<HardwareDetails | null>(null);
   const [sensors, setSensors] = useState<SensorSnapshot | null>(null);
   const [drivers, setDrivers] = useState<DriverInventory | null>(null);
+  const [diagnostics, setDiagnostics] = useState<DiagnosticReport | null>(null);
   const [startup, setStartup] = useState<StartupItem[]>([]);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -946,6 +1109,12 @@ export default function App() {
         .then(setDrivers)
         .catch((e) => setError(String(e)));
   }, [tab, drivers]);
+  useEffect(() => {
+    if (tab === "diagnostics" && !diagnostics)
+      void getDiagnosticReport()
+        .then(setDiagnostics)
+        .catch((e) => setError(String(e)));
+  }, [tab, diagnostics]);
   const loadStartup = useCallback(
     () =>
       getStartupItems()
@@ -1063,7 +1232,7 @@ export default function App() {
           </Text>
         </Paper>
         <Text size="xs" c="dimmed">
-          v0.7.0 · 官方驱动建议
+          v0.8.0 · 系统诊断
         </Text>
       </aside>
       <main className="content">
@@ -1195,6 +1364,7 @@ export default function App() {
         {tab === "hardware" && <HardwarePanel details={hardware} />}
         {tab === "sensors" && <SensorsPanel data={sensors} />}
         {tab === "drivers" && <DriversPanel data={drivers} />}
+        {tab === "diagnostics" && <DiagnosticsPanel data={diagnostics} />}
         {tab === "processes" && (
           <Card className="glass-card" radius="lg" p={0}>
             <ScrollArea h="calc(100vh - 180px)">

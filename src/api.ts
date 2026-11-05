@@ -1,5 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import type { BenchmarkRecord, BenchmarkResult, DriverInventory, DriverUpdate, HardwareDetails, SensorSnapshot, StartupItem, SystemSnapshot } from "./types";
+import type { BenchmarkRecord, BenchmarkResult, DiagnosticReport, DriverInventory, DriverUpdate, HardwareDetails, SensorSnapshot, StartupItem, SystemSnapshot } from "./types";
 
 const gib = 1024 ** 3;
 
@@ -106,6 +106,11 @@ export async function runBenchmark(kind: BenchmarkResult["kind"]): Promise<Bench
 export async function getBenchmarkHistory(): Promise<BenchmarkRecord[]> {
   if (!isTauri()) return [];
   return invoke<BenchmarkRecord[]>("get_benchmark_history");
+}
+
+export async function getDiagnosticReport(): Promise<DiagnosticReport> {
+  if (!isTauri()) return { capturedAtUnixMs: Date.now(), pendingReboot: false, pendingWindowsUpdateReboot: false, battery: { present: true, name: "演示电池", status: "OK", chargePercent: 72, designCapacityMwh: 86000, fullChargeCapacityMwh: 77400, healthPercent: 90, cycleCount: 128 }, events: [{ timeCreated: new Date().toISOString(), provider: "演示事件源", eventId: 1001, level: "错误", message: "浏览器预览事件。" }], source: "浏览器演示" };
+  return invoke<DiagnosticReport>("get_diagnostic_report");
 }
 
 function compileShader(gl: WebGL2RenderingContext, type: number, source: string): WebGLShader {

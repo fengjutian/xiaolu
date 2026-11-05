@@ -1,7 +1,7 @@
 # 小鲁 System Lens：完整功能规划
 
 版本：0.3 规划稿  
-状态：实施中（0.7.0 Windows Update 驱动建议）
+状态：实施中（0.8.0 电池与系统事件诊断）
 目标平台：Windows 10/11 x64  
 桌面框架：Tauri 2 + React + Rust
 
