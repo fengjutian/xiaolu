@@ -3695,7 +3695,7 @@ export default function App() {
           </Text>
         </Paper>
         <Text size="xs" c="dimmed">
-          v0.30.0 · 4 个只读工具
+          v0.31.0 · 7 个只读工具
         </Text>
       </aside>
       <main className="content">
