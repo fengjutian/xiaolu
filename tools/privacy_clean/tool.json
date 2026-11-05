@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "privacy_clean",
+  "name": "隐私清理",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "description": "只读统计浏览器记录、缓存与最近使用痕迹的占用",
+  "category": "privacy",
+  "risk": "read_only",
+  "entry": "privacy_clean.exe",
+  "arguments": ["--stdio"],
+  "permissions": {
+    "readPaths": ["%LOCALAPPDATA%", "%APPDATA%"],
+    "writePaths": [],
+    "registry": [],
+    "network": false,
+    "elevation": "none"
+  },
+  "actions": [{ "id": "preview", "label": "预览", "write": false }],
+  "limits": { "timeoutMs": 120000, "maxOutputBytes": 2097152 },
+  "ui": { "kind": "table" },
+  "rollback": "none",
+  "hash": "",
+  "signature": null
+}

@@ -126,6 +126,7 @@ import type {
   SystemHistorySeries,
   SystemSnapshot,
   ToolDescriptor,
+  ToolResult,
 } from "./types";
 import "./styles.css";
 import ReportPanel from "./report";
@@ -3130,6 +3131,12 @@ function ToolboxPanel() {
   const [slim, setSlim] = useState<SlimScan | null>(null);
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
+  const [generic, setGeneric] = useState<{
+    tool: ToolDescriptor;
+    data: ToolResult;
+  } | null>(null);
+  const [runningTool, setRunningTool] = useState<string | null>(null);
+  const [genericError, setGenericError] = useState<string | null>(null);
 
   useEffect(() => {
     void listToolboxTools()
@@ -3137,11 +3144,24 @@ function ToolboxPanel() {
       .catch((reason) => setError(String(reason)));
   }, []);
 
+  const runGeneric = async (tool: ToolDescriptor) => {
+    setRunningTool(tool.id);
+    setGenericError(null);
+    try {
+      const data = (await runToolAction(tool.id, "preview")) as ToolResult;
+      setGeneric({ tool, data });
+    } catch (reason) {
+      setGenericError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setRunningTool(null);
+    }
+  };
+
   const scan = async () => {
     setScanning(true);
     setScanError(null);
     try {
-      setSlim(await runToolAction("cclean", "preview"));
+      setSlim((await runToolAction("cclean", "preview")) as SlimScan);
     } catch (reason) {
       setScanError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -3212,6 +3232,17 @@ function ToolboxPanel() {
                 扫描 C 盘
               </Button>
             )}
+            {tool.id !== "cclean" && tool.uiKind === "table" && (
+              <Button
+                size="xs"
+                mt="md"
+                variant="light"
+                loading={runningTool === tool.id}
+                onClick={() => void runGeneric(tool)}
+              >
+                运行预览
+              </Button>
+            )}
           </Card>
         ))}
       </SimpleGrid>
@@ -3220,6 +3251,58 @@ function ToolboxPanel() {
         <Alert color="red" icon={<IconAlertCircle />}>
           {scanError}
         </Alert>
+      )}
+
+      {genericError && (
+        <Alert color="red" icon={<IconAlertCircle />}>
+          {genericError}
+        </Alert>
+      )}
+
+      {generic && (
+        <Card className="glass-card" radius="lg">
+          <Text fw={800}>{generic.tool.name} · 预览</Text>
+          <Group gap="xs" mt="xs">
+            {(generic.data.summary ?? []).map((entry) => (
+              <Badge key={entry.label} variant="light">
+                {entry.label} {entry.value}
+              </Badge>
+            ))}
+          </Group>
+          {(generic.data.rows ?? []).length === 0 ? (
+            <Alert color="gray" mt="md">
+              没有可显示的数据。
+            </Alert>
+          ) : (
+            <Table mt="md" highlightOnHover verticalSpacing="xs">
+              <Table.Thead>
+                <Table.Tr>
+                  {(generic.data.columns ?? []).map((column) => (
+                    <Table.Th key={column.key}>{column.label}</Table.Th>
+                  ))}
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {(generic.data.rows ?? []).map((row, index) => (
+                  <Table.Tr key={index}>
+                    {(generic.data.columns ?? []).map((column) => (
+                      <Table.Td key={column.key}>
+                        {String(
+                          (row as Record<string, unknown>)[column.key] ?? "",
+                        )}
+                      </Table.Td>
+                    ))}
+                  </Table.Tr>
+                ))}
+              </Table.Tbody>
+            </Table>
+          )}
+          {(generic.data.notes ?? []).map((note) => (
+            <Text key={note} size="xs" c="dimmed" mt="xs">
+              {note}
+            </Text>
+          ))}
+        </Card>
       )}
 
       {slim && (

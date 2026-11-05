@@ -11,6 +11,7 @@ pub struct ToolDescriptor {
     pub requires_admin: bool,
     pub status: String,
     pub note: String,
+    pub ui_kind: String,
 }
 
 fn tool(
@@ -32,6 +33,7 @@ fn tool(
         requires_admin,
         status: status.into(),
         note: note.into(),
+        ui_kind: "none".into(),
     }
 }
 

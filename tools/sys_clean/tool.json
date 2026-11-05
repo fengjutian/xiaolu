@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "sys_clean",
+  "name": "Windows 系统瘦身",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "description": "只读列出已安装应用包与系统内置候选",
+  "category": "cleanup",
+  "risk": "read_only",
+  "entry": "sys_clean.exe",
+  "arguments": ["--stdio"],
+  "permissions": {
+    "readPaths": ["%ProgramFiles%\\WindowsApps"],
+    "writePaths": [],
+    "registry": [],
+    "network": false,
+    "elevation": "none"
+  },
+  "actions": [{ "id": "preview", "label": "预览", "write": false }],
+  "limits": { "timeoutMs": 120000, "maxOutputBytes": 2097152 },
+  "ui": { "kind": "table" },
+  "rollback": "none",
+  "hash": "",
+  "signature": null
+}

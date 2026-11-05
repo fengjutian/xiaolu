@@ -19,3 +19,6 @@ node_modules
 /.dsh-verify.*
 /.dsh-office-*
 /.probe-*
+
+# 非项目产物
+/sdlaudio.raw

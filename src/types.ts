@@ -322,6 +322,14 @@ export interface ToolDescriptor {
   requiresAdmin: boolean;
   status: "available" | "partial" | "planned" | string;
   note: string;
+  uiKind: string;
+}
+
+export interface ToolResult {
+  summary?: { label: string; value: string }[];
+  columns?: { key: string; label: string }[];
+  rows?: Record<string, unknown>[];
+  notes?: string[];
 }
 
 export interface SlimItem {

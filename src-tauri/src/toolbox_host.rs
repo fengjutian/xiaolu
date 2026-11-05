@@ -27,6 +27,13 @@ struct Permissions {
     elevation: String,
 }
 
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Ui {
+    #[serde(default)]
+    kind: String,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Limits {
@@ -74,6 +81,8 @@ struct Manifest {
     permissions: Permissions,
     #[serde(default)]
     limits: Limits,
+    #[serde(default)]
+    ui: Ui,
     #[serde(default)]
     note: Option<String>,
 }
@@ -162,6 +171,11 @@ fn descriptor(directory: &Path, manifest: &Manifest) -> ToolDescriptor {
             .note
             .clone()
             .unwrap_or_else(|| format!("v{} · 独立工具进程 · {}", manifest.version, directory.display())),
+        ui_kind: if manifest.ui.kind.is_empty() {
+            "none".into()
+        } else {
+            manifest.ui.kind.clone()
+        },
     }
 }
 

@@ -1,0 +1,18 @@
+[package]
+name = "dll-repair-tool"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "dll_repair"
+path = "src/main.rs"
+
+[dependencies]
+serde_json = "1"
+tool-protocol = { path = "../shared" }
+
+[profile.release]
+panic = "abort"
+strip = true
+lto = true
+opt-level = "s"

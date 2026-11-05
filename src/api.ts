@@ -747,12 +747,13 @@ export async function runGpuBenchmark(): Promise<BenchmarkResult> {
 export async function listToolboxTools(): Promise<ToolDescriptor[]> {
   if (!isTauri()) {
     return [
-      { id: "cclean", name: "C 盘瘦身", category: "清理", description: "只读统计 C 盘可清理位置与系统托管文件", risk: "read_only", requiresAdmin: false, status: "available", note: "当前仅预览，不删除" },
-      { id: "DuplicateFileClean", name: "重复文件清理", category: "清理", description: "重复文件检测与清理（规划）", risk: "read_only", requiresAdmin: false, status: "partial", note: "已具备只读检测" },
-      { id: "driver_manager", name: "驱动管理", category: "驱动", description: "驱动检测、更新预检与安装（规划）", risk: "system", requiresAdmin: true, status: "partial", note: "已具备检测与只读预检" },
-      { id: "sys_clean", name: "Windows 系统瘦身", category: "清理", description: "移除系统自带的无用组件与预装应用（规划）", risk: "write", requiresAdmin: true, status: "planned", note: "需要逐项确认与回滚设计" },
-      { id: "privacy_clean", name: "隐私清理", category: "隐私", description: "浏览记录、Cookie 与临时痕迹清理（规划）", risk: "write", requiresAdmin: false, status: "planned", note: "涉及浏览器数据，需逐项确认" },
-      { id: "defrag", name: "磁盘碎片整理", category: "优化", description: "HDD 碎片整理与 SSD TRIM（规划）", risk: "system", requiresAdmin: true, status: "planned", note: "调用系统 API，需确认磁盘类型" },
+      { id: "cclean", name: "C 盘瘦身", category: "清理", description: "只读统计 C 盘可清理位置与系统托管文件", risk: "read_only", requiresAdmin: false, status: "available", note: "当前仅预览，不删除", uiKind: "table" },
+      { id: "sys_clean", name: "Windows 系统瘦身", category: "清理", description: "只读列出已安装应用包与系统内置候选", risk: "read_only", requiresAdmin: false, status: "available", note: "只读清单", uiKind: "table" },
+      { id: "privacy_clean", name: "隐私清理", category: "隐私", description: "只读统计浏览器记录、缓存与最近使用痕迹的占用", risk: "read_only", requiresAdmin: false, status: "available", note: "只读统计", uiKind: "table" },
+      { id: "dll_repair", name: "DLL 修复", category: "修复", description: "只读检查常见运行库 DLL 是否存在", risk: "read_only", requiresAdmin: false, status: "available", note: "只读检查", uiKind: "table" },
+      { id: "DuplicateFileClean", name: "重复文件清理", category: "清理", description: "重复文件检测与清理（规划）", risk: "read_only", requiresAdmin: false, status: "partial", note: "已具备只读检测", uiKind: "none" },
+      { id: "driver_manager", name: "驱动管理", category: "驱动", description: "驱动检测、更新预检与安装（规划）", risk: "system", requiresAdmin: true, status: "partial", note: "已具备检测与只读预检", uiKind: "none" },
+      { id: "defrag", name: "磁盘碎片整理", category: "优化", description: "HDD 碎片整理与 SSD TRIM（规划）", risk: "system", requiresAdmin: true, status: "planned", note: "调用系统 API，需确认磁盘类型", uiKind: "none" },
     ];
   }
   return invoke<ToolDescriptor[]>("list_toolbox_tools");
@@ -761,8 +762,55 @@ export async function listToolboxTools(): Promise<ToolDescriptor[]> {
 export async function runToolAction(
   toolId: string,
   action: string,
-): Promise<SlimScan> {
+): Promise<unknown> {
   if (!isTauri()) {
+    if (toolId === "sys_clean") {
+      return {
+        summary: [
+          { label: "已安装应用包", value: "42" },
+          { label: "系统内置候选", value: "28" },
+        ],
+        columns: [
+          { key: "name", label: "应用包" },
+          { key: "version", label: "版本" },
+          { key: "type", label: "类型" },
+        ],
+        rows: [
+          { name: "Microsoft.WindowsCalculator", version: "11.0.0", type: "系统内置", location: "" },
+          { name: "Microsoft.Paint", version: "11.0.0", type: "系统内置", location: "" },
+        ],
+        notes: ["只读清单：不会卸载或修改任何应用包。"],
+      };
+    }
+    if (toolId === "privacy_clean") {
+      return {
+        summary: [{ label: "合计占用", value: "1.8 GB" }],
+        columns: [
+          { key: "label", label: "位置" },
+          { key: "size", label: "占用" },
+        ],
+        rows: [
+          { label: "Edge 缓存", size: "820.0 MB" },
+          { label: "最近使用文件", size: "12.0 MB" },
+        ],
+        notes: ["只读统计：不读取、不上传、不删除任何浏览记录或 Cookie。"],
+      };
+    }
+    if (toolId === "dll_repair") {
+      return {
+        summary: [{ label: "缺失项", value: "0" }],
+        columns: [
+          { key: "dll", label: "DLL" },
+          { key: "arch", label: "架构" },
+          { key: "status", label: "状态" },
+        ],
+        rows: [
+          { dll: "vcruntime140.dll", arch: "System32", status: "存在" },
+          { dll: "msvcp140.dll", arch: "System32", status: "存在" },
+        ],
+        notes: ["只读检查：不下载、不替换任何 DLL。"],
+      };
+    }
     const items = [
       { id: "user-temp", label: "用户临时文件", path: "C:\\Users\\Demo\\AppData\\Local\\Temp", bytes: 3.4 * gib, fileCount: 8421, category: "safe", requiresAdmin: false, truncated: false, note: "应用运行时可能仍在写入。" },
       { id: "windows-update", label: "Windows Update 下载缓存", path: "C:\\Windows\\SoftwareDistribution\\Download", bytes: 1.2 * gib, fileCount: 10, category: "caution", requiresAdmin: true, truncated: false, note: "更新缓存由系统管理。" },
@@ -782,7 +830,7 @@ export async function runToolAction(
       note: "只读预览：只统计占用，不删除任何文件。",
     };
   }
-  return invoke<SlimScan>("run_tool_action", { toolId, action });
+  return invoke<unknown>("run_tool_action", { toolId, action });
 }
 
 export function isDesktopRuntime(): boolean {
