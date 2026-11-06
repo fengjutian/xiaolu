@@ -44,6 +44,54 @@ const findingLines = (finding: AiFinding, facts: Map<string, DiagnosticFact>) =>
   return lines;
 };
 
+export function buildAiSectionMarkdown(records: AiSessionRecord[]): string[] {
+  const lines: string[] = [
+    "## AI 解读",
+    "",
+    "> AI 生成的解释性结论。每条结论必须引用本地诊断事实；数据缺失、模型降级和只读检查失败会明确标注。AI 结论不替代本地规则、原始指标或人工判断。",
+    "",
+  ];
+  if (records.length === 0) {
+    lines.push("没有可包含的 AI 解读记录。", "");
+    return lines;
+  }
+  const noFacts = new Map<string, DiagnosticFact>();
+  for (const record of records) {
+    const answer = record.answer;
+    lines.push(`### ${record.question ?? "本机健康解读"}`, "");
+    lines.push(
+      `- 生成时间：${new Date(answer.generatedAtUnixMs).toLocaleString()}`,
+      `- 模型：${answer.provider} / ${answer.model}`,
+      `- 提示词版本：${answer.promptVersion}`,
+      `- 快照：${answer.snapshotId}`,
+      `- 状态：${answer.degraded ? "已降级（使用本地规则）" : "AI 正常输出"}`,
+      "",
+    );
+    if (answer.degraded) {
+      lines.push(`> ${answer.degradedReason ?? "模型不可用"}`, "");
+    }
+    if (answer.summary) lines.push(answer.summary, "");
+    for (const finding of answer.findings) {
+      lines.push(...findingLines(finding, noFacts));
+    }
+    if (answer.checks && answer.checks.length > 0) {
+      lines.push("#### 只读检查", "");
+      for (const check of answer.checks) {
+        lines.push(
+          `- ${check.label}（${check.toolId}）：${check.ok ? "完成" : "失败"}，${check.durationMs} ms${check.error ? `，${check.error}` : ""}`,
+        );
+      }
+      lines.push("");
+    }
+    if (answer.limitations.length > 0) {
+      lines.push("#### 结论限制", "");
+      for (const limitation of answer.limitations) lines.push(`- ${limitation}`);
+      lines.push("");
+    }
+  }
+  return lines;
+}
+
 export function buildAiReportMarkdown(
   records: AiSessionRecord[],
   snapshot?: DiagnosticSnapshot | null,

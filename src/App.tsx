@@ -5507,6 +5507,58 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                 <Text size="sm" fw={600}>
                   勾选要移入回收站的位置
                 </Text>
+                <Group gap="xs" mt="xs">
+                  <Button
+                    size="xs"
+                    variant="subtle"
+                    onClick={() =>
+                      setSelection(
+                        (generic.data.rows ?? [])
+                          .filter(
+                            (row) =>
+                              row.status === "可用" &&
+                              Number(row.files) > 0 &&
+                              row.requiresAdmin !== true,
+                          )
+                          .map((row) => String(row.id)),
+                      )
+                    }
+                  >
+                    全选可清理
+                  </Button>
+                  <Button
+                    size="xs"
+                    variant="subtle"
+                    onClick={() =>
+                      setSelection(
+                        (generic.data.rows ?? [])
+                          .filter(
+                            (row) =>
+                              [
+                                "user-temp",
+                                "windows-temp",
+                                "thumbnail-cache",
+                                "crash-dumps",
+                                "wer-user",
+                                "edge-cache",
+                              ].includes(String(row.id)) &&
+                              row.status === "可用" &&
+                              Number(row.files) > 0,
+                          )
+                          .map((row) => String(row.id)),
+                      )
+                    }
+                  >
+                    仅缓存/临时
+                  </Button>
+                  <Button
+                    size="xs"
+                    variant="subtle"
+                    onClick={() => setSelection([])}
+                  >
+                    清空
+                  </Button>
+                </Group>
                 <Stack gap={6} mt="xs">
                   {(generic.data.rows ?? []).map((row) => {
                     const id = String(row.id ?? "");

@@ -936,4 +936,31 @@ mod tests {
         assert!(text.contains("\"files\": 2"));
         fs::remove_dir_all(&root).ok();
     }
+
+    #[test]
+    #[ignore = "manual 1 GiB benchmark; moves files to recycle bin"]
+    fn bench_clean_one_gib() {
+        let root = temp_root("bench1g");
+        fs::create_dir_all(&root).unwrap();
+        let chunk = vec![0u8; 8 * 1024 * 1024];
+        for index in 0..128 {
+            fs::write(root.join(format!("f{index}.bin")), &chunk).unwrap();
+        }
+        let scanned = walk_candidate(&candidate(root.clone(), &[]), true);
+        assert_eq!(scanned.files.len(), 128);
+        assert_eq!(scanned.bytes, 1024 * 1024 * 1024);
+
+        let started = std::time::Instant::now();
+        let mut budget = MAX_DELETE_FILES;
+        let records = recycle_entries(&scanned.files, &mut budget);
+        let elapsed = started.elapsed();
+        let recycled = records
+            .iter()
+            .filter(|record| record.outcome == Outcome::Recycled)
+            .count();
+        println!("1 GiB recycle: {elapsed:?}, recycled={recycled}");
+        assert_eq!(recycled, 128);
+        assert!(elapsed.as_secs() < 60, "1 GiB clean took {elapsed:?}");
+        fs::remove_dir_all(&root).ok();
+    }
 }
