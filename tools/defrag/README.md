@@ -56,3 +56,9 @@ cargo test --manifest-path tools/defrag/Cargo.toml
 ```
 
 打包时把 `lens_helper.exe` 与 `defrag.exe` 放在同一目录。
+
+## 碎片率与耗时
+
+`optimize_disk` 在 `analyze` 模式会从 `defrag.exe` 输出中解析最后一个百分比作为碎片率，并记录总耗时。`optimize`/`trim` 不解析碎片率，完成后再点“分析”即可对比。
+
+工具协议不支持流式进度，所以没有实时进度条，只能显示执行中状态与总耗时。

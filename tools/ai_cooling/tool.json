@@ -2,11 +2,11 @@
   "schemaVersion": 1,
   "id": "ai_cooling",
   "name": "AI 智能降温",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "apiVersion": 1,
-  "description": "查看 ACPI 温度与 CPU 负载；可按次提权读取 ACPI 风扇/探针与 SMART 磁盘信息",
+  "description": "查看 ACPI 温度与负载；可经 UAC 限制处理器最大状态降温（非风扇控制）",
   "category": "optimize",
-  "risk": "read_only",
+  "risk": "system",
   "entry": "ai_cooling.exe",
   "arguments": ["--stdio"],
   "permissions": {
@@ -18,11 +18,12 @@
   },
   "actions": [
     { "id": "preview", "label": "预览", "write": false },
-    { "id": "read_elevated", "label": "读取受限传感器（需 UAC）", "write": false }
+    { "id": "read_elevated", "label": "读取受限传感器（需 UAC）", "write": false },
+    { "id": "set_power_limit", "label": "限制处理器上限（需 UAC）", "write": true, "requiresConfirmation": true }
   ],
   "limits": { "timeoutMs": 180000, "maxOutputBytes": 2097152 },
   "ui": { "kind": "table" },
-  "rollback": "none",
+  "rollback": "custom",
   "hash": "",
   "signature": null
 }

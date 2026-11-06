@@ -65,3 +65,7 @@ sys_clean.exe --stdio
 cargo build --release --manifest-path tools/sys_clean/Cargo.toml
 cargo test --manifest-path tools/sys_clean/Cargo.toml
 ```
+
+## 系统还原点
+
+`create_restore_point` 先检查系统保护是否开启；关闭时直接报错，不假装成功。开启时经 UAC 调用 `Checkpoint-Computer`，受 Windows 24 小时频率限制，失败会返回系统原因。

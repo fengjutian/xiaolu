@@ -4317,6 +4317,12 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
   const [privacyDraft, setPrivacyDraft] = useState<Record<string, string>>({});
   const [procPriority, setProcPriority] = useState<Record<string, string>>({});
   const [adblockDomains, setAdblockDomains] = useState("");
+  const [adblockFile, setAdblockFile] = useState("");
+  const [gpuPath, setGpuPath] = useState("");
+  const [gpuPref, setGpuPref] = useState(2);
+  const [lockDelay, setLockDelay] = useState(5);
+  const [lockRemaining, setLockRemaining] = useState(0);
+  const lockTimerRef = useRef<number | null>(null);
   const [expandAck, setExpandAck] = useState<Record<string, boolean>>({});
   const [dumpDraft, setDumpDraft] = useState("");
 
@@ -4626,6 +4632,60 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
     }
   };
 
+  const setGpuPreference = async (
+    tool: ToolDescriptor,
+    path: string,
+    preference: number,
+  ) => {
+    const token = generic?.data.confirmationToken;
+    if (!token) {
+      setApplyError("确认令牌缺失或已使用，请重新预览。");
+      return;
+    }
+    const target = path.trim();
+    if (!target) {
+      setApplyError("请输入应用的 .exe 绝对路径。");
+      return;
+    }
+    if (!window.confirm(`把 ${target} 的 GPU 偏好设为 ${preference}？`)) return;
+    setApplying(`${tool.id}:set_gpu_preference`);
+    setApplyError(null);
+    try {
+      await runToolAction(tool.id, "set_gpu_preference", token, {
+        path: target,
+        preference,
+      });
+      setGenericSuccess("GPU 偏好已更新");
+      await runGeneric(tool);
+    } catch (reason) {
+      setApplyError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setApplying(null);
+    }
+  };
+
+  const importAdblockRules = async (tool: ToolDescriptor) => {
+    const path = adblockFile.trim();
+    if (!path) {
+      setApplyError("请输入规则文件路径。");
+      return;
+    }
+    setApplying(`${tool.id}:import_rules`);
+    setApplyError(null);
+    try {
+      const data = (await runToolAction(tool.id, "import_rules", null, {
+        path,
+      })) as ToolResult;
+      const domains = data.domains ?? [];
+      setAdblockDomains(domains.join("\n"));
+      setGenericSuccess(`已导入 ${domains.length} 个域名`);
+    } catch (reason) {
+      setApplyError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setApplying(null);
+    }
+  };
+
   const applyAdblockHosts = async (tool: ToolDescriptor) => {
     const token = generic?.data.confirmationToken;
     if (!token) {
@@ -4676,6 +4736,145 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
     try {
       await runToolAction(tool.id, "restore_hosts", token, {});
       setGenericSuccess("SystemLens 规则已移除，正在刷新…");
+      await runGeneric(tool);
+    } catch (reason) {
+      setApplyError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setApplying(null);
+    }
+  };
+
+  const performLock = async () => {
+    const tool = generic?.tool;
+    if (!tool) return;
+    setApplying(`${tool.id}:lock`);
+    setApplyError(null);
+    try {
+      const preview = (await runToolAction(
+        tool.id,
+        "preview",
+        null,
+        {},
+      )) as ToolResult;
+      const token = preview.confirmationToken;
+      if (!token) throw new Error("无法获取锁定令牌");
+      await runToolAction(tool.id, "lock", token, {});
+      setGenericSuccess("已锁定当前会话");
+    } catch (reason) {
+      setApplyError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setApplying(null);
+    }
+  };
+
+  const startLockTimer = () => {
+    if (lockTimerRef.current !== null) {
+      window.clearInterval(lockTimerRef.current);
+    }
+    setLockRemaining(Math.max(1, lockDelay) * 60);
+    lockTimerRef.current = window.setInterval(() => {
+      setLockRemaining((previous) => {
+        if (previous <= 1) {
+          if (lockTimerRef.current !== null) {
+            window.clearInterval(lockTimerRef.current);
+            lockTimerRef.current = null;
+          }
+          void performLock();
+          return 0;
+        }
+        return previous - 1;
+      });
+    }, 1000);
+  };
+
+  const cancelLockTimer = () => {
+    if (lockTimerRef.current !== null) {
+      window.clearInterval(lockTimerRef.current);
+      lockTimerRef.current = null;
+    }
+    setLockRemaining(0);
+  };
+
+  const setAiPowerLimit = async (tool: ToolDescriptor, percent: number) => {
+    const token = generic?.data.confirmationToken;
+    if (!token) {
+      setApplyError("确认令牌缺失或已使用，请重新预览。");
+      return;
+    }
+    if (
+      !window.confirm(
+        `把处理器最大状态限制为 ${percent}%？将弹出管理员授权（UAC），设回 100% 可恢复。`,
+      )
+    )
+      return;
+    setApplying(`${tool.id}:set_power_limit`);
+    setApplyError(null);
+    try {
+      await runToolAction(tool.id, "set_power_limit", token, { percent });
+      setGenericSuccess(`处理器上限已设为 ${percent}%`);
+      await runGeneric(tool);
+    } catch (reason) {
+      setApplyError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setApplying(null);
+    }
+  };
+
+  const saveSoftwareRollback = async (tool: ToolDescriptor) => {
+    setApplying(`${tool.id}:save_rollback`);
+    setApplyError(null);
+    try {
+      await runToolAction(tool.id, "save_rollback", null, {});
+      setGenericSuccess("回滚点已保存到本地");
+    } catch (reason) {
+      setApplyError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setApplying(null);
+    }
+  };
+
+  const restoreSoftwareRollback = async (tool: ToolDescriptor) => {
+    const token = generic?.data.rollbackToken;
+    if (!token) {
+      setApplyError("回滚点令牌缺失，请重新预览。");
+      return;
+    }
+    if (
+      !window.confirm(
+        "恢复到最近一次回滚点？将逐项恢复第三方服务启动类型与计划任务，并弹出一次管理员授权（UAC）。",
+      )
+    )
+      return;
+    setApplying(`${tool.id}:restore_rollback`);
+    setApplyError(null);
+    try {
+      await runToolAction(tool.id, "restore_rollback", token, {});
+      setGenericSuccess("回滚点恢复完成");
+      await runGeneric(tool);
+    } catch (reason) {
+      setApplyError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setApplying(null);
+    }
+  };
+
+  const createRestorePoint = async (tool: ToolDescriptor) => {
+    const token = generic?.data.restorePointToken;
+    if (!token) {
+      setApplyError("还原点令牌缺失，请重新预览。");
+      return;
+    }
+    if (
+      !window.confirm(
+        "创建系统还原点？将弹出管理员授权（UAC），可能受 24 小时频率限制。",
+      )
+    )
+      return;
+    setApplying(`${tool.id}:create_restore_point`);
+    setApplyError(null);
+    try {
+      await runToolAction(tool.id, "create_restore_point", token, {});
+      setGenericSuccess("系统还原点已创建");
       await runGeneric(tool);
     } catch (reason) {
       setApplyError(reason instanceof Error ? reason.message : String(reason));
@@ -5411,6 +5610,76 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                 </Text>
               </Group>
             )}
+          {generic.tool.id === "lockscreen" && (
+            <Box mt="md">
+              <Text size="sm" fw={700}>
+                定时锁定
+              </Text>
+              <Text size="xs" c="dimmed" mt={4}>
+                倒计时结束后自动锁定；点“取消”或关闭页面不会锁定
+              </Text>
+              <Group mt="xs" align="flex-end">
+                <NumberInput
+                  size="xs"
+                  w={120}
+                  min={1}
+                  max={720}
+                  label="延迟（分钟）"
+                  value={lockDelay}
+                  onChange={(value) =>
+                    setLockDelay(
+                      typeof value === "number" ? value : Number(value) || 1,
+                    )
+                  }
+                />
+                <Button size="xs" onClick={startLockTimer}>
+                  开始倒计时
+                </Button>
+                <Button
+                  size="xs"
+                  variant="light"
+                  disabled={lockRemaining <= 0}
+                  onClick={cancelLockTimer}
+                >
+                  取消
+                </Button>
+                <Text size="sm" ff="monospace">
+                  {String(Math.floor(lockRemaining / 60)).padStart(2, "0")}:
+                  {String(lockRemaining % 60).padStart(2, "0")}
+                </Text>
+              </Group>
+            </Box>
+          )}
+          {generic.tool.id === "software_pm" && (
+            <Box mt="md">
+              <Text size="sm" fw={700}>
+                批量回滚点
+              </Text>
+              <Text size="xs" c="dimmed" mt={4}>
+                保存当前第三方服务启动类型与非 Microsoft 计划任务状态；恢复时一次 UAC 逐项写回
+              </Text>
+              <Group mt="xs">
+                <Button
+                  size="xs"
+                  variant="outline"
+                  loading={applying === `${generic.tool.id}:save_rollback`}
+                  onClick={() => void saveSoftwareRollback(generic.tool)}
+                >
+                  保存回滚点
+                </Button>
+                <Button
+                  size="xs"
+                  color="red"
+                  variant="light"
+                  disabled={!generic.data.rollbackToken}
+                  loading={applying === `${generic.tool.id}:restore_rollback`}
+                  onClick={() => void restoreSoftwareRollback(generic.tool)}
+                >
+                  恢复最近回滚点
+                </Button>
+              </Group>
+            </Box>
+          )}
           {generic.tool.id === "software_pm" &&
             (generic.data.startupItems?.length ?? 0) > 0 && (
               <Box mt="md">
@@ -5886,6 +6155,25 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                 >
                   导出可移除清单
                 </Button>
+                <Button
+                  mt="xs"
+                  ml="xs"
+                  size="xs"
+                  variant="outline"
+                  color="blue"
+                  disabled={generic.data.restorePointEnabled === false}
+                  loading={
+                    applying === `${generic.tool.id}:create_restore_point`
+                  }
+                  onClick={() => void createRestorePoint(generic.tool)}
+                >
+                  创建系统还原点
+                </Button>
+                {generic.data.restorePointEnabled === false && (
+                  <Text size="xs" c="orange" mt={4}>
+                    系统保护已关闭，无法创建还原点；请先在系统属性中启用。
+                  </Text>
+                )}
                 <ScrollArea type="auto" mt="xs">
                   <Table miw={760} verticalSpacing="xs">
                     <Table.Thead>
@@ -5986,6 +6274,26 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
               <Text size="xs" c="dimmed" mt={4}>
                 每行一个域名；写入需要管理员授权，自动备份，只改标记之间的内容
               </Text>
+              <Group mt="xs" align="flex-end">
+                <TextInput
+                  size="xs"
+                  w={360}
+                  label="规则文件（纯域名或 hosts 格式）"
+                  placeholder="C:\\rules.txt"
+                  value={adblockFile}
+                  onChange={(event) =>
+                    setAdblockFile(event.currentTarget.value)
+                  }
+                />
+                <Button
+                  size="xs"
+                  variant="light"
+                  loading={applying === `${generic.tool.id}:import_rules`}
+                  onClick={() => void importAdblockRules(generic.tool)}
+                >
+                  导入规则文件
+                </Button>
+              </Group>
               <Textarea
                 mt="xs"
                 minRows={4}
@@ -6138,20 +6446,112 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                 </Table>
               </Box>
             )}
-          {generic.tool.id === "ai_cooling" && (
-            <Group mt="md" align="center">
-              <Button
-                size="xs"
-                variant="light"
-                loading={applying === `${generic.tool.id}:read_elevated`}
-                onClick={() => void readElevatedSensors(generic.tool)}
-              >
-                读取受限传感器（需管理员）
-              </Button>
-              <Text size="xs" c="dimmed">
-                ACPI 风扇/探针、磁盘 SMART；只读，不修改任何设置
+          {generic.tool.id === "gpu_opt" && (
+            <Box mt="md">
+              <Text size="sm" fw={700}>
+                按应用 GPU 偏好
               </Text>
-            </Group>
+              <Text size="xs" c="dimmed" mt={4}>
+                只写当前用户 HKCU\UserGpuPreferences；选“由 Windows 决定”会删除该应用的值
+              </Text>
+              <Group mt="xs" align="flex-end">
+                <TextInput
+                  size="xs"
+                  w={360}
+                  label="应用 .exe 绝对路径"
+                  placeholder="C:\\Games\\game.exe"
+                  value={gpuPath}
+                  onChange={(event) => setGpuPath(event.currentTarget.value)}
+                />
+                <Select
+                  size="xs"
+                  w={170}
+                  label="偏好"
+                  data={[
+                    { value: "0", label: "由 Windows 决定" },
+                    { value: "1", label: "省电" },
+                    { value: "2", label: "高性能" },
+                  ]}
+                  value={String(gpuPref)}
+                  allowDeselect={false}
+                  onChange={(next) => setGpuPref(Number(next ?? 0))}
+                />
+                <Button
+                  size="xs"
+                  loading={applying === `${generic.tool.id}:set_gpu_preference`}
+                  onClick={() =>
+                    void setGpuPreference(generic.tool, gpuPath, gpuPref)
+                  }
+                >
+                  应用
+                </Button>
+              </Group>
+              {(generic.data.gpuPreferences?.length ?? 0) > 0 && (
+                <Table miw={760} mt="xs" verticalSpacing="xs">
+                  <Table.Thead>
+                    <Table.Tr>
+                      <Table.Th>应用</Table.Th>
+                      <Table.Th>偏好</Table.Th>
+                      <Table.Th>操作</Table.Th>
+                    </Table.Tr>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {(generic.data.gpuPreferences ?? []).map((item) => (
+                      <Table.Tr key={item.path}>
+                        <Table.Td>
+                          <Text size="xs">{item.path}</Text>
+                        </Table.Td>
+                        <Table.Td>{item.label}</Table.Td>
+                        <Table.Td>
+                          <Button
+                            size="xs"
+                            variant="light"
+                            onClick={() =>
+                              void setGpuPreference(generic.tool, item.path, 0)
+                            }
+                          >
+                            恢复默认
+                          </Button>
+                        </Table.Td>
+                      </Table.Tr>
+                    ))}
+                  </Table.Tbody>
+                </Table>
+              )}
+            </Box>
+          )}
+          {generic.tool.id === "ai_cooling" && (
+            <Box mt="md">
+              <Group align="center">
+                <Button
+                  size="xs"
+                  variant="light"
+                  loading={applying === `${generic.tool.id}:read_elevated`}
+                  onClick={() => void readElevatedSensors(generic.tool)}
+                >
+                  读取受限传感器（需管理员）
+                </Button>
+                <Text size="xs" c="dimmed">
+                  ACPI 风扇/探针、磁盘 SMART；只读
+                </Text>
+              </Group>
+              <Group mt="sm" align="center">
+                <Text size="xs" fw={600}>
+                  处理器上限（软件降温，非风扇控制）
+                </Text>
+                {[60, 80, 100].map((percent) => (
+                  <Button
+                    key={percent}
+                    size="xs"
+                    variant="outline"
+                    loading={applying === `${generic.tool.id}:set_power_limit`}
+                    onClick={() => void setAiPowerLimit(generic.tool, percent)}
+                  >
+                    {percent}%
+                  </Button>
+                ))}
+              </Group>
+            </Box>
           )}
           {generic.tool.id === "proc_opt" &&
             (generic.data.processItems?.length ?? 0) > 0 && (

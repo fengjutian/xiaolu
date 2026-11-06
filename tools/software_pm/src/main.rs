@@ -13,6 +13,8 @@ const MAX_TASKS: usize = 40;
 const MAX_NOTIFICATIONS: usize = 20;
 const ACTION_TOGGLE: &str = "toggle_startup";
 const ACTION_TASK: &str = "set_task_enabled";
+const ACTION_ROLLBACK: &str = "restore_rollback";
+const ACTION_SAVE_ROLLBACK: &str = "save_rollback";
 const RUN_SUBKEYS: [&str; 2] = ["Run", "RunOnce"];
 const BACKUP_PATH: &str = "Software\\SystemLens\\DisabledStartup";const MAX_STARTUP_ITEMS: usize = 200;
 
@@ -645,6 +647,9 @@ fn scan() -> Result<Value, ToolError> {
                 map.insert("serviceItems".into(), services_json(&services));
                 let tasks = task_items(&payload);
                 map.insert("taskItems".into(), task_items_json(&tasks));
+                if let Ok(rollback_token) = tool_protocol::issue_token(ACTION_ROLLBACK, &rollback_digest()) {
+                    map.insert("rollbackToken".into(), Value::String(rollback_token));
+                }
                 if let Ok(task_token) =
                     tool_protocol::issue_token(ACTION_TASK, &task_digest(&tasks))
                 {
@@ -1476,13 +1481,189 @@ fn set_task_enabled(request: &Request) -> Result<Value, ToolError> {
     );
     if let Value::Object(map) = &mut data {
         map.insert("taskItems".into(), task_items_json(&tasks_after));
-        if let Ok(task_token) =
+        if let Ok(rollback_token) = tool_protocol::issue_token(ACTION_ROLLBACK, &rollback_digest()) {
+                    map.insert("rollbackToken".into(), Value::String(rollback_token));
+                }
+                if let Ok(task_token) =
             tool_protocol::issue_token(ACTION_TASK, &task_digest(&tasks_after))
         {
             map.insert("taskToken".into(), Value::String(task_token));
         }
     }
     Ok(data)
+}
+
+fn rollback_digest() -> String {
+    tool_protocol::digest_of(&["software_pm_rollback"])
+}
+
+fn save_rollback() -> Result<Value, ToolError> {
+    let services = read_service_items();
+    let payload = load_payload()?;
+    let tasks = task_items(&payload);
+    let startup = read_startup_items().unwrap_or_default();
+    let startup_value = Value::Array(
+        startup
+            .iter()
+            .map(|entry| {
+                json!({
+                    "key": entry.key,
+                    "name": entry.name,
+                    "enabled": entry.enabled,
+                })
+            })
+            .collect(),
+    );
+    let services_value = Value::Array(
+        services
+            .iter()
+            .map(|service| json!({"name": service.name, "start": service.start}))
+            .collect(),
+    );
+    let tasks_value = Value::Array(
+        tasks
+            .iter()
+            .map(|task| json!({"path": task.path, "enabled": task.enabled()}))
+            .collect(),
+    );
+    let dir = snapshot_dir();
+    std::fs::create_dir_all(&dir)
+        .map_err(|error| ToolError::new("INTERNAL", format!("无法创建回滚点目录：{error}")))?;
+    let path = dir.join(format!("rollback-{}.json", tool_protocol::now_ms()));
+    let body = json!({
+        "version": 1,
+        "createdAt": tool_protocol::now_ms(),
+        "services": services_value,
+        "tasks": tasks_value,
+        "startup": startup_value,
+    });
+    std::fs::write(
+        &path,
+        serde_json::to_vec_pretty(&body)
+            .map_err(|error| ToolError::new("INTERNAL", format!("无法序列化回滚点：{error}")))?,
+    )
+    .map_err(|error| ToolError::new("INTERNAL", format!("无法写入回滚点：{error}")))?;
+    let _ = tool_protocol::append_audit_log(json!({
+        "tool": "software_pm",
+        "action": "save_rollback",
+        "path": path.to_string_lossy(),
+        "services": services.len(),
+        "tasks": tasks.len(),
+        "at": tool_protocol::now_ms(),
+    }));
+    Ok(table(
+        json!([
+            item("服务", services.len().to_string()),
+            item("计划任务", tasks.len().to_string()),
+            item("启动项", startup.len().to_string()),
+            item("文件", path.to_string_lossy()),
+        ]),
+        json!([column("item", "项目"), column("value", "结果")]),
+        json!([{"item": "回滚点", "value": path.to_string_lossy()}]),
+        json!([
+            "回滚点记录第三方服务、非 Microsoft 计划任务与当前用户启动项（HKCU Run/RunOnce）。",
+            "恢复回滚点时服务/任务经提权助手，启动项在用户权限下写回；失败项不静默跳过。",
+        ]),
+    ))
+}
+
+fn restore_rollback(request: &Request) -> Result<Value, ToolError> {
+    let token = request.confirmation.as_deref().ok_or_else(|| {
+        ToolError::new("CONFIRMATION_REQUIRED", "恢复回滚点需要确认令牌，请先预览。")
+    })?;
+    tool_protocol::verify_token(token, ACTION_ROLLBACK, &rollback_digest())?;
+    let dir = snapshot_dir();
+    let mut files = std::fs::read_dir(&dir)
+        .map_err(|error| ToolError::new("INTERNAL", format!("无法读取回滚点目录：{error}")))?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name.starts_with("rollback-") && name.ends_with(".json"))
+                .unwrap_or(false)
+        })
+        .collect::<Vec<_>>();
+    files.sort();
+    let path = files
+        .last()
+        .ok_or_else(|| ToolError::new("CONFLICT", "还没有保存过回滚点。"))?
+        .clone();
+    let text = std::fs::read_to_string(&path)
+        .map_err(|error| ToolError::new("INTERNAL", format!("无法读取回滚点：{error}")))?;
+    let body: Value = serde_json::from_str(&text)
+        .map_err(|error| ToolError::new("INTERNAL", format!("无法解析回滚点：{error}")))?;
+    let services = body.get("services").cloned().unwrap_or(json!([]));
+    let tasks = body.get("tasks").cloned().unwrap_or(json!([]));
+    let result = run_elevated(json!({
+        "op": "pm_restore",
+        "services": services,
+        "tasks": tasks,
+    }))?;
+    let data = result.get("data").cloned().unwrap_or(json!({}));
+    let service_count = data.get("services").and_then(Value::as_u64).unwrap_or(0);
+    let task_count = data.get("tasks").and_then(Value::as_u64).unwrap_or(0);
+    let mut errors = data
+        .get("errors")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mut startup_count = 0usize;
+    let snapshot_startup = body
+        .get("startup")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let current_startup = read_startup_items().unwrap_or_default();
+    for item in &snapshot_startup {
+        let key = item.get("key").and_then(Value::as_str).unwrap_or_default();
+        let name = item.get("name").and_then(Value::as_str).unwrap_or_default();
+        let enabled = item.get("enabled").and_then(Value::as_bool).unwrap_or(true);
+        let Some(entry) = current_startup
+            .iter()
+            .find(|entry| entry.key == key && entry.name == name)
+        else {
+            errors.push(json!(format!("启动项已不存在：{name}")));
+            continue;
+        };
+        if entry.enabled == enabled {
+            continue;
+        }
+        match apply_change(entry, enabled) {
+            Ok(()) => startup_count += 1,
+            Err(error) => errors.push(json!(format!("{name}: {}", error.message))),
+        }
+    }
+    let _ = tool_protocol::append_audit_log(json!({
+        "tool": "software_pm",
+        "action": ACTION_ROLLBACK,
+        "path": path.to_string_lossy(),
+        "services": service_count,
+        "tasks": task_count,
+        "startup": startup_count,
+        "errors": errors.len(),
+        "at": tool_protocol::now_ms(),
+    }));
+    let mut data_table = table(
+        json!([
+            item("恢复服务", service_count.to_string()),
+            item("恢复任务", task_count.to_string()),
+            item("恢复启动项", startup_count.to_string()),
+            item("失败", errors.len().to_string()),
+        ]),
+        json!([column("item", "项目"), column("value", "结果")]),
+        Value::Array(errors.iter().map(|error| json!({"item": "失败", "value": error})).collect()),
+        json!([
+            format!("已从 {} 恢复。", path.to_string_lossy()),
+            "失败项不会重试；请根据错误信息手动处理。",
+        ]),
+    );
+    if let Value::Object(map) = &mut data_table {
+        if let Ok(token) = tool_protocol::issue_token(ACTION_ROLLBACK, &rollback_digest()) {
+            map.insert("rollbackToken".into(), Value::String(token));
+        }
+    }
+    Ok(data_table)
 }
 
 fn main() {
@@ -1497,6 +1678,8 @@ fn main() {
             "toggle_system_startup",
             "set_service_start",
             "set_task_enabled",
+            ACTION_SAVE_ROLLBACK,
+            ACTION_ROLLBACK,
         ],
         |request| match request.action.as_str() {
             "preview" => scan(),
@@ -1506,6 +1689,8 @@ fn main() {
             "toggle_system_startup" => toggle_system_startup(request),
             "set_service_start" => set_service_start(request),
             "set_task_enabled" => set_task_enabled(request),
+            ACTION_SAVE_ROLLBACK => save_rollback(),
+            ACTION_ROLLBACK => restore_rollback(request),
             other => Err(ToolError::unsupported(other)),
         },
     );

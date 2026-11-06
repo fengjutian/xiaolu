@@ -6,6 +6,7 @@ use tool_protocol::{attach_token, column, digest_of, item, table, Request, ToolE
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const ACTION_HOSTS: &str = "hosts_write";
+const ACTION_IMPORT: &str = "import_rules";
 const BUILTIN_DOMAINS: [&str; 32] = [
     "doubleclick.net",
     "googleadservices.com",
@@ -511,15 +512,86 @@ fn restore_hosts(request: &Request) -> Result<Value, ToolError> {
     ))
 }
 
+fn import_rules(request: &Request) -> Result<Value, ToolError> {
+    let path = request
+        .parameters
+        .get("path")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ToolError::new("INVALID_INPUT", "缺少参数 path。"))?
+        .trim();
+    if path.is_empty() {
+        return Err(ToolError::new("INVALID_INPUT", "规则文件路径为空。"));
+    }
+    let metadata = std::fs::metadata(path)
+        .map_err(|error| ToolError::new("NOT_FOUND", format!("无法读取规则文件：{error}")))?;
+    if !metadata.is_file() {
+        return Err(ToolError::new("INVALID_INPUT", "路径不是文件。"));
+    }
+    if metadata.len() > 2 * 1024 * 1024 {
+        return Err(ToolError::new("INVALID_INPUT", "规则文件超过 2 MiB。"));
+    }
+    let text = std::fs::read_to_string(path)
+        .map_err(|error| ToolError::new("INVALID_INPUT", format!("无法读取规则文件：{error}")))?;
+    let mut domains = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut invalid = 0usize;
+    for line in text.lines() {
+        let line = line.split('#').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+        let candidate = line.split_whitespace().last().unwrap_or("").trim();
+        let candidate = candidate.to_ascii_lowercase();
+        if !valid_domain(&candidate) {
+            invalid += 1;
+            continue;
+        }
+        if seen.insert(candidate.clone()) {
+            domains.push(candidate);
+        }
+        if domains.len() >= 500 {
+            break;
+        }
+    }
+    if domains.is_empty() {
+        return Err(ToolError::new("INVALID_INPUT", "文件中没有有效域名。"));
+    }
+    let _ = tool_protocol::append_audit_log(json!({
+        "tool": "adblock_master",
+        "action": ACTION_IMPORT,
+        "path": path,
+        "domains": domains.len(),
+        "at": tool_protocol::now_ms(),
+    }));
+    let mut data = table(
+        json!([
+            item("导入域名", domains.len().to_string()),
+            item("忽略行", invalid.to_string()),
+            item("文件", path),
+        ]),
+        json!([column("item", "项目"), column("value", "结果")]),
+        json!([{"item": "导入", "value": format!("{} 个域名", domains.len())}]),
+        json!([
+            "只解析域名，不写入 hosts；导入后仍需点“写入 Hosts”并确认。",
+            "支持纯域名列表与 hosts 格式（每行最后一个字段作为域名）。",
+        ]),
+    );
+    if let Value::Object(map) = &mut data {
+        map.insert("domains".into(), json!(domains));
+    }
+    Ok(data)
+}
+
 fn main() {
     tool_protocol::serve_with_request(
         "adblock_master",
         env!("CARGO_PKG_VERSION"),
-        &["preview", "apply_hosts", "restore_hosts"],
+        &["preview", "apply_hosts", "restore_hosts", ACTION_IMPORT],
         |request| match request.action.as_str() {
             "preview" => scan(),
             "apply_hosts" => apply_hosts(request),
             "restore_hosts" => restore_hosts(request),
+            ACTION_IMPORT => import_rules(request),
             other => Err(ToolError::unsupported(other)),
         },
     );

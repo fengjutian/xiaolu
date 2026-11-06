@@ -23,7 +23,7 @@ winopt_assistant.exe --stdio
 { "changes": [{ "id": "transparency", "value": 0 }] }
 ```
 
-可应用项：`visualFx`、`transparency`、`windowAnimate`、`storageSense`、`gameMode`（HKCU，直接写）；`telemetry`、`fastStartup`、`hibernate`、`systemRestore`、`longPaths`（HKLM，逐项 UAC，由 `lens_helper.exe` 的 `winopt_set` 执行）。Windows 搜索服务状态仍只读。
+可应用项：`visualFx`、`transparency`、`windowAnimate`、`storageSense`、`gameMode`（HKCU，直接写）；`telemetry`、`fastStartup`、`hibernate`、`systemRestore`、`longPaths`、`searchService`（HKLM，逐项 UAC，由 `lens_helper.exe` 的 `winopt_set` 执行）。Windows 搜索服务可切自动/手动/禁用，**禁用会破坏开始菜单搜索**。
 
 ## 检查项
 

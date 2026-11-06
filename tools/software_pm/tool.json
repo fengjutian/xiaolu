@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "software_pm",
   "name": "软件权限管理",
-  "version": "0.6.0",
+  "version": "0.7.1",
   "apiVersion": 1,
   "description": "查看并管理启动项、第三方服务启动类型与非 Microsoft 计划任务",
   "category": "工具箱",
@@ -11,7 +11,7 @@
   "arguments": ["--stdio"],
   "permissions": {
     "readPaths": [],
-    "writePaths": [],
+    "writePaths": ["%LOCALAPPDATA%\\SystemLens\\software_pm"],
     "registry": [
       "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
       "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce",
@@ -32,6 +32,8 @@
     { "id": "restore_all", "label": "恢复全部停用项", "write": true, "requiresConfirmation": true },
     { "id": "toggle_system_startup", "label": "启停系统级启动项（需 UAC）", "write": true, "requiresConfirmation": true },
     { "id": "set_service_start", "label": "修改服务启动类型（需 UAC）", "write": true, "requiresConfirmation": true },
+    { "id": "save_rollback", "label": "保存回滚点", "write": false },
+    { "id": "restore_rollback", "label": "恢复最近回滚点（需 UAC）", "write": true, "requiresConfirmation": true },
     { "id": "set_task_enabled", "label": "启用/禁用计划任务（需 UAC）", "write": true, "requiresConfirmation": true }
   ],
   "limits": { "timeoutMs": 120000, "maxOutputBytes": 4194304 },

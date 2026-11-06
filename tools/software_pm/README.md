@@ -114,3 +114,12 @@ cargo test --manifest-path tools/lens_helper/Cargo.toml
 - 防火墙仅统计已启用规则数量，不列出单条明细。
 - 表格按类别截断：启动项 40、自动服务 60、计划任务 40、通知 20。
 - 部分 WMI/防火墙查询在受限权限或精简系统上可能失败，失败原因写入“说明”区。
+
+## 批量回滚点
+
+`save_rollback` 把当前第三方服务启动类型与非 Microsoft 计划任务状态写入
+`%LOCALAPPDATA%\SystemLens\software_pm\rollback-<时间戳>.json`。
+
+`restore_rollback` 读取最近一个回滚点，通过一次 UAC 交给 `lens_helper.exe` 的 `pm_restore` 逐项写回；失败项会列在结果里，不静默跳过。回滚点不包含 HKCU 启动项，启动项仍用“恢复全部停用项”。
+
+回滚点同时记录当前用户启动项（HKCU Run/RunOnce）的启用状态；恢复时先经提权助手恢复服务/任务，再在用户权限下写回启动项，失败项会列出。

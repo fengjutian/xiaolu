@@ -301,6 +301,29 @@ fn scan() -> Result<Value, ToolError> {
     Ok(data)
 }
 
+fn parse_percent(text: &str) -> Option<u32> {
+    let bytes = text.as_bytes();
+    let mut best: Option<u32> = None;
+    for index in 0..bytes.len() {
+        if bytes[index] != b'%' {
+            continue;
+        }
+        let mut start = index;
+        while start > 0 && bytes[start - 1].is_ascii_digit() {
+            start -= 1;
+        }
+        if start == index {
+            continue;
+        }
+        if let Ok(value) = text[start..index].parse::<u32>() {
+            if value <= 100 {
+                best = Some(value);
+            }
+        }
+    }
+    best
+}
+
 fn optimize_disk(request: &Request) -> Result<Value, ToolError> {
     let token = request.confirmation.as_deref().ok_or_else(|| {
         ToolError::new(
@@ -342,14 +365,21 @@ fn optimize_disk(request: &Request) -> Result<Value, ToolError> {
         return Err(ToolError::new("CONFLICT", message));
     }
 
+    let started = std::time::Instant::now();
     let result = run_elevated(json!({
         "op": "defrag_volume",
         "drive": volume.drive,
         "mode": mode,
     }))?;
+    let elapsed_ms = started.elapsed().as_millis();
     let data = result.get("data").cloned().unwrap_or_else(|| json!({}));
     let output = data.get("output").and_then(Value::as_str).unwrap_or("");
     let exit_code = data.get("exitCode").and_then(Value::as_i64).unwrap_or(-1);
+    let percent = if mode == "analyze" {
+        parse_percent(output)
+    } else {
+        None
+    };
     let _ = tool_protocol::append_audit_log(json!({
         "tool": "defrag",
         "action": ACTION_OPTIMIZE,
@@ -369,6 +399,8 @@ fn optimize_disk(request: &Request) -> Result<Value, ToolError> {
             item("卷", format!("{}:", volume.drive)),
             item("操作", label),
             item("退出码", exit_code.to_string()),
+            item("碎片率", percent.map(|value| format!("{value}%")).unwrap_or_else(|| "未解析".into())),
+            item("耗时", format!("{:.1} 秒", elapsed_ms as f64 / 1000.0)),
         ]),
         json!([
             column("name", "卷"),
@@ -382,7 +414,8 @@ fn optimize_disk(request: &Request) -> Result<Value, ToolError> {
         }]),
         json!([
             "命令已由管理员助手执行；输出可能因系统语言而不同。",
-            "SSD 只执行 TRIM/优化，不做传统碎片整理。",
+            "碎片率仅在“分析”模式解析；优化/TRIM 请完成后再分析一次对比。",
+            "非流式执行：无法显示实时进度条，只能显示总耗时。",
             format!("output: {}", output.trim()),
         ]),
     ))
@@ -439,6 +472,14 @@ mod tests {
         assert!(!mode_allowed("HDD", "trim"));
         assert!(mode_allowed("其他", "analyze"));
         assert!(!mode_allowed("其他", "optimize"));
+    }
+
+    #[test]
+    fn parses_fragmentation_percentage() {
+        assert_eq!(parse_percent("碎片比例 = 12%"), Some(12));
+        assert_eq!(parse_percent("Total fragmented space = 7%"), Some(7));
+        assert_eq!(parse_percent("no percent here"), None);
+        assert_eq!(parse_percent("progress 100%"), Some(100));
     }
 
     #[test]

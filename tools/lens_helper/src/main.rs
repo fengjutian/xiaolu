@@ -18,6 +18,9 @@ const OP_HOSTS_RESTORE: &str = "hosts_restore";
 const OP_CRASH_DUMP: &str = "crash_dump_set";
 const OP_WINOPT: &str = "winopt_set";
 const OP_EXPAND: &str = "expand_volume";
+const OP_RESTORE_POINT: &str = "restore_point_create";
+const OP_PM_RESTORE: &str = "pm_restore";
+const OP_POWER_LIMIT: &str = "power_limit_set";
 const HOSTS_BEGIN: &str = "# BEGIN SystemLens AdBlock";
 const HOSTS_END: &str = "# END SystemLens AdBlock";
 const SERVICE_PATH: &str = "SYSTEM\\CurrentControlSet\\Services";
@@ -338,6 +341,9 @@ fn run(request: &Value) -> Result<Outcome, String> {
         OP_CRASH_DUMP => run_crash_dump(request),
         OP_WINOPT => run_winopt(request),
         OP_EXPAND => run_expand(request),
+        OP_RESTORE_POINT => run_restore_point(),
+        OP_PM_RESTORE => run_pm_restore(request),
+        OP_POWER_LIMIT => run_power_limit(request),
         _ => Err(format!("不支持的操作：{op}")),
     }
 }
@@ -356,6 +362,86 @@ fn run_startup(request: &Value) -> Result<String, String> {
         .and_then(Value::as_bool)
         .ok_or_else(|| "缺少 enable。".to_string())?;
     set_startup(key, name, enable)
+}
+
+fn run_power_limit(request: &Value) -> Result<Outcome, String> {
+    let percent = request
+        .get("percent")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "缺少 percent。".to_string())?;
+    if !(30..=100).contains(&percent) {
+        return Err("percent 必须在 30–100 之间。".into());
+    }
+    let script = format!(
+        "$ErrorActionPreference='Stop'; powercfg /setacvalueindex SCHEME_CURRENT SUB_PROCESSOR PROCTHROTTLEMAX {percent}; if($LASTEXITCODE -ne 0){{ throw '设置交流电源上限失败' }}; powercfg /setdcvalueindex SCHEME_CURRENT SUB_PROCESSOR PROCTHROTTLEMAX {percent}; if($LASTEXITCODE -ne 0){{ throw '设置电池上限失败' }}; powercfg /setactive SCHEME_CURRENT; if($LASTEXITCODE -ne 0){{ throw '激活电源方案失败' }}; 'ok'"
+    );
+    let output = Command::new("powershell.exe")
+        .creation_flags(CREATE_NO_WINDOW)
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .output()
+        .map_err(|error| format!("无法启动 powercfg：{error}"))?;
+    if !output.status.success() {
+        let text = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(format!("设置处理器上限失败：{text}"));
+    }
+    Ok(Outcome {
+        message: format!("处理器最大状态已设为 {percent}%"),
+        data: Some(json!({"percent": percent})),
+    })
+}
+
+fn run_pm_restore(request: &Value) -> Result<Outcome, String> {
+    let services = request.get("services").and_then(Value::as_array).cloned().unwrap_or_default();
+    let tasks = request.get("tasks").and_then(Value::as_array).cloned().unwrap_or_default();
+    if services.len() > 200 || tasks.len() > 200 {
+        return Err("单次最多恢复 200 个服务和 200 个任务。".into());
+    }
+    let mut service_count = 0usize;
+    let mut task_count = 0usize;
+    let mut errors: Vec<String> = Vec::new();
+
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    for item in &services {
+        let name = item.get("name").and_then(Value::as_str).unwrap_or_default();
+        let start = item.get("start").and_then(Value::as_u64).unwrap_or(0);
+        if !valid_service_name(name) {
+            errors.push(format!("服务名无效：{name}"));
+            continue;
+        }
+        let Some(start) = valid_start_type(start) else {
+            errors.push(format!("服务启动类型无效：{name}"));
+            continue;
+        };
+        let current = hklm
+            .open_subkey_with_flags(format!("SYSTEM\\CurrentControlSet\\Services\\{name}"), KEY_READ)
+            .ok()
+            .and_then(|key| key.get_value::<u32, _>("Start").ok())
+            .unwrap_or(start);
+        match set_service_start(name, start, current) {
+            Ok(_) => service_count += 1,
+            Err(error) => errors.push(format!("{name}: {error}")),
+        }
+    }
+    for item in &tasks {
+        let path = item.get("path").and_then(Value::as_str).unwrap_or_default();
+        let enabled = item.get("enabled").and_then(Value::as_bool).unwrap_or(true);
+        if !valid_task_path(path) {
+            errors.push(format!("任务路径无效：{path}"));
+            continue;
+        }
+        match set_task_enabled(path, enabled) {
+            Ok(_) => task_count += 1,
+            Err(error) => errors.push(format!("{path}: {error}")),
+        }
+    }
+    Ok(Outcome {
+        message: format!("已恢复 {service_count} 个服务、{task_count} 个任务"),
+        data: Some(json!({
+            "services": service_count,
+            "tasks": task_count,
+            "errors": errors,
+        })),
+    })
 }
 
 fn run_service(request: &Value) -> Result<String, String> {
@@ -647,6 +733,27 @@ fn run_winopt(request: &Value) -> Result<Outcome, String> {
     let value = request.get("value").and_then(Value::as_u64).ok_or_else(|| "缺少 value。".to_string())?;
     let value = u32::try_from(value).map_err(|_| "value 超出范围。".to_string())?;
 
+    if setting == "searchService" {
+        if ![2u32, 3, 4].contains(&value) {
+            return Err("searchService 只接受 2/3/4。".into());
+        }
+        let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+        let key = hklm
+            .open_subkey_with_flags("SYSTEM\\CurrentControlSet\\Services\\WSearch", KEY_READ | KEY_WRITE)
+            .map_err(|error| registry_error("打开 Windows 搜索服务", error))?;
+        let before: u32 = key.get_value("Start").unwrap_or(3);
+        key.set_value("Start", &value)
+            .map_err(|error| registry_error("写入 Windows 搜索服务", error))?;
+        let after: u32 = key.get_value("Start").map_err(|error| registry_error("回读 Windows 搜索服务", error))?;
+        if after != value {
+            return Err("写入后回读服务启动类型不一致。".into());
+        }
+        return Ok(Outcome {
+            message: "Windows 搜索服务启动类型已更新".into(),
+            data: Some(json!({"setting": setting, "before": before, "after": after})),
+        });
+    }
+
     if setting == "hibernate" {
         if value > 1 {
             return Err("hibernate 只接受 0/1。".into());
@@ -733,6 +840,24 @@ fn run_crash_dump(request: &Value) -> Result<Outcome, String> {
             "before": before,
             "after": after,
         })),
+    })
+}
+
+fn run_restore_point() -> Result<Outcome, String> {
+    let script = "$ErrorActionPreference='Stop'; Checkpoint-Computer -Description 'SystemLens manual restore point' -RestorePointType MODIFY_SETTINGS -ErrorAction Stop; 'ok'";
+    let output = Command::new("powershell.exe")
+        .creation_flags(CREATE_NO_WINDOW)
+        .args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .output()
+        .map_err(|error| format!("无法启动还原点命令：{error}"))?;
+    if !output.status.success() {
+        let text = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let text = if text.is_empty() { String::from_utf8_lossy(&output.stdout).trim().to_string() } else { text };
+        return Err(format!("创建还原点失败：{text}"));
+    }
+    Ok(Outcome {
+        message: "系统还原点已创建".into(),
+        data: Some(json!({"created": true})),
     })
 }
 

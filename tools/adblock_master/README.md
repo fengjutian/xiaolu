@@ -66,3 +66,7 @@ cargo test --manifest-path tools/adblock_master/Cargo.toml
 ```
 
 打包时把 `lens_helper.exe` 与 `adblock_master.exe` 放在同一目录。
+
+## 规则文件导入
+
+`import_rules` 读取本地文本文件（≤2 MiB），支持纯域名列表或 hosts 格式；每行取最后一个字段作为域名，校验后最多 500 条，只回填界面，不直接写 hosts。

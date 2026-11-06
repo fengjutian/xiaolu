@@ -426,3 +426,7 @@
 | 2026-11-06 | v0.1.21 | c_expand 0.2.0 + lens_helper：NTFS 卷向右扩展（高风险，需真机验证） |
 | 2026-11-06 | v0.1.22 | driver_manager 0.2.0：异常码说明 + 打开设备管理器/Windows 更新 |
 | 2026-11-06 | v0.1.23 | DuplicateFileClean 0.2.1（六目录）+ adblock 0.2.1（32 条内置规则）+ sys_clean 0.2.1（导出清单） |
+| 2026-11-06 | v0.1.24 | software_pm 0.7.0（批量回滚点）+ sys_clean 0.2.2（还原点）+ winopt 0.3.1（WSearch）+ lockscreen 定时锁定 |
+| 2026-11-06 | v0.1.25 | ai_cooling 0.3.0：UAC 限制处理器最大状态（软件降温，非风扇控制） |
+| 2026-11-06 | v0.1.26 | defrag 0.2.1（碎片率/耗时）+ adblock 0.2.2（规则文件导入）+ software_pm 0.7.1（回滚点含 HKCU 启动项） |
+| 2026-11-06 | v0.1.27 | gpu_opt 0.2.0：按应用 GPU 偏好（HKCU，可恢复默认） |

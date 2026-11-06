@@ -1,12 +1,16 @@
 use serde_json::{json, Value};
 use std::os::windows::process::CommandExt;
+use std::path::PathBuf;
 use std::process::Command;
 use tool_protocol::{attach_token, column, digest_of, item, table, Request, ToolError};
+use winreg::enums::{HKEY_LOCAL_MACHINE, KEY_READ};
+use winreg::RegKey;
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const MAX_ROWS: usize = 300;
 const ACTION_REMOVE: &str = "remove_appx";
 const ACTION_EXPORT: &str = "export_list";
+const ACTION_RESTORE_POINT: &str = "create_restore_point";
 
 /// 只允许移除这些已知可重装的内置应用族；其余一律只读。
 const REMOVABLE: [&str; 18] = [
@@ -152,11 +156,135 @@ fn scan() -> Result<Value, ToolError> {
     );
     if let Value::Object(map) = &mut data {
         map.insert("appxItems".into(), Value::Array(items));
+        map.insert("restorePointEnabled".into(), json!(restore_point_enabled()));
+        if let Ok(token) = tool_protocol::issue_token(ACTION_RESTORE_POINT, &restore_point_digest()) {
+            map.insert("restorePointToken".into(), Value::String(token));
+        }
     }
     if let Ok(token) = tool_protocol::issue_token(ACTION_REMOVE, &digest_of(&["appx_remove"])) {
         attach_token(&mut data, token);
     }
     Ok(data)
+}
+
+fn restore_point_enabled() -> bool {
+    RegKey::predef(HKEY_LOCAL_MACHINE)
+        .open_subkey_with_flags(
+            "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\SystemRestore",
+            KEY_READ,
+        )
+        .ok()
+        .and_then(|key| key.get_value::<u32, _>("DisableSR").ok())
+        .unwrap_or(0)
+        == 0
+}
+
+fn restore_point_digest() -> String {
+    digest_of(&["restore_point"])
+}
+
+fn elevated_dir() -> PathBuf {
+    std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_default()
+        .join("SystemLens")
+        .join("elevated")
+}
+
+fn helper_path() -> Result<PathBuf, ToolError> {
+    if let Some(path) = std::env::var_os("SYSTEM_LENS_HELPER") {
+        let path = PathBuf::from(path);
+        if path.is_file() {
+            return Ok(path);
+        }
+    }
+    let exe = std::env::current_exe()
+        .map_err(|error| ToolError::new("INTERNAL", format!("无法定位工具路径：{error}")))?;
+    let dir = exe.parent().ok_or_else(|| ToolError::new("INTERNAL", "无法定位工具目录。"))?;
+    [dir.join("lens_helper.exe"), dir.join("..").join("lens_helper").join("lens_helper.exe")]
+        .into_iter()
+        .find(|path| path.is_file())
+        .ok_or_else(|| ToolError::new("HELPER_MISSING", "缺少提权助手 lens_helper.exe。"))
+}
+
+fn ps_quote(text: &str) -> String {
+    format!("'{}'", text.replace('\'', "''"))
+}
+
+fn run_elevated(mut payload: Value) -> Result<Value, ToolError> {
+    let dir = elevated_dir();
+    std::fs::create_dir_all(&dir)
+        .map_err(|error| ToolError::new("INTERNAL", format!("无法创建提权请求目录：{error}")))?;
+    let nonce_source = format!("{}-{}", tool_protocol::now_ms(), std::process::id());
+    let nonce_full = digest_of(&[&nonce_source]);
+    let nonce = &nonce_full[..32];
+    let request_path = dir.join(format!("req-{nonce}.json"));
+    let result_path = dir.join(format!("res-{nonce}.json"));
+    if let Value::Object(map) = &mut payload {
+        map.insert("version".into(), json!(1));
+        map.insert("nonce".into(), json!(nonce));
+        map.insert("resultPath".into(), json!(result_path));
+    }
+    let serialized = serde_json::to_string(&payload)
+        .map_err(|error| ToolError::new("INTERNAL", format!("无法序列化提权请求：{error}")))?;
+    std::fs::write(&request_path, serialized)
+        .map_err(|error| ToolError::new("INTERNAL", format!("无法写入提权请求：{error}")))?;
+    let helper = helper_path()?;
+    let script = format!(
+        "$ErrorActionPreference='Stop'; try {{ $p = Start-Process -FilePath {} -ArgumentList ('--request',('\"' + {} + '\"')) -Verb RunAs -PassThru -Wait -WindowStyle Hidden; exit $p.ExitCode }} catch {{ exit 1223 }}",
+        ps_quote(&helper.to_string_lossy()),
+        ps_quote(&request_path.to_string_lossy())
+    );
+    let status = Command::new("powershell.exe")
+        .creation_flags(CREATE_NO_WINDOW)
+        .args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", &script])
+        .status()
+        .map_err(|error| ToolError::new("INTERNAL", format!("无法启动提权助手：{error}")))?;
+    let result_text = std::fs::read_to_string(&result_path).ok();
+    let _ = std::fs::remove_file(&request_path);
+    let _ = std::fs::remove_file(&result_path);
+    if !status.success() {
+        if status.code() == Some(1223) {
+            return Err(ToolError::new("ELEVATION_CANCELLED", "已取消管理员授权，未创建还原点。"));
+        }
+        return Err(ToolError::new("ELEVATION_FAILED", format!("提权助手执行失败（退出码 {:?}）。", status.code())));
+    }
+    let text = result_text.ok_or_else(|| ToolError::new("HELPER_FAILED", "提权助手没有返回结果。"))?;
+    let value: Value = serde_json::from_str(&text)
+        .map_err(|error| ToolError::new("HELPER_FAILED", format!("无法解析助手结果：{error}")))?;
+    if value.get("ok").and_then(Value::as_bool) != Some(true) {
+        let message = value.get("error").and_then(Value::as_str).unwrap_or("提权助手返回失败。");
+        return Err(ToolError::new("HELPER_FAILED", message.to_string()));
+    }
+    Ok(value)
+}
+
+fn create_restore_point(request: &Request) -> Result<Value, ToolError> {
+    let token = request.confirmation.as_deref().ok_or_else(|| {
+        ToolError::new("CONFIRMATION_REQUIRED", "创建还原点需要确认令牌，请先预览。")
+    })?;
+    tool_protocol::verify_token(token, ACTION_RESTORE_POINT, &restore_point_digest())?;
+    if !restore_point_enabled() {
+        return Err(ToolError::new(
+            "CONFLICT",
+            "系统保护已关闭，无法创建还原点；请先在系统属性中启用系统保护。",
+        ));
+    }
+    run_elevated(json!({"op": "restore_point_create"}))?;
+    let _ = tool_protocol::append_audit_log(json!({
+        "tool": "sys_clean",
+        "action": ACTION_RESTORE_POINT,
+        "at": tool_protocol::now_ms(),
+    }));
+    Ok(table(
+        json!([item("结果", "已创建系统还原点")]),
+        json!([column("item", "项目"), column("value", "结果")]),
+        json!([{"item": "系统还原点", "value": "已创建"}]),
+        json!([
+            "还原点由 Windows 系统保护创建，可在系统属性中查看。",
+            "Checkpoint-Computer 可能受 24 小时频率限制；失败时会返回明确原因。",
+        ]),
+    ))
 }
 
 fn remove_appx(request: &Request) -> Result<Value, ToolError> {
@@ -315,11 +443,12 @@ fn main() {
     tool_protocol::serve_with_request(
         "sys_clean",
         env!("CARGO_PKG_VERSION"),
-        &["preview", ACTION_REMOVE, ACTION_EXPORT],
+        &["preview", ACTION_REMOVE, ACTION_EXPORT, ACTION_RESTORE_POINT],
         |request| match request.action.as_str() {
             "preview" => scan(),
             ACTION_REMOVE => remove_appx(request),
             ACTION_EXPORT => export_list(),
+            ACTION_RESTORE_POINT => create_restore_point(request),
             other => Err(ToolError::unsupported(other)),
         },
     );

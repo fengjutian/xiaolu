@@ -2,10 +2,11 @@ use serde_json::{json, Value};
 use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command;
-use tool_protocol::{column, item, table, ToolError};
+use tool_protocol::{attach_token, column, item, table, Request, ToolError};
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const ACTION_ELEVATED: &str = "read_elevated";
+const ACTION_POWER: &str = "set_power_limit";
 
 fn elevated_dir() -> PathBuf {
     std::env::var_os("LOCALAPPDATA")
@@ -297,7 +298,7 @@ $load=if($loads.Count -gt 0){ [double](($loads | Measure-Object -Average).Averag
         }));
     }
 
-    Ok(table(
+    let mut data = table(
         json!([
             item("ACPI 热区", zones.len().to_string()),
             item("最高温度", max_temp.map(|temp| format!("{temp:.1} °C")).unwrap_or_else(|| "不可用".into())),
@@ -310,9 +311,53 @@ $load=if($loads.Count -gt 0){ [double](($loads | Measure-Object -Average).Averag
         ]),
         Value::Array(rows),
         json!([
-            "只读建议：只读取 ACPI 热区与 CPU 负载，不控制风扇、不修改电源设置。",
+            "温度与负载只读；下方“处理器上限”经 UAC 修改电源方案，不是风扇控制。",
             "部分设备/虚拟机不暴露 ACPI 热区，此时只能依据 CPU 负载给出建议。",
             "温度阈值仅为通用参考，不同机型的安全范围不同。",
+        ]),
+    );
+    if let Ok(token) = tool_protocol::issue_token(ACTION_POWER, "power-limit") {
+        attach_token(&mut data, token);
+    }
+    Ok(data)
+}
+
+fn set_power_limit(request: &Request) -> Result<Value, ToolError> {
+    let token = request.confirmation.as_deref().ok_or_else(|| {
+        ToolError::new(
+            "CONFIRMATION_REQUIRED",
+            "修改处理器上限需要确认令牌，请先预览。",
+        )
+    })?;
+    tool_protocol::verify_token(token, ACTION_POWER, "power-limit")?;
+    let percent = request
+        .parameters
+        .get("percent")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| ToolError::new("INVALID_INPUT", "缺少参数 percent。"))?;
+    if !(30..=100).contains(&percent) {
+        return Err(ToolError::new(
+            "INVALID_INPUT",
+            "percent 必须在 30–100 之间。",
+        ));
+    }
+    run_elevated(json!({"op": "power_limit_set", "percent": percent}))?;
+    let _ = tool_protocol::append_audit_log(json!({
+        "tool": "ai_cooling",
+        "action": ACTION_POWER,
+        "percent": percent,
+        "at": tool_protocol::now_ms(),
+    }));
+    Ok(table(
+        json!([item("处理器最大状态", format!("{percent}%"))]),
+        json!([column("item", "项目"), column("value", "结果")]),
+        json!([{
+            "item": "电源方案",
+            "value": format!("处理器上限 {percent}%（交流与电池）"),
+        }]),
+        json!([
+            "已通过电源方案限制处理器最大状态，属于软件降温，不是风扇控制。",
+            "设回 100% 即可恢复；不同固件对上限的响应不同。",
         ]),
     ))
 }
@@ -321,10 +366,11 @@ fn main() {
     tool_protocol::serve_with_request(
         "ai_cooling",
         env!("CARGO_PKG_VERSION"),
-        &["preview", ACTION_ELEVATED],
+        &["preview", ACTION_ELEVATED, ACTION_POWER],
         |request| match request.action.as_str() {
             "preview" => scan(),
             ACTION_ELEVATED => read_elevated(),
+            ACTION_POWER => set_power_limit(request),
             other => Err(ToolError::unsupported(other)),
         },
     );

@@ -48,3 +48,7 @@ cargo test --manifest-path tools/lens_helper/Cargo.toml
 ```
 
 打包时把 `lens_helper.exe` 与 `ai_cooling.exe` 放在同一目录。
+
+## 处理器上限（软件降温）
+
+`set_power_limit` 经 UAC 调用 `powercfg`，把当前电源方案的处理器最大状态设为 60/80/100%（交流与电池），设回 100% 即恢复。它限制的是处理器功耗上限，**不是风扇转速控制**；部分固件可能忽略该设置。风扇/EC 控制需要厂商驱动，本工具不做。

@@ -1,6 +1,6 @@
 [package]
 name = "gpu-opt-tool"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 [[bin]]
@@ -16,3 +16,6 @@ panic = "abort"
 strip = true
 lto = true
 opt-level = "s"
+
+[target."cfg(windows)".dependencies]
+winreg = "0.55"

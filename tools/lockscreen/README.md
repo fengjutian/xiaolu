@@ -41,3 +41,7 @@ cargo test --manifest-path tools/lockscreen/Cargo.toml
 - 只调用系统 `LockWorkStation`；不实现自定义锁屏窗口、不注入 Explorer、不替换登录界面。
 - 不修改任何文件、注册表或系统设置。
 - 操作日志：`%LOCALAPPDATA%\SystemLens\tool-actions.jsonl`（JSON Lines，不记录用户内容）。
+
+## 定时锁定（界面）
+
+锁屏页支持 1–720 分钟倒计时；倒计时结束前会重新预览取得新令牌再锁定。点“取消”或关闭页面不会锁定。倒计时只是前端计时，不写入系统计划任务。

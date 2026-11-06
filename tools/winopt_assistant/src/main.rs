@@ -557,7 +557,7 @@ fn hklm_dword(path: &str, name: &str) -> Option<u32> {
 fn is_admin_setting(id: &str) -> bool {
     matches!(
         id,
-        "telemetry" | "fastStartup" | "hibernate" | "systemRestore" | "longPaths"
+        "telemetry" | "fastStartup" | "hibernate" | "systemRestore" | "longPaths" | "searchService"
     )
 }
 
@@ -568,6 +568,7 @@ fn admin_label(id: &str) -> &'static str {
         "hibernate" => "休眠",
         "systemRestore" => "系统还原",
         "longPaths" => "长路径支持",
+        "searchService" => "Windows 搜索服务",
         _ => "管理员设置",
     }
 }
@@ -592,6 +593,7 @@ fn admin_settings_json() -> Vec<Value> {
         "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\SystemRestore",
         "DisableSR",
     );
+    let search_start = hklm_dword("SYSTEM\\CurrentControlSet\\Services\\WSearch", "Start");
     let long_paths = hklm_dword(
         "SYSTEM\\CurrentControlSet\\Control\\FileSystem",
         "LongPathsEnabled",
@@ -636,6 +638,13 @@ fn admin_settings_json() -> Vec<Value> {
             "label": "长路径支持",
             "current": long_paths,
             "options": [{"value": 0, "label": "关闭"}, {"value": 1, "label": "开启"}],
+            "requiresAdmin": true,
+        }),
+        json!({
+            "id": "searchService",
+            "label": "Windows 搜索服务（禁用会破坏开始菜单搜索）",
+            "current": search_start,
+            "options": [{"value": 2, "label": "自动"}, {"value": 3, "label": "手动"}, {"value": 4, "label": "禁用"}],
             "requiresAdmin": true,
         }),
     ]

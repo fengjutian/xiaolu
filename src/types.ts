@@ -437,6 +437,12 @@ export interface ServiceItem {
   path: string;
 }
 
+export interface GpuPreference {
+  path: string;
+  preference: number;
+  label: string;
+}
+
 export interface ExpandItem {
   drive: string;
   label: string;
@@ -527,10 +533,15 @@ export interface ToolResult {
   hostsManagedDomains?: number;
   hostsPath?: string;
   builtinDomains?: string[];
+  domains?: string[];
   dumpMode?: DumpMode;
   appxItems?: AppxItem[];
   runtimeItems?: RuntimeItem[];
   expandItems?: ExpandItem[];
+  gpuPreferences?: GpuPreference[];
+  restorePointEnabled?: boolean;
+  restorePointToken?: string;
+  rollbackToken?: string;
   journalPath?: string;
   journalDir?: string;
   startupRegistryError?: string;

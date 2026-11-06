@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "sys_clean",
   "name": "Windows 系统瘦身",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "apiVersion": 1,
   "description": "列出应用包；白名单内置应用可移除（当前用户，可重装）",
   "category": "cleanup",
@@ -19,7 +19,8 @@
   "actions": [
     { "id": "preview", "label": "预览", "write": false },
     { "id": "remove_appx", "label": "移除白名单应用", "write": true, "requiresConfirmation": true },
-    { "id": "export_list", "label": "导出可移除清单", "write": false }
+    { "id": "export_list", "label": "导出可移除清单", "write": false },
+    { "id": "create_restore_point", "label": "创建系统还原点（需 UAC）", "write": true, "requiresConfirmation": true }
   ],
   "limits": { "timeoutMs": 180000, "maxOutputBytes": 2097152 },
   "ui": { "kind": "table" },
