@@ -366,9 +366,9 @@ mod tests {
         let original = baseline();
         let warm = warm_ramp(&original, 100);
         assert_eq!(warm[..256], original[..256]);
-        assert!(warm[256] < original[256]);
-        assert!(warm[512] < original[512]);
-        assert!(warm[512] < warm[256], "blue should drop more than green");
+        assert!(warm[456] < original[456]);
+        assert!(warm[712] < original[712]);
+        assert!(warm[712] < warm[456], "blue should drop more than green");
     }
 
     #[test]

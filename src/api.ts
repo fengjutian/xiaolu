@@ -1,5 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import type { BenchmarkPreflight, BenchmarkRecord, BenchmarkResult, CleanupPreview, DeviceDetails, DiagnosticReport, DirectoryListing, DriverAssessmentReport, DriverInventory, DriverUpdate, DuplicateScan, EventLogResult, EyeCareSettings, EyeCareStatus, HardwareDetails, LargeFileScan, NetworkDiagnosticReport, NotificationOutcome, NotificationSettings, NvmeHealthReport, ScheduledTaskInventory, SensorHistorySeries, SensorSettings, SensorSnapshot, SensorValue, SlimScan, SoftwareInventory, StartupItem, StorageDrive, StorageKind, StorageScan, SystemHistorySeries, SystemSnapshot, ToolDescriptor } from "./types";
+import type { BenchmarkPreflight, BenchmarkRecord, BenchmarkResult, CleanupPreview, DeviceDetails, DiagnosticReport, DirectoryListing, DriverAssessmentReport, DriverInventory, DriverUpdate, DuplicateScan, EventLogResult, EyeCareSettings, EyeCareStatus, HardwareDetails, LargeFileScan, NetworkDiagnosticReport, NotificationOutcome, NotificationSettings, ProcessInfo, NvmeHealthReport, ScheduledTaskInventory, SensorHistorySeries, SensorSettings, SensorSnapshot, SensorValue, SlimScan, SoftwareInventory, StartupItem, StorageDrive, StorageKind, StorageScan, SystemHistorySeries, SystemSnapshot, ToolDescriptor } from "./types";
 
 const gib = 1024 ** 3;
 
@@ -60,6 +60,11 @@ function mockSnapshot(): SystemSnapshot {
 export async function getSystemSnapshot(): Promise<SystemSnapshot> {
   if (!isTauri()) return mockSnapshot();
   return invoke<SystemSnapshot>("get_system_snapshot");
+}
+
+export async function getProcessInventory(): Promise<ProcessInfo[]> {
+  if (!isTauri()) return mockSnapshot().processes;
+  return invoke<ProcessInfo[]>("get_process_inventory");
 }
 
 export async function getSystemHistory(hours: number): Promise<SystemHistorySeries> {

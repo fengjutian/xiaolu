@@ -111,6 +111,7 @@ import {
   getSoftwareInventory,
   getStartupItems,
   getSystemSnapshot,
+  getProcessInventory,
   getSystemHistory,
   queryEventLog,
   isDesktopRuntime,
@@ -4984,6 +4985,7 @@ export default function App() {
   }, [eyeCare]);
 
   const [snapshot, setSnapshot] = useState<SystemSnapshot | null>(null);
+  const [processes, setProcesses] = useState<ProcessInfo[]>([]);
   const [history, setHistory] = useState<Sample[]>([]);
   const [systemHistory, setSystemHistory] = useState<SystemHistorySeries | null>(
     null,
@@ -5045,12 +5047,33 @@ export default function App() {
 
   useEffect(() => {
     // 只有实时页面需要高频系统快照；静态清单页不应被两秒轮询反复重绘。
-    if (tab !== "overview" && tab !== "processes") return;
-    void refresh();
-    const interval = tab === "overview" ? 2000 : 3000;
-    const timer = window.setInterval(() => void refresh(), interval);
-    return () => clearInterval(timer);
+    if (tab !== "overview") return;
+    let active = true;
+    let timer: number | undefined;
+    const poll = async () => {
+      await refresh();
+      if (active) timer = window.setTimeout(() => void poll(), 2000);
+    };
+    void poll();
+    return () => { active = false; if (timer) window.clearTimeout(timer); };
   }, [refresh, tab]);
+  useEffect(() => {
+    if (tab !== "processes") return;
+    let active = true;
+    let timer: number | undefined;
+    const load = async () => {
+      try {
+        const next = await getProcessInventory();
+        if (active) setProcesses(next);
+      } catch (reason) {
+        if (active) setError(String(reason));
+      } finally {
+        if (active) timer = window.setTimeout(() => void load(), 3000);
+      }
+    };
+    void load();
+    return () => { active = false; if (timer) window.clearTimeout(timer); };
+  }, [tab]);
   useEffect(() => {
     let cancelled = false;
     const load = () => {
@@ -5493,7 +5516,7 @@ export default function App() {
         {tab === "network" && <MemoNetworkPanel data={networkDiagnostics} />}
         {tab === "software" && <MemoSoftwarePanel data={software} />}
         {tab === "storage" && <StoragePanel />}
-        {tab === "processes" && <MemoProcessPanel processes={snapshot.processes} />}
+        {tab === "processes" && <MemoProcessPanel processes={processes} />}
         {tab === "startup" && (
           <Stack>
             <Alert color="blue" icon={<IconPlayerPause />}>

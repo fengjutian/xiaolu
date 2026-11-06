@@ -44,6 +44,7 @@ body::before { content:""; position:fixed; inset:0; pointer-events:none; backgro
 .sensor-tabs-list .mantine-Tabs-tab-section,.module-tabs-list .mantine-Tabs-tab-section { opacity:.82; }
 .sensor-tabs-list .mantine-Tabs-tab[data-active] .mantine-Tabs-tab-section,.module-tabs-list .mantine-Tabs-tab[data-active] .mantine-Tabs-tab-section { opacity:1; }
 .recharts-surface { overflow:visible; }
+.mantine-Table-tbody .mantine-Table-tr { content-visibility:auto; contain-intrinsic-size:auto 58px; }
 .hardware-json,.report { margin:0; white-space:pre-wrap; overflow-wrap:anywhere; font:12px/1.6 "Cascadia Code",Consolas,monospace; color:var(--code-color); }
 .hardware-json { max-height:270px; overflow:auto; }
 .report { min-height:440px; max-height:calc(100vh - 180px); overflow:auto; padding:22px; border:1px solid var(--card-border); border-radius:16px; background:var(--report-bg); }

@@ -1,6 +1,6 @@
 use serde::Serialize;
 use std::{process::Command, time::{Instant, SystemTime, UNIX_EPOCH}};
-use sysinfo::{Disks, Networks, System};
+use sysinfo::{Disks, Networks, ProcessesToUpdate, System};
 use tauri::Manager;
 
 #[derive(Debug, Serialize)]
@@ -63,7 +63,8 @@ impl SystemCollector {
         if self.first_snapshot {
             self.first_snapshot = false;
         } else {
-            self.system.refresh_all();
+            self.system.refresh_cpu_usage();
+            self.system.refresh_memory();
             self.networks.refresh(true);
             self.disks.refresh(true);
         }
@@ -89,12 +90,6 @@ impl SystemCollector {
                 written_bytes_per_sec: (io.written_bytes as f64 / elapsed) as u64,
             }
         }).collect();
-        let mut processes: Vec<_> = self.system.processes().iter().map(|(pid, process)| ProcessInfo {
-            pid: pid.as_u32(), name: process.name().to_string_lossy().into_owned(),
-            cpu_percent: process.cpu_usage(), memory_bytes: process.memory(),
-        }).collect();
-        processes.sort_by(|a, b| b.cpu_percent.total_cmp(&a.cpu_percent).then_with(|| b.memory_bytes.cmp(&a.memory_bytes)));
-        processes.truncate(30);
         Ok(SystemSnapshot {
             host_name: System::host_name().unwrap_or_else(|_| "未知设备".into()), os_name: System::name().unwrap_or_else(|_| "Windows".into()),
             os_version: System::long_os_version().or_else(|_| System::os_version()).unwrap_or_else(|_| "未知版本".into()),
@@ -103,9 +98,25 @@ impl SystemCollector {
             cpu: CpuInfo { brand: cpu.map(|x| x.brand().to_string()).unwrap_or_else(|| "未知处理器".into()), logical_cores: self.system.cpus().len(), usage_percent: cpu_usage, frequency_mhz: cpu.map(|x| x.frequency()).unwrap_or_default() },
             memory: MemoryInfo { total_bytes: total_memory, used_bytes: used_memory, usage_percent },
             network: NetworkInfo { download_bytes_per_sec: (received as f64 / elapsed) as u64, upload_bytes_per_sec: (transmitted as f64 / elapsed) as u64, total_received_bytes: total_received, total_transmitted_bytes: total_transmitted, interfaces: self.networks.len() },
-            disks, processes,
+            disks, processes: Vec::new(),
         })
     }
+
+    pub fn processes(&mut self) -> Vec<ProcessInfo> {
+        self.system.refresh_processes(ProcessesToUpdate::All, true);
+        let mut processes: Vec<_> = self.system.processes().iter().map(|(pid, process)| ProcessInfo {
+            pid: pid.as_u32(), name: process.name().to_string_lossy().into_owned(),
+            cpu_percent: process.cpu_usage(), memory_bytes: process.memory(),
+        }).collect();
+        processes.sort_by(|a, b| b.cpu_percent.total_cmp(&a.cpu_percent).then_with(|| b.memory_bytes.cmp(&a.memory_bytes)));
+        processes.truncate(30);
+        processes
+    }
+}
+
+#[tauri::command(async)]
+pub fn get_process_inventory(state: tauri::State<'_, std::sync::Mutex<SystemCollector>>) -> Result<Vec<ProcessInfo>, String> {
+    Ok(state.lock().map_err(|_| "系统采集器被占用".to_string())?.processes())
 }
 
 fn record_metrics(app: &tauri::AppHandle, snapshot: &SystemSnapshot) {

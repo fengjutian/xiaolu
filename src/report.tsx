@@ -31,6 +31,7 @@ import {
   getSoftwareInventory,
   getStartupItems,
   getSystemSnapshot,
+  getProcessInventory,
   scanCleanupCandidates,
 } from "./api";
 import type {
@@ -39,6 +40,7 @@ import type {
   DriverInventory,
   HardwareDetails,
   NetworkDiagnosticReport,
+  ProcessInfo,
   ScheduledTaskInventory,
   SensorSnapshot,
   SoftwareInventory,
@@ -671,6 +673,7 @@ export default function ReportPanel() {
     try {
       const results = await Promise.allSettled([
         getSystemSnapshot(),
+        sections.processes ? getProcessInventory() : Promise.resolve([]),
         sections.hardware ? getHardwareDetails() : Promise.resolve(undefined),
         sections.sensors ? getSensorSnapshot() : Promise.resolve(undefined),
         sections.drivers ? getDriverInventory() : Promise.resolve(undefined),
@@ -692,9 +695,7 @@ export default function ReportPanel() {
       };
 
       let system = pick<SystemSnapshot>(0, "系统概览");
-      if (system && !sections.processes) {
-        system = { ...system, processes: [] };
-      }
+      if (system) system = { ...system, processes: pick<ProcessInfo[]>(1, "进程清单") ?? [] };
 
       const next: ReportPayload = {
         schemaVersion: 4,
@@ -705,15 +706,15 @@ export default function ReportPanel() {
           note: "报告仅在本机生成；导出前按所选选项处理敏感字段。进程 PID 始终移除。",
         },
         system,
-        hardware: pick<HardwareDetails>(1, "硬件详情"),
-        sensors: pick<SensorSnapshot>(2, "传感器与温度"),
-        drivers: pick<DriverInventory>(3, "驱动清单"),
-        diagnostics: pick<DiagnosticReport>(4, "系统诊断"),
-        network: pick<NetworkDiagnosticReport>(5, "网络摘要"),
-        software: pick<SoftwareInventory>(6, "软件清单"),
-        startup: pick<StartupItem[]>(7, "启动项"),
-        tasks: pick<ScheduledTaskInventory>(8, "计划任务"),
-        cleanup: pick<CleanupPreview>(9, "清理候选"),
+        hardware: pick<HardwareDetails>(2, "硬件详情"),
+        sensors: pick<SensorSnapshot>(3, "传感器与温度"),
+        drivers: pick<DriverInventory>(4, "驱动清单"),
+        diagnostics: pick<DiagnosticReport>(5, "系统诊断"),
+        network: pick<NetworkDiagnosticReport>(6, "网络摘要"),
+        software: pick<SoftwareInventory>(7, "软件清单"),
+        startup: pick<StartupItem[]>(8, "启动项"),
+        tasks: pick<ScheduledTaskInventory>(9, "计划任务"),
+        cleanup: pick<CleanupPreview>(10, "清理候选"),
         errors,
       };
 
