@@ -274,6 +274,7 @@ export default function AiPanel() {
   const [auditBusy, setAuditBusy] = useState(false);
   const [capability, setCapability] = useState<AiCapabilityReport | null>(null);
   const [probing, setProbing] = useState(false);
+  const [sessionDetail, setSessionDetail] = useState<AiSessionRecord | null>(null);
 
   const refreshAudits = useCallback(async () => {
     try {
@@ -954,6 +955,8 @@ export default function AiPanel() {
                         justify="space-between"
                         wrap="nowrap"
                         align="flex-start"
+                        style={{ cursor: "pointer" }}
+                        onClick={() => setSessionDetail(session)}
                       >
                         <Box style={{ minWidth: 0 }}>
                           <Text size="sm" fw={600} truncate>
@@ -970,7 +973,8 @@ export default function AiPanel() {
                             variant="subtle"
                             color="red"
                             disabled={sessionsBusy}
-                            onClick={async () => {
+                            onClick={async (event) => {
+                              event.stopPropagation();
                               setSessionsBusy(true);
                               try {
                                 await deleteAiSession(session.id);
@@ -1341,6 +1345,76 @@ export default function AiPanel() {
           </Stack>
         </Tabs.Panel>
       </Tabs>
+
+      <Modal
+        opened={sessionDetail !== null}
+        onClose={() => setSessionDetail(null)}
+        title="本地 AI 会话"
+        size="lg"
+        scrollAreaComponent={ScrollArea}
+      >
+        {sessionDetail && (
+          <Stack gap="sm">
+            <Text size="xs" c="dimmed">
+              {formatTime(sessionDetail.savedAtUnixMs)} · {sessionDetail.answer.provider} ·{" "}
+              {sessionDetail.answer.model} · 快照 {sessionDetail.answer.snapshotId}
+            </Text>
+            <Text fw={700}>{sessionDetail.question ?? "本机健康解读"}</Text>
+            {sessionDetail.answer.degraded ? (
+              <Alert color="orange" icon={<IconAlertCircle />} title="已降级">
+                {sessionDetail.answer.degradedReason ?? "模型不可用。"}
+                <Box mt="sm">
+                  <FindingsList
+                    findings={sessionDetail.answer.localFindings}
+                    facts={new Map<string, DiagnosticFact>()}
+                    historical
+                  />
+                </Box>
+              </Alert>
+            ) : (
+              <>
+                {sessionDetail.answer.summary && (
+                  <Text size="sm">{sessionDetail.answer.summary}</Text>
+                )}
+                <FindingsList
+                  findings={sessionDetail.answer.findings}
+                  facts={new Map<string, DiagnosticFact>()}
+                  historical
+                />
+                {(sessionDetail.answer.checks?.length ?? 0) > 0 && (
+                  <Box>
+                    <Text size="xs" c="dimmed" fw={700}>
+                      AI 请求的只读检查
+                    </Text>
+                    <Stack gap={4} mt={4}>
+                      {(sessionDetail.answer.checks ?? []).map((check, index) => (
+                        <Text key={`${check.toolId}-${index}`} size="xs" c="dimmed">
+                          {check.label}（{check.toolId}）· {check.ok ? "完成" : "失败"} ·{" "}
+                          {check.durationMs} ms
+                        </Text>
+                      ))}
+                    </Stack>
+                  </Box>
+                )}
+                {sessionDetail.answer.limitations.length > 0 && (
+                  <Alert color="gray" variant="light" icon={<IconAlertCircle />} title="结论限制">
+                    <Stack gap={2}>
+                      {sessionDetail.answer.limitations.map((limitation, index) => (
+                        <Text key={`${limitation}-${index}`} size="xs">
+                          {limitation}
+                        </Text>
+                      ))}
+                    </Stack>
+                  </Alert>
+                )}
+              </>
+            )}
+            <Text size="xs" c="dimmed">
+              历史会话不保存原始事实值，因此证据只显示事实 ID；完整报告请查看会话生成时的导出文件。
+            </Text>
+          </Stack>
+        )}
+      </Modal>
 
       <Modal
         opened={previewOpen}

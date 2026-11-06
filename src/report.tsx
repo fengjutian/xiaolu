@@ -34,8 +34,11 @@ import {
   getProcessInventory,
   scanCleanupCandidates,
 } from "./api";
+import { getAiSessions } from "./aiApi";
+import { buildAiSectionMarkdown } from "./aiReport";
 import { escapeHtml, markdownToHtml } from "./reportHtml";
 import type {
+  AiSessionRecord,
   CleanupPreview,
   DiagnosticReport,
   DriverInventory,
@@ -72,6 +75,7 @@ type SectionOptions = {
   processes: boolean;
   tasks: boolean;
   cleanup: boolean;
+  ai: boolean;
 };
 
 type ReportError = { section: string; message: string };
@@ -91,6 +95,7 @@ type ReportPayload = {
   startup?: StartupItem[];
   tasks?: ScheduledTaskInventory;
   cleanup?: CleanupPreview;
+  ai?: AiSessionRecord[];
   errors: ReportError[];
 };
 
@@ -116,6 +121,7 @@ const DEFAULT_SECTIONS: SectionOptions = {
   processes: true,
   tasks: true,
   cleanup: false,
+  ai: true,
 };
 
 const bytes = (value: number) =>
@@ -599,8 +605,11 @@ function buildMarkdown(
     );
   }
 
-  if (payload.errors.length > 0) {
-    lines.push(
+  if (payload.ai && payload.ai.length > 0) {
+    lines.push(...buildAiSectionMarkdown(payload.ai));
+  }
+
+  if (payload.errors.length > 0) {    lines.push(
       "## 采集异常",
       "",
       ...table(
@@ -693,6 +702,7 @@ const SECTION_LABELS: Array<[keyof SectionOptions, string]> = [
   ["processes", "进程列表"],
   ["tasks", "计划任务"],
   ["cleanup", "清理候选（较慢）"],
+  ["ai", "AI 解读"],
 ];
 
 export default function ReportPanel() {
@@ -733,6 +743,7 @@ export default function ReportPanel() {
         sections.startup ? getStartupItems() : Promise.resolve(undefined),
         sections.tasks ? getScheduledTasks() : Promise.resolve(undefined),
         sections.cleanup ? scanCleanupCandidates() : Promise.resolve(undefined),
+        sections.ai ? getAiSessions() : Promise.resolve(undefined),
       ]);
       const errors: ReportError[] = [];
       const pick = <T,>(index: number, name: string): T | undefined => {
@@ -748,7 +759,7 @@ export default function ReportPanel() {
       if (system) system = { ...system, processes: pick<ProcessInfo[]>(1, "进程清单") ?? [] };
 
       const next: ReportPayload = {
-        schemaVersion: 4,
+        schemaVersion: 5,
         generatedAt: new Date().toISOString(),
         application: { name: "小鲁 · 系统透镜", version: APP_VERSION },
         privacy: {
@@ -765,6 +776,7 @@ export default function ReportPanel() {
         startup: pick<StartupItem[]>(8, "启动项"),
         tasks: pick<ScheduledTaskInventory>(9, "计划任务"),
         cleanup: pick<CleanupPreview>(10, "清理候选"),
+        ai: (pick<AiSessionRecord[]>(11, "AI 解读") ?? []).slice(0, 10),
         errors,
       };
 
@@ -811,7 +823,7 @@ export default function ReportPanel() {
               导出内容与预览完全一致。
             </Text>
           </Box>
-          <Badge variant="light">Schema 4</Badge>
+          <Badge variant="light">Schema 5</Badge>
         </Group>
 
         <SimpleGrid cols={{ base: 1, md: 2 }} mt="lg">

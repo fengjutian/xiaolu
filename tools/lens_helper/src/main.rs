@@ -11,6 +11,7 @@ const BACKUP_PATH: &str = "Software\\SystemLens\\DisabledStartup";
 const OP_STARTUP: &str = "system_startup_set";
 const OP_SERVICE: &str = "service_set_start";
 const OP_SENSOR: &str = "sensor_read";
+const OP_TASK: &str = "task_set_enabled";
 const SERVICE_PATH: &str = "SYSTEM\\CurrentControlSet\\Services";
 const START_TYPES: [u32; 3] = [2, 3, 4];
 
@@ -30,6 +31,22 @@ fn valid_service_name(name: &str) -> bool {
 fn valid_start_type(value: u64) -> Option<u32> {
     let value = u32::try_from(value).ok()?;
     START_TYPES.contains(&value).then_some(value)
+}
+
+/// 任务路径必须是绝对路径（以 `\` 开头），不允许空段、`..`、引号或控制字符。
+fn valid_task_path(path: &str) -> bool {
+    if !path.starts_with('\\')
+        || path.len() > 512
+        || path.ends_with('\\')
+        || path.contains("..")
+        || path.contains('"')
+        || path.chars().any(|character| character.is_control())
+    {
+        return false;
+    }
+    path.split('\\')
+        .skip(1)
+        .all(|segment| !segment.is_empty())
 }
 
 fn elevated_dir() -> Option<PathBuf> {
@@ -306,6 +323,7 @@ fn run(request: &Value) -> Result<Outcome, String> {
         OP_STARTUP => run_startup(request).map(Outcome::message),
         OP_SERVICE => run_service(request).map(Outcome::message),
         OP_SENSOR => read_sensors(),
+        OP_TASK => run_task(request).map(Outcome::message),
         _ => Err(format!("不支持的操作：{op}")),
     }
 }
@@ -347,8 +365,48 @@ fn run_service(request: &Value) -> Result<String, String> {
     set_service_start(service, start_type, expect)
 }
 
-fn read_sensors() -> Result<Outcome, String> {
-    let script = r#"
+fn run_task(request: &Value) -> Result<String, String> {
+    let task_path = request
+        .get("taskPath")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if !valid_task_path(task_path) {
+        return Err("计划任务路径无效。".into());
+    }
+    let enable = request
+        .get("enable")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| "缺少 enable。".to_string())?;
+    set_task_enabled(task_path, enable)
+}
+
+/// 只调用系统 `schtasks.exe`，参数以数组传入，不经过 cmd/shell。
+fn set_task_enabled(task_path: &str, enable: bool) -> Result<String, String> {
+    let mut command = Command::new("schtasks.exe");
+    command.creation_flags(CREATE_NO_WINDOW);
+    command.args([
+        "/Change",
+        "/TN",
+        task_path,
+        if enable { "/ENABLE" } else { "/DISABLE" },
+    ]);
+    let output = command
+        .output()
+        .map_err(|error| format!("无法启动 schtasks：{error}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let detail = if stderr.is_empty() { stdout } else { stderr };
+        return Err(format!("schtasks 执行失败：{detail}"));
+    }
+    Ok(if enable {
+        "计划任务已启用".into()
+    } else {
+        "计划任务已禁用".into()
+    })
+}
+
+fn read_sensors() -> Result<Outcome, String> {    let script = r#"
 [Console]::OutputEncoding=[Text.Encoding]::UTF8
 $zones=@()
 try { Get-CimInstance -Namespace root/wmi -ClassName MSAcpi_ThermalZoneTemperature -ErrorAction Stop | ForEach-Object {
@@ -466,5 +524,18 @@ mod tests {
         assert_eq!(valid_start_type(4), Some(4));
         assert_eq!(valid_start_type(0), None);
         assert_eq!(valid_start_type(5), None);
+    }
+
+    #[test]
+    fn task_path_validation_rejects_traversal_and_empty_segments() {
+        assert!(valid_task_path("\\Vendor\\Update"));
+        assert!(valid_task_path("\\SingleTask"));
+        assert!(valid_task_path("\\Folder With Space\\Task"));
+        assert!(!valid_task_path("Vendor\\Update"));
+        assert!(!valid_task_path("\\Vendor\\\\Update"));
+        assert!(!valid_task_path("\\Vendor\\..\\Update"));
+        assert!(!valid_task_path("\\Vendor\\Update\\"));
+        assert!(!valid_task_path("\\Vendor\\\"Update"));
+        assert!(!valid_task_path("\\Vendor\\line\nbreak"));
     }
 }

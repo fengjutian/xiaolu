@@ -65,6 +65,26 @@ clean_master.exe --stdio
 - **打开回收站还原**：跳到系统回收站，按原路径还原；
 - **打开清单目录**：打开 `%LOCALAPPDATA%\SystemLens\cleanup`，查看本次逐文件 JSON。
 
+列表上方提供三个批量选择：
+
+- **全选可清理**：只选“可用、文件数 > 0、无需管理员”的位置；
+- **仅缓存/临时**：用户临时、Windows 临时、缩略图、崩溃转储、错误报告、Edge 缓存；
+- **清空**。
+
+## 性能基准
+
+1 GiB 候选量（128 个 8 MiB 文件）移入回收站实测：
+
+```text
+1 GiB recycle: 1.57s, recycled=128
+```
+
+单次实测远低于 60 秒验收线；P95 需要多次运行后补测。复现：
+
+```powershell
+cargo test --release --manifest-path tools/clean_master/Cargo.toml -- --ignored --nocapture bench_clean_one_gib
+```
+
 ## 边界
 
 - 不修改注册表、服务、计划任务或启动项。

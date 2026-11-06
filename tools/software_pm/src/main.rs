@@ -12,6 +12,7 @@ const MAX_SERVICES: usize = 60;
 const MAX_TASKS: usize = 40;
 const MAX_NOTIFICATIONS: usize = 20;
 const ACTION_TOGGLE: &str = "toggle_startup";
+const ACTION_TASK: &str = "set_task_enabled";
 const RUN_SUBKEYS: [&str; 2] = ["Run", "RunOnce"];
 const BACKUP_PATH: &str = "Software\\SystemLens\\DisabledStartup";const MAX_STARTUP_ITEMS: usize = 200;
 
@@ -38,7 +39,7 @@ try {
 
 $tasks=@()
 try {
-  Get-ScheduledTask -ErrorAction Stop | Where-Object { $_.TaskPath -notlike '\Microsoft\*' -and $_.State -ne 'Disabled' } | ForEach-Object {
+  Get-ScheduledTask -ErrorAction Stop | Where-Object { $_.TaskPath -notlike '\Microsoft\*' } | ForEach-Object {
     $trigger=''
     try {
       $trigger=(@($_.Triggers | ForEach-Object { $_.CimClass.CimClassName -replace '^MSFT_Task','' -replace 'Trigger$','' }) | Where-Object { $_ } | Select-Object -Unique) -join '/'
@@ -522,7 +523,86 @@ fn render(payload: &Value) -> Value {
     )
 }
 
-fn scan() -> Result<Value, ToolError> {
+#[derive(Clone)]
+struct TaskItem {
+    path: String,
+    name: String,
+    state: String,
+}
+
+impl TaskItem {
+    fn enabled(&self) -> bool {
+        !self.state.eq_ignore_ascii_case("disabled")
+    }
+}
+
+fn task_items(payload: &Value) -> Vec<TaskItem> {
+    let empty = Vec::new();
+    payload
+        .get("tasks")
+        .and_then(Value::as_array)
+        .unwrap_or(&empty)
+        .iter()
+        .filter_map(|entry| {
+            let name = entry.get("name").and_then(Value::as_str)?;
+            let path = entry.get("path").and_then(Value::as_str)?;
+            let state = entry.get("state").and_then(Value::as_str).unwrap_or("");
+            Some(TaskItem {
+                path: path.to_string(),
+                name: name.to_string(),
+                state: state.to_string(),
+            })
+        })
+        .collect()
+}
+
+fn task_digest(tasks: &[TaskItem]) -> String {
+    let parts = tasks
+        .iter()
+        .map(|task| format!("TASK|{}|{}", task.path, task.state))
+        .collect::<Vec<_>>();
+    let refs = parts.iter().map(String::as_str).collect::<Vec<_>>();
+    tool_protocol::digest_of(&refs)
+}
+
+fn task_items_json(tasks: &[TaskItem]) -> Value {
+    Value::Array(
+        tasks
+            .iter()
+            .map(|task| {
+                json!({
+                    "path": task.path,
+                    "name": task.name,
+                    "state": task.state,
+                    "enabled": task.enabled(),
+                })
+            })
+            .collect(),
+    )
+}
+
+fn validate_task_path(path: &str) -> Result<(), ToolError> {
+    let valid = path.starts_with('\\')
+        && path.len() <= 512
+        && !path.ends_with('\\')
+        && !path.contains("..")
+        && !path.contains('"')
+        && !path.chars().any(|character| character.is_control())
+        && path
+            .split('\\')
+            .skip(1)
+            .all(|segment| !segment.is_empty());
+    if valid {
+        Ok(())
+    } else {
+        Err(ToolError::new(
+            "INVALID_INPUT",
+            "计划任务路径必须是以 \\ 开头的绝对路径。",
+        ))
+    }
+}
+
+fn load_payload() -> Result<Value, ToolError> {
     let output = Command::new("powershell.exe")
         .creation_flags(CREATE_NO_WINDOW)
         .args(["-NoProfile", "-NonInteractive", "-Command", script()])
@@ -541,8 +621,12 @@ fn scan() -> Result<Value, ToolError> {
         .filter(|line| line.starts_with('{'))
         .last()
         .ok_or_else(|| ToolError::new("INTERNAL", "软件权限检查没有返回 JSON"))?;
-    let payload: Value = serde_json::from_str(json_line)
-        .map_err(|error| ToolError::new("INTERNAL", format!("无法解析软件权限检查：{error}")))?;
+    serde_json::from_str(json_line)
+        .map_err(|error| ToolError::new("INTERNAL", format!("无法解析软件权限检查：{error}")))
+}
+
+fn scan() -> Result<Value, ToolError> {
+    let payload = load_payload()?;
     let mut data = render(&payload);
     match read_startup_items() {
         Ok(items) => {
@@ -559,6 +643,13 @@ fn scan() -> Result<Value, ToolError> {
                     startup_items_json(&machine, "HKLM"),
                 );
                 map.insert("serviceItems".into(), services_json(&services));
+                let tasks = task_items(&payload);
+                map.insert("taskItems".into(), task_items_json(&tasks));
+                if let Ok(task_token) =
+                    tool_protocol::issue_token(ACTION_TASK, &task_digest(&tasks))
+                {
+                    map.insert("taskToken".into(), Value::String(task_token));
+                }
                 if let Some(notes) = map.get_mut("notes").and_then(Value::as_array_mut) {
                     notes.push(Value::String(
                         "系统级启动项与第三方服务启动类型需要管理员授权（UAC），由独立 lens_helper.exe 执行。"
@@ -1295,6 +1386,105 @@ fn set_service_start(request: &Request) -> Result<Value, ToolError> {
     Ok(data)
 }
 
+fn set_task_enabled(request: &Request) -> Result<Value, ToolError> {
+    let token = request.confirmation.as_deref().ok_or_else(|| {
+        ToolError::new(
+            "CONFIRMATION_REQUIRED",
+            "启停计划任务需要确认令牌，请先预览。",
+        )
+    })?;
+    let task_path = request
+        .parameters
+        .get("taskPath")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ToolError::new("INVALID_INPUT", "缺少参数 taskPath。"))?;
+    let name = request
+        .parameters
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let enable = request
+        .parameters
+        .get("enable")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| ToolError::new("INVALID_INPUT", "缺少参数 enable。"))?;
+    validate_task_path(task_path)?;
+
+    let payload = load_payload()?;
+    let tasks = task_items(&payload);
+    tool_protocol::verify_token(token, ACTION_TASK, &task_digest(&tasks))?;
+    let task = tasks
+        .iter()
+        .find(|task| task.path == task_path)
+        .ok_or_else(|| ToolError::new("CONFLICT", "计划任务不存在，可能已被移除。"))?;
+    if task.enabled() == enable {
+        return Err(ToolError::new("CONFLICT", "计划任务已是目标状态。"));
+    }
+    let before = task.state.clone();
+
+    run_elevated(json!({
+        "op": "task_set_enabled",
+        "taskPath": task_path,
+        "enable": enable,
+    }))?;
+
+    let payload_after = load_payload()?;
+    let tasks_after = task_items(&payload_after);
+    let verified = tasks_after
+        .iter()
+        .any(|task| task.path == task_path && task.enabled() == enable);
+    if !verified {
+        return Err(ToolError::new(
+            "INTERNAL",
+            "提权后回读计划任务状态不一致。",
+        ));
+    }
+    let _ = tool_protocol::append_audit_log(json!({
+        "tool": "software_pm",
+        "action": ACTION_TASK,
+        "taskPath": task_path,
+        "name": name,
+        "before": before,
+        "after": if enable { "Enabled" } else { "Disabled" },
+        "result": "ok",
+        "at": tool_protocol::now_ms(),
+    }));
+
+    let mut data = table(
+        json!([
+            item("任务", name),
+            item("路径", task_path),
+            item("原状态", before.clone()),
+            item("新状态", if enable { "已启用" } else { "已禁用" }),
+        ]),
+        json!([
+            column("name", "计划任务"),
+            column("path", "路径"),
+            column("before", "原状态"),
+            column("after", "新状态"),
+        ]),
+        json!([{
+            "name": name,
+            "path": task_path,
+            "before": before,
+            "after": if enable { "已启用" } else { "已禁用" },
+        }]),
+        json!([
+            "计划任务状态已由独立提权助手修改，并已重新读取确认。",
+            "再次操作需要重新预览获取新令牌。",
+        ]),
+    );
+    if let Value::Object(map) = &mut data {
+        map.insert("taskItems".into(), task_items_json(&tasks_after));
+        if let Ok(task_token) =
+            tool_protocol::issue_token(ACTION_TASK, &task_digest(&tasks_after))
+        {
+            map.insert("taskToken".into(), Value::String(task_token));
+        }
+    }
+    Ok(data)
+}
+
 fn main() {
     tool_protocol::serve_with_request(
         "software_pm",
@@ -1306,6 +1496,7 @@ fn main() {
             "restore_all",
             "toggle_system_startup",
             "set_service_start",
+            "set_task_enabled",
         ],
         |request| match request.action.as_str() {
             "preview" => scan(),
@@ -1314,6 +1505,7 @@ fn main() {
             "restore_all" => restore_all(request),
             "toggle_system_startup" => toggle_system_startup(request),
             "set_service_start" => set_service_start(request),
+            "set_task_enabled" => set_task_enabled(request),
             other => Err(ToolError::unsupported(other)),
         },
     );
@@ -1530,8 +1722,7 @@ mod tests {
     }
 
     #[test]
-    fn full_digest_binds_service_start_types() {
-        let auto = vec![ServiceItem {
+    fn full_digest_binds_service_start_types() {        let auto = vec![ServiceItem {
             name: "VendorAgent".into(),
             display: "Vendor Agent".into(),
             start: 2,
@@ -1553,5 +1744,32 @@ mod tests {
     fn powershell_single_quotes_are_escaped() {
         assert_eq!(ps_quote(r"C:\Program Files\x.exe"), r"'C:\Program Files\x.exe'");
         assert_eq!(ps_quote("O'Brien"), "'O''Brien'");
+    }
+
+    #[test]
+    fn task_paths_must_be_absolute_and_well_formed() {
+        assert!(validate_task_path("\\Vendor\\Update").is_ok());
+        assert!(validate_task_path("\\SingleTask").is_ok());
+        assert!(validate_task_path("\\Folder With Space\\Task").is_ok());
+        assert!(validate_task_path("Vendor\\Update").is_err());
+        assert!(validate_task_path("\\Vendor\\\\Update").is_err());
+        assert!(validate_task_path("\\Vendor\\..\\Update").is_err());
+        assert!(validate_task_path("\\Vendor\\Update\\").is_err());
+        assert!(validate_task_path("\\Vendor\\\"Update").is_err());
+    }
+
+    #[test]
+    fn task_digest_binds_enabled_state() {
+        let enabled = vec![TaskItem {
+            path: "\\Vendor\\Update".into(),
+            name: "Update".into(),
+            state: "Ready".into(),
+        }];
+        let disabled = vec![TaskItem {
+            path: "\\Vendor\\Update".into(),
+            name: "Update".into(),
+            state: "Disabled".into(),
+        }];
+        assert_ne!(task_digest(&enabled), task_digest(&disabled));
     }
 }
