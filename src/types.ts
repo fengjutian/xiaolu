@@ -437,6 +437,16 @@ export interface ServiceItem {
   path: string;
 }
 
+export interface VolumeItem {
+  drive: string;
+  name: string;
+  media: string;
+  size: string;
+  free: string;
+  canOptimize: boolean;
+  canTrim: boolean;
+}
+
 export interface ScheduledTaskItem {
   path: string;
   name: string;
@@ -477,6 +487,7 @@ export interface ToolResult {
   processItems?: ProcessItem[];
   taskItems?: ScheduledTaskItem[];
   taskToken?: string;
+  volumeItems?: VolumeItem[];
   journalPath?: string;
   journalDir?: string;
   startupRegistryError?: string;

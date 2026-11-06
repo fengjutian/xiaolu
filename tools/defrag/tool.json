@@ -2,11 +2,11 @@
   "schemaVersion": 1,
   "id": "defrag",
   "name": "磁盘碎片整理",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "apiVersion": 1,
-  "description": "只读查看固定卷、物理磁盘介质与 TRIM 状态",
+  "description": "查看磁盘介质与 TRIM；HDD 优化、SSD TRIM 需管理员授权",
   "category": "optimize",
-  "risk": "read_only",
+  "risk": "system",
   "entry": "defrag.exe",
   "arguments": ["--stdio"],
   "permissions": {
@@ -16,8 +16,11 @@
     "network": false,
     "elevation": "none"
   },
-  "actions": [{ "id": "preview", "label": "预览", "write": false }],
-  "limits": { "timeoutMs": 60000, "maxOutputBytes": 1048576 },
+  "actions": [
+    { "id": "preview", "label": "预览", "write": false },
+    { "id": "optimize_disk", "label": "分析/优化/TRIM（需 UAC）", "write": true, "requiresConfirmation": true }
+  ],
+  "limits": { "timeoutMs": 3600000, "maxOutputBytes": 2097152 },
   "ui": { "kind": "table" },
   "rollback": "none",
   "hash": "",

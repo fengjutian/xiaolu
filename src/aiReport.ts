@@ -26,6 +26,17 @@ const feedbackLabel = (feedback?: string | null) =>
         ? "不准确"
         : "未反馈";
 
+const repairLabel = (toolId: string) =>
+  (
+    {
+      clean_master: "清理大师",
+      pc_optimizer: "电脑性能优化",
+      software_pm: "软件权限管理",
+      winopt_assistant: "Windows 优化助手",
+      driver_manager: "驱动管理",
+    } as Record<string, string>
+  )[toolId] ?? toolId;
+
 const findingLines = (finding: AiFinding, facts: Map<string, DiagnosticFact>) => {
   const lines: string[] = [];
   lines.push(`#### [${finding.severity}] ${finding.title}`);
@@ -86,6 +97,15 @@ export function buildAiSectionMarkdown(records: AiSessionRecord[]): string[] {
     if (answer.summary) lines.push(answer.summary, "");
     for (const finding of answer.findings) {
       lines.push(...findingLines(finding, noFacts));
+    }
+    if (answer.repairSuggestions && answer.repairSuggestions.length > 0) {
+      lines.push("#### 受控修复建议（仅预览）", "");
+      for (const suggestion of answer.repairSuggestions) {
+        lines.push(
+          `- ${repairLabel(suggestion.toolId)}（${suggestion.toolId}）：${suggestion.reason}；证据：${suggestion.evidenceRefs.join("、")}`,
+        );
+      }
+      lines.push("");
     }
     if (answer.checks && answer.checks.length > 0) {
       lines.push("#### 只读检查", "");
@@ -167,6 +187,15 @@ export function buildAiReportMarkdown(
     }
     for (const finding of answer.findings) {
       lines.push(...findingLines(finding, recordFacts));
+    }
+    if (answer.repairSuggestions && answer.repairSuggestions.length > 0) {
+      lines.push("### 受控修复建议（仅预览）", "");
+      for (const suggestion of answer.repairSuggestions) {
+        lines.push(
+          `- ${repairLabel(suggestion.toolId)}（${suggestion.toolId}）：${suggestion.reason}；证据：${suggestion.evidenceRefs.join("、")}`,
+        );
+      }
+      lines.push("");
     }
     if (answer.checks && answer.checks.length > 0) {
       lines.push("### 只读检查", "");
