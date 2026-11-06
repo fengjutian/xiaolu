@@ -70,7 +70,12 @@ if (Test-Path $helperProject) {
         New-Item -ItemType Directory -Force -Path $adblockDir | Out-Null
     }
     Copy-Item $helperBinary (Join-Path $adblockDir "lens_helper.exe") -Force
-    Write-Host "  -> lens_helper.exe (software_pm, ai_cooling, defrag, adblock_master)"
+    $bsodDir = Join-Path $outRoot "bsod_repair"
+    if (-not (Test-Path $bsodDir)) {
+        New-Item -ItemType Directory -Force -Path $bsodDir | Out-Null
+    }
+    Copy-Item $helperBinary (Join-Path $bsodDir "lens_helper.exe") -Force
+    Write-Host "  -> lens_helper.exe (software_pm, ai_cooling, defrag, adblock_master, bsod_repair)"
 }
 
 Write-Host "Tool packaging complete: $outRoot"
