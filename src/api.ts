@@ -1,5 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import type { BenchmarkPreflight, BenchmarkRecord, BenchmarkResult, CleanupPreview, DeviceDetails, DiagnosticReport, DirectoryListing, DriverAssessmentReport, DriverInventory, DriverUpdate, DuplicateScan, EventLogResult, EyeCareSettings, EyeCareStatus, HardwareDetails, LargeFileScan, NetworkDiagnosticReport, NotificationOutcome, NotificationSettings, ProcessInfo, NvmeHealthReport, ScheduledTaskInventory, SensorHistorySeries, SensorSettings, SensorSnapshot, SensorValue, SlimScan, SoftwareInventory, StartupItem, StorageDrive, StorageKind, StorageScan, SystemHistorySeries, SystemSnapshot, ToolDescriptor } from "./types";
+import type { BenchmarkPreflight, BenchmarkRecord, BenchmarkResult, CleanupPreview, DeviceDetails, DiagnosticReport, DirectoryListing, DriverAssessmentReport, DriverInventory, DriverUpdate, DuplicateScan, AppSettings, AppPaths, EventLogResult, EyeCareSettings, EyeCareStatus, HardwareDetails, LargeFileScan, NetworkDiagnosticReport, NotificationOutcome, NotificationSettings, ProcessInfo, NvmeHealthReport, ScheduledTaskInventory, SensorHistorySeries, SensorSettings, SensorSnapshot, SensorValue, SlimScan, SoftwareInventory, StartupItem, StorageDrive, StorageKind, StorageScan, SystemHistorySeries, SystemSnapshot, ToolDescriptor } from "./types";
 
 const gib = 1024 ** 3;
 
@@ -339,6 +339,34 @@ export async function scanStorage(kind: string): Promise<StorageScan> {
   return invoke<StorageScan>("scan_storage", { kind });
 }
 
+export async function getAppSettings(): Promise<AppSettings> {
+  if (!isTauri()) {
+    return { snapshotIntervalSeconds: 2, metricsRetentionDays: 7 };
+  }
+  return invoke<AppSettings>("get_app_settings");
+}
+
+export async function saveAppSettings(
+  settings: AppSettings,
+): Promise<AppSettings> {
+  if (!isTauri()) return settings;
+  return invoke<AppSettings>("save_app_settings", { settings });
+}
+
+export async function getAppPaths(): Promise<AppPaths> {
+  if (!isTauri()) {
+    return {
+      dataDir: "C:\\Users\\Demo\\AppData\\Roaming\\SystemLens",
+      configDir: "C:\\Users\\Demo\\AppData\\Roaming\\SystemLens",
+    };
+  }
+  return invoke<AppPaths>("get_app_paths");
+}
+
+export async function clearSystemHistory(): Promise<void> {
+  if (!isTauri()) return;
+  return invoke<void>("clear_system_history");
+}
 export async function getEyeCareSettings(): Promise<EyeCareSettings> {
   if (!isTauri()) {
     return {

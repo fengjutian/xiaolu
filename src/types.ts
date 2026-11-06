@@ -349,6 +349,15 @@ export interface EyeCareStatus {
   message: string;
 }
 
+export interface AppSettings {
+  snapshotIntervalSeconds: number;
+  metricsRetentionDays: number;
+}
+
+export interface AppPaths {
+  dataDir: string;
+  configDir: string;
+}
 export interface PowerSettingOption {
   id: string;
   label: string;

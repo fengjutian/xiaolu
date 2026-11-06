@@ -136,11 +136,12 @@ fn record_metrics(app: &tauri::AppHandle, snapshot: &SystemSnapshot) {
         disk_write_bytes_per_sec: snapshot.disks.iter().map(|disk| disk.written_bytes_per_sec).sum(),
     };
     // 指标入库失败不应影响实时视图。
+    let retention_days = crate::app_settings::load(app).metrics_retention_days;
     let _ = crate::system_history::record(
         &connection,
         snapshot.captured_at_unix_ms as i64,
         &input,
-        7,
+        retention_days,
     );
 }
 

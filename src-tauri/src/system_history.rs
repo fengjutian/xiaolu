@@ -2,6 +2,7 @@ use rusqlite::{params, Connection};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+use tauri::{AppHandle, Manager};
 
 #[derive(Debug, Clone)]
 pub struct SystemSampleInput {
@@ -165,6 +166,28 @@ pub fn query(connection: &Connection, hours: u32) -> Result<SystemHistorySeries,
         points,
         sample_count,
     })
+}
+
+
+pub fn clear_all(connection: &Connection) -> Result<(), String> {
+    connection
+        .execute("DELETE FROM system_samples", [])
+        .map(|_| ())
+        .map_err(|error| format!("清空指标历史失败：{error}"))
+}
+
+#[tauri::command]
+pub async fn clear_system_history(app: AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let directory = app
+            .path()
+            .app_data_dir()
+            .map_err(|error| format!("无法定位应用数据目录：{error}"))?;
+        let connection = open(&default_db_path(&directory))?;
+        clear_all(&connection)
+    })
+    .await
+    .map_err(|error| format!("清空历史任务失败：{error}"))?
 }
 
 #[cfg(test)]
