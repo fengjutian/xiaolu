@@ -60,7 +60,17 @@ if (Test-Path $helperProject) {
         New-Item -ItemType Directory -Force -Path $aiCoolingDir | Out-Null
     }
     Copy-Item $helperBinary (Join-Path $aiCoolingDir "lens_helper.exe") -Force
-    Write-Host "  -> lens_helper.exe (software_pm, ai_cooling)"
+    $defragDir = Join-Path $outRoot "defrag"
+    if (-not (Test-Path $defragDir)) {
+        New-Item -ItemType Directory -Force -Path $defragDir | Out-Null
+    }
+    Copy-Item $helperBinary (Join-Path $defragDir "lens_helper.exe") -Force
+    $adblockDir = Join-Path $outRoot "adblock_master"
+    if (-not (Test-Path $adblockDir)) {
+        New-Item -ItemType Directory -Force -Path $adblockDir | Out-Null
+    }
+    Copy-Item $helperBinary (Join-Path $adblockDir "lens_helper.exe") -Force
+    Write-Host "  -> lens_helper.exe (software_pm, ai_cooling, defrag, adblock_master)"
 }
 
 Write-Host "Tool packaging complete: $outRoot"

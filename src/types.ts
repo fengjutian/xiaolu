@@ -488,6 +488,8 @@ export interface ToolResult {
   taskItems?: ScheduledTaskItem[];
   taskToken?: string;
   volumeItems?: VolumeItem[];
+  hostsManagedDomains?: number;
+  hostsPath?: string;
   journalPath?: string;
   journalDir?: string;
   startupRegistryError?: string;

@@ -1,6 +1,6 @@
 import type { AiFinding, AiSessionRecord, DiagnosticFact, DiagnosticSnapshot } from "./types";
 
-const APP_VERSION = "0.56.0";
+const APP_VERSION = "0.57.0";
 
 const factMap = (snapshot?: DiagnosticSnapshot | null) => {
   const map = new Map<string, DiagnosticFact>();

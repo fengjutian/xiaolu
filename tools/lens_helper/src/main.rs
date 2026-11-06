@@ -13,6 +13,10 @@ const OP_SERVICE: &str = "service_set_start";
 const OP_SENSOR: &str = "sensor_read";
 const OP_TASK: &str = "task_set_enabled";
 const OP_DEFRAG: &str = "defrag_volume";
+const OP_HOSTS_APPLY: &str = "hosts_apply";
+const OP_HOSTS_RESTORE: &str = "hosts_restore";
+const HOSTS_BEGIN: &str = "# BEGIN SystemLens AdBlock";
+const HOSTS_END: &str = "# END SystemLens AdBlock";
 const SERVICE_PATH: &str = "SYSTEM\\CurrentControlSet\\Services";
 const START_TYPES: [u32; 3] = [2, 3, 4];
 
@@ -326,6 +330,8 @@ fn run(request: &Value) -> Result<Outcome, String> {
         OP_SENSOR => read_sensors(),
         OP_TASK => run_task(request).map(Outcome::message),
         OP_DEFRAG => run_defrag(request),
+        OP_HOSTS_APPLY => run_hosts_apply(request),
+        OP_HOSTS_RESTORE => run_hosts_restore(),
         _ => Err(format!("不支持的操作：{op}")),
     }
 }
@@ -470,7 +476,150 @@ fn run_defrag(request: &Value) -> Result<Outcome, String> {
     })
 }
 
-fn read_sensors() -> Result<Outcome, String> {    let script = r#"
+fn hosts_path() -> PathBuf {
+    std::env::var_os("WINDIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("C:\\Windows"))
+        .join("System32")
+        .join("drivers")
+        .join("etc")
+        .join("hosts")
+}
+
+fn valid_domain(domain: &str) -> bool {
+    let domain = domain.trim();
+    !domain.is_empty()
+        && domain.len() <= 253
+        && domain.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && label
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric() || character == '-')
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+        })
+}
+
+fn strip_managed_block(text: &str) -> (String, usize) {
+    let mut output = String::new();
+    let mut inside = false;
+    let mut removed = 0usize;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed == HOSTS_BEGIN {
+            inside = true;
+            continue;
+        }
+        if trimmed == HOSTS_END {
+            inside = false;
+            continue;
+        }
+        if inside {
+            removed += 1;
+            continue;
+        }
+        output.push_str(line);
+        output.push_str("\r\n");
+    }
+    (output, removed)
+}
+
+fn flush_dns() {
+    let _ = Command::new("ipconfig.exe")
+        .creation_flags(CREATE_NO_WINDOW)
+        .arg("/flushdns")
+        .status();
+}
+
+fn backup_hosts(original: &str) -> Result<(), String> {
+    let Some(local) = std::env::var_os("LOCALAPPDATA").map(PathBuf::from) else {
+        return Ok(());
+    };
+    let dir = local.join("SystemLens").join("adblock");
+    std::fs::create_dir_all(&dir).map_err(|error| format!("无法创建备份目录：{error}"))?;
+    let backup = dir.join("hosts.backup");
+    if !backup.exists() {
+        std::fs::write(&backup, original)
+            .map_err(|error| format!("无法写入 hosts 备份：{error}"))?;
+    }
+    Ok(())
+}
+
+fn run_hosts_apply(request: &Value) -> Result<Outcome, String> {
+    let domains = request
+        .get("domains")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "缺少 domains。".to_string())?;
+    let mut normalized = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for domain in domains {
+        let domain = domain
+            .as_str()
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase();
+        if !valid_domain(&domain) {
+            return Err(format!("域名格式无效：{domain}"));
+        }
+        if seen.insert(domain.clone()) {
+            normalized.push(domain);
+        }
+    }
+    if normalized.is_empty() {
+        return Err("至少需要一个域名。".into());
+    }
+    if normalized.len() > 500 {
+        return Err("单次最多写入 500 个域名。".into());
+    }
+
+    let path = hosts_path();
+    let original =
+        std::fs::read_to_string(&path).map_err(|error| format!("无法读取 hosts：{error}"))?;
+    backup_hosts(&original)?;
+    let (mut content, _) = strip_managed_block(&original);
+    if !content.is_empty() && !content.ends_with("\r\n") {
+        content.push_str("\r\n");
+    }
+    content.push_str(HOSTS_BEGIN);
+    content.push_str("\r\n");
+    for domain in &normalized {
+        content.push_str(&format!("0.0.0.0 {domain}\r\n"));
+    }
+    content.push_str(HOSTS_END);
+    content.push_str("\r\n");
+    std::fs::write(&path, content).map_err(|error| format!("无法写入 hosts：{error}"))?;
+    flush_dns();
+    Ok(Outcome {
+        message: "Hosts 规则已写入".into(),
+        data: Some(json!({
+            "domains": normalized.len(),
+            "path": path.to_string_lossy(),
+        })),
+    })
+}
+
+fn run_hosts_restore() -> Result<Outcome, String> {
+    let path = hosts_path();
+    let original =
+        std::fs::read_to_string(&path).map_err(|error| format!("无法读取 hosts：{error}"))?;
+    let (content, removed) = strip_managed_block(&original);
+    if removed == 0 {
+        return Ok(Outcome {
+            message: "没有需要移除的 SystemLens 规则".into(),
+            data: Some(json!({"removed": 0})),
+        });
+    }
+    std::fs::write(&path, content).map_err(|error| format!("无法写入 hosts：{error}"))?;
+    flush_dns();
+    Ok(Outcome {
+        message: "Hosts 规则已移除".into(),
+        data: Some(json!({"removed": removed})),
+    })
+}
+
+fn read_sensors() -> Result<Outcome, String> {
+    let script = r#"
 [Console]::OutputEncoding=[Text.Encoding]::UTF8
 $zones=@()
 try { Get-CimInstance -Namespace root/wmi -ClassName MSAcpi_ThermalZoneTemperature -ErrorAction Stop | ForEach-Object {
@@ -614,5 +763,26 @@ mod tests {
         assert!(valid_defrag_mode("optimize"));
         assert!(valid_defrag_mode("trim"));
         assert!(!valid_defrag_mode("delete"));
+    }
+
+    #[test]
+    fn domains_are_validated() {
+        assert!(valid_domain("ads.example.com"));
+        assert!(valid_domain("example.com"));
+        assert!(!valid_domain(""));
+        assert!(!valid_domain("-bad.com"));
+        assert!(!valid_domain("bad-.com"));
+        assert!(!valid_domain("bad..com"));
+        assert!(!valid_domain("bad domain.com"));
+    }
+
+    #[test]
+    fn strips_only_managed_hosts_block() {
+        let text = "127.0.0.1 localhost\r\n# BEGIN SystemLens AdBlock\r\n0.0.0.0 ads.com\r\n# END SystemLens AdBlock\r\n1.1.1.1 foo.com\r\n";
+        let (output, removed) = strip_managed_block(text);
+        assert_eq!(removed, 1);
+        assert!(output.contains("localhost"));
+        assert!(output.contains("foo.com"));
+        assert!(!output.contains("ads.com"));
     }
 }

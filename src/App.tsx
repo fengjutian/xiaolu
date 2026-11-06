@@ -4770,6 +4770,7 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
   const [dupKeep, setDupKeep] = useState<Record<string, string>>({});
   const [privacyDraft, setPrivacyDraft] = useState<Record<string, string>>({});
   const [procPriority, setProcPriority] = useState<Record<string, string>>({});
+  const [adblockDomains, setAdblockDomains] = useState("");
 
   const updatePrivacyValue = (id: string, value: string | null) => {
     if (value == null) return;
@@ -5053,6 +5054,64 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
         enable: !item.enabled,
       });
       setGenericSuccess(`${label}完成，正在刷新…`);
+      await runGeneric(tool);
+    } catch (reason) {
+      setApplyError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setApplying(null);
+    }
+  };
+
+  const applyAdblockHosts = async (tool: ToolDescriptor) => {
+    const token = generic?.data.confirmationToken;
+    if (!token) {
+      setApplyError("确认令牌缺失或已使用，请重新审计。");
+      return;
+    }
+    const domains = adblockDomains
+      .split(/\r?\n/)
+      .map((value) => value.trim())
+      .filter(Boolean);
+    if (domains.length === 0) {
+      setApplyError("请输入至少一个域名。");
+      return;
+    }
+    if (
+      !window.confirm(
+        `确认写入 ${domains.length} 条 Hosts 规则？将弹出管理员授权（UAC）。`,
+      )
+    )
+      return;
+    setApplying(`${tool.id}:apply_hosts`);
+    setApplyError(null);
+    try {
+      await runToolAction(tool.id, "apply_hosts", token, { domains });
+      setGenericSuccess("Hosts 规则已写入，正在刷新…");
+      await runGeneric(tool);
+    } catch (reason) {
+      setApplyError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setApplying(null);
+    }
+  };
+
+  const restoreAdblockHosts = async (tool: ToolDescriptor) => {
+    const token = generic?.data.confirmationToken;
+    if (!token) {
+      setApplyError("确认令牌缺失或已使用，请重新审计。");
+      return;
+    }
+    if (
+      !window.confirm(
+        "确认移除 SystemLens 管理的 Hosts 规则？将弹出管理员授权（UAC）。",
+      )
+    )
+      return;
+    setApplying(`${tool.id}:restore_hosts`);
+    setApplyError(null);
+    try {
+      await runToolAction(tool.id, "restore_hosts", token, {});
+      setGenericSuccess("SystemLens 规则已移除，正在刷新…");
       await runGeneric(tool);
     } catch (reason) {
       setApplyError(reason instanceof Error ? reason.message : String(reason));
@@ -7249,7 +7308,7 @@ export default function App() {
           </Text>
         </Paper>
         <Text size="xs" c="dimmed">
-          v0.56.0 · 25 个工具 · AI 解读
+          v0.57.0 · 25 个工具 · AI 解读
         </Text>
       </aside>
       <main className="content">

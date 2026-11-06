@@ -2,24 +2,28 @@
   "schemaVersion": 1,
   "id": "adblock_master",
   "name": "广告拦截",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "apiVersion": 1,
-  "description": "只读审计 Hosts、DNS、浏览器扩展与防火墙状态（不安装过滤驱动）",
+  "description": "审计 Hosts/DNS/扩展/防火墙，并可经 UAC 写入或移除 SystemLens 管理的 Hosts 规则",
   "category": "工具箱",
-  "risk": "read_only",
+  "risk": "write",
   "entry": "adblock_master.exe",
   "arguments": ["--stdio"],
   "permissions": {
     "readPaths": ["%WINDIR%\\System32\\drivers\\etc\\hosts"],
-    "writePaths": [],
+    "writePaths": ["%WINDIR%\\System32\\drivers\\etc\\hosts"],
     "registry": [],
     "network": false,
     "elevation": "none"
   },
-  "actions": [{ "id": "preview", "label": "审计", "write": false }],
-  "limits": { "timeoutMs": 60000, "maxOutputBytes": 1048576 },
+  "actions": [
+    { "id": "preview", "label": "审计", "write": false },
+    { "id": "apply_hosts", "label": "写入 Hosts（需 UAC）", "write": true, "requiresConfirmation": true },
+    { "id": "restore_hosts", "label": "移除 SystemLens 规则（需 UAC）", "write": true, "requiresConfirmation": true }
+  ],
+  "limits": { "timeoutMs": 180000, "maxOutputBytes": 1048576 },
   "ui": { "kind": "table" },
-  "rollback": "none",
+  "rollback": "custom",
   "hash": "",
   "signature": null
 }

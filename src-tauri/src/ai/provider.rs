@@ -267,7 +267,7 @@ impl AiProvider for OpenAiCompatible {
             let timeout = Duration::from_secs(u64::from(request.timeout_seconds.max(10)));
             let client = reqwest::Client::builder()
                 .timeout(timeout)
-                .user_agent("SystemLens/0.56 (local diagnostic assistant)")
+                .user_agent("SystemLens/0.57 (local diagnostic assistant)")
                 .build()
                 .map_err(|error| format!("无法初始化网络客户端：{error}"))?;
             let messages: Vec<Value> = request.messages.iter().map(message_value).collect();
