@@ -265,6 +265,7 @@ dist-tools/
 | `lockscreen` | `lock` | 无状态变更，解锁即恢复 |
 | `pc_optimizer` | `apply`（切换电源计划）、`apply_settings`（逐项电源设置） | 日志记录原计划 GUID 或每项原值，重新预览后可切回/改回 |
 | `clean_master` | `apply`（勾选固定白名单位置） | 回收站（`FOF_ALLOWUNDO`），可还原到原位置；日志记录每个位置结果 |
+| `software_pm` | `toggle_startup`（当前用户 Run/RunOnce） | 停用项暂存 `HKCU\Software\SystemLens\DisabledStartup`，可一键还原 |
 
 ### 尚未实现
 

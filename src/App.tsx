@@ -5015,7 +5015,7 @@ export default function App() {
           </Text>
         </Paper>
         <Text size="xs" c="dimmed">
-          v0.38.0 · 18 个工具 · 逐项电源设置
+          v0.39.0 · 18 个工具 · 启动项启停
         </Text>
       </aside>
       <main className="content">
