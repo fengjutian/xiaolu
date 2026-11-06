@@ -10,6 +10,18 @@ const MAX_FILES: usize = 250_000;
 const MIN_DUPLICATE_BYTES: u64 = 1024 * 1024;
 const MAX_HASH_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 
+/// 盘符级扫描默认跳过的系统目录（只作用于盘根一级）。
+const DRIVE_EXCLUSIONS: [&str; 6] = [
+    "Windows",
+    "$Recycle.Bin",
+    "System Volume Information",
+    "Recovery",
+    "PerfLogs",
+    "Config.Msi",
+];
+/// 盘根下由系统托管的大文件，统计时跳过以避免误导。
+const DRIVE_EXCLUDED_FILES: [&str; 3] = ["pagefile.sys", "hiberfil.sys", "swapfile.sys"];
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FileCategory {
@@ -95,14 +107,82 @@ pub struct DuplicateScan {
     truncated: bool,
 }
 
-fn target(kind: &str) -> Result<(&'static str, PathBuf), String> {
-    let profile = std::env::var_os("USERPROFILE").map(PathBuf::from).ok_or_else(|| "无法定位用户目录".to_string())?;
-    match kind {
-        "downloads" => Ok(("下载", profile.join("Downloads"))),
-        "documents" => Ok(("文档", profile.join("Documents"))),
-        "desktop" => Ok(("桌面", profile.join("Desktop"))),
-        _ => Err("不支持的扫描目录".into()),
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StorageDrive {
+    letter: String,
+    label: String,
+    mount_point: String,
+    file_system: String,
+    total_bytes: u64,
+    free_bytes: u64,
+    removable: bool,
+}
+
+/// 一次扫描的作用域：用户目录或某个盘符，并携带该作用域的排除规则。
+struct Scope {
+    kind: String,
+    label: String,
+    root: PathBuf,
+    exclusions: Vec<String>,
+}
+
+fn scope(kind: &str) -> Result<Scope, String> {
+    if let Some(letter) = kind.strip_prefix("drive:") {
+        let letter = letter.trim();
+        let bytes = letter.as_bytes();
+        if bytes.len() != 1 || !bytes[0].is_ascii_alphabetic() {
+            return Err("不支持的盘符：只接受单个字母（如 C）".into());
+        }
+        let upper = letter.to_ascii_uppercase();
+        let root = PathBuf::from(format!("{upper}:\\"));
+        if !root.is_dir() {
+            return Err(format!("盘符 {upper}: 不存在或未就绪"));
+        }
+        let mut exclusions = DRIVE_EXCLUSIONS
+            .iter()
+            .map(|name| (*name).to_string())
+            .collect::<Vec<_>>();
+        exclusions.extend(DRIVE_EXCLUDED_FILES.iter().map(|name| (*name).to_string()));
+        return Ok(Scope {
+            kind: kind.to_string(),
+            label: format!("{upper} 盘"),
+            root,
+            exclusions,
+        });
     }
+    let profile = std::env::var_os("USERPROFILE")
+        .map(PathBuf::from)
+        .ok_or_else(|| "无法定位用户目录".to_string())?;
+    let (label, root) = match kind {
+        "downloads" => ("下载", profile.join("Downloads")),
+        "documents" => ("文档", profile.join("Documents")),
+        "desktop" => ("桌面", profile.join("Desktop")),
+        _ => return Err("不支持的扫描目录".into()),
+    };
+    Ok(Scope {
+        kind: kind.to_string(),
+        label: label.to_string(),
+        root,
+        exclusions: Vec::new(),
+    })
+}
+
+fn is_excluded(name: &std::ffi::OsStr, exclusions: &[String]) -> bool {
+    if exclusions.is_empty() {
+        return false;
+    }
+    let name = name.to_string_lossy();
+    exclusions
+        .iter()
+        .any(|candidate| candidate.eq_ignore_ascii_case(&name))
+}
+
+fn walk_root(root: &Path, exclusions: &[String]) -> impl Iterator<Item = walkdir::Result<walkdir::DirEntry>> {
+    WalkDir::new(root)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(move |entry| entry.depth() != 1 || !is_excluded(entry.file_name(), exclusions))
 }
 
 fn category(path: &Path) -> String {
@@ -110,15 +190,19 @@ fn category(path: &Path) -> String {
 }
 
 fn scan(kind: &str) -> Result<StorageScan, String> {
-    let (label, path) = target(kind)?;
-    if !path.is_dir() { return Err(format!("{}目录不存在：{}", label, path.display())); }
+    if kind.starts_with("drive:") {
+        return Err("盘符总览请使用目录分析或大文件扫描".into());
+    }
+    let scope = scope(kind)?;
+    let path = scope.root.clone();
+    if !path.is_dir() { return Err(format!("{}目录不存在：{}", scope.label, path.display())); }
     let mut file_count = 0usize;
     let mut directory_count = 0usize;
     let mut total_bytes = 0u64;
     let mut error_count = 0usize;
     let mut totals: HashMap<String, (usize, u64)> = HashMap::new();
     let mut truncated = false;
-    for entry in WalkDir::new(&path).follow_links(false).into_iter() {
+    for entry in walk_root(&path, &scope.exclusions) {
         let entry = match entry { Ok(value) => value, Err(_) => { error_count += 1; continue; } };
         if entry.file_type().is_dir() { directory_count += 1; continue; }
         if !entry.file_type().is_file() { continue; }
@@ -135,7 +219,7 @@ fn scan(kind: &str) -> Result<StorageScan, String> {
     let mut categories: Vec<_> = totals.into_iter().map(|(extension, (file_count, total_bytes))| FileCategory { extension, file_count, total_bytes }).collect();
     categories.sort_by(|a, b| b.total_bytes.cmp(&a.total_bytes));
     categories.truncate(30);
-    Ok(StorageScan { kind: kind.into(), label: label.into(), path: path.to_string_lossy().into_owned(), file_count: file_count.min(MAX_FILES), directory_count, total_bytes, error_count, truncated, categories })
+    Ok(StorageScan { kind: kind.into(), label: scope.label, path: path.to_string_lossy().into_owned(), file_count: file_count.min(MAX_FILES), directory_count, total_bytes, error_count, truncated, categories })
 }
 
 fn modified_unix_ms(metadata: &Metadata) -> Option<u64> {
@@ -167,6 +251,7 @@ fn scan_large_files_in(
     label: &str,
     min_bytes: u64,
     limit: usize,
+    exclusions: &[String],
 ) -> Result<LargeFileScan, String> {
     if !root.is_dir() {
         return Err(format!("{label}目录不存在：{}", root.display()));
@@ -178,7 +263,7 @@ fn scan_large_files_in(
     let mut error_count = 0usize;
     let mut truncated = false;
 
-    for entry in WalkDir::new(root).follow_links(false).into_iter() {
+    for entry in walk_root(root, exclusions) {
         let entry = match entry {
             Ok(value) => value,
             Err(_) => {
@@ -278,6 +363,7 @@ fn scan_duplicates_in(
     kind: &str,
     label: &str,
     limit: usize,
+    exclusions: &[String],
 ) -> Result<DuplicateScan, String> {
     if !root.is_dir() {
         return Err(format!("{label}目录不存在：{}", root.display()));
@@ -287,7 +373,7 @@ fn scan_duplicates_in(
     let mut file_count = 0usize;
     let mut truncated = false;
 
-    for entry in WalkDir::new(root).follow_links(false).into_iter() {
+    for entry in walk_root(root, exclusions) {
         let entry = match entry {
             Ok(value) => value,
             Err(_) => {
@@ -437,6 +523,7 @@ pub struct DirectoryListing {
     total_files: usize,
     error_count: usize,
     truncated: bool,
+    exclusions: Vec<String>,
 }
 
 fn resolve_within(root: &Path, relative: &str) -> Result<PathBuf, String> {
@@ -500,6 +587,7 @@ fn listing_in(
     label: &str,
     relative: &str,
     limit: usize,
+    exclusions: &[String],
 ) -> Result<DirectoryListing, String> {
     if !root.is_dir() {
         return Err(format!("{label}目录不存在：{}", root.display()));
@@ -539,6 +627,9 @@ fn listing_in(
                 continue;
             }
         };
+        if relative_path.is_empty() && is_excluded(&entry.file_name(), exclusions) {
+            continue;
+        }
         let child_relative = path
             .strip_prefix(&canonical_root)
             .unwrap_or(&path)
@@ -605,6 +696,11 @@ fn listing_in(
         total_files,
         error_count,
         truncated,
+        exclusions: if relative_path.is_empty() {
+            exclusions.to_vec()
+        } else {
+            Vec::new()
+        },
     })
 }
 
