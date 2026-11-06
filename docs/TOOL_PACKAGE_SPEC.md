@@ -264,10 +264,11 @@ dist-tools/
 |---|---|---|
 | `lockscreen` | `lock` | 无状态变更，解锁即恢复 |
 | `pc_optimizer` | `apply`（切换电源计划） | 日志记录原计划 GUID，重新预览后切回 |
+| `clean_master` | `apply`（勾选固定白名单位置） | 回收站（`FOF_ALLOWUNDO`），可还原到原位置；日志记录每个位置结果 |
 
 ### 尚未实现
 
-- 缓存/回收站清理：需要回收站回滚、占用检测与路径白名单。
 - 逐项电源设置、启动项修改：需要逐项原值记录与恢复点。
 - 清单哈希校验（`hash` 字段）与 Authenticode 签名。
 - `confirmationToken` 的前端过期提示；当前由工具在过期后返回 `TOKEN_EXPIRED`。
+- 清理工具的“隔离区/恢复点”第二道保险；当前依赖 Windows 回收站。

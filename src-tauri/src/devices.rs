@@ -101,30 +101,28 @@ try {
 } catch { $errors += ('音频设备查询失败：' + $_.Exception.Message) }
 
 $usb=@()
+$bluetooth=@()
+$cameras=@()
+$pnp=@()
 try {
-  Get-CimInstance Win32_PnPEntity -ErrorAction Stop | Where-Object { $_.PNPClass -eq 'USB' -and -not [string]::IsNullOrWhiteSpace($_.Name) } | ForEach-Object {
-    $id=[string]$_.DeviceID; $vid=''; $pid=''
+  $pnp=@(Get-CimInstance Win32_PnPEntity -ErrorAction Stop | Where-Object { -not [string]::IsNullOrWhiteSpace($_.Name) })
+} catch { $errors += ('即插即用设备查询失败：' + $_.Exception.Message) }
+
+foreach($device in $pnp){
+  $class=[string]$device.PNPClass
+  if($class -eq 'USB'){
+    $id=[string]$device.DeviceID; $vid=''; $pid=''
     if($id -match 'VID_([0-9A-Fa-f]{4})'){ $vid=$Matches[1].ToUpper() }
     if($id -match 'PID_([0-9A-Fa-f]{4})'){ $pid=$Matches[1].ToUpper() }
-    $usb += @{name=[string]$_.Name; manufacturer=[string]$_.Manufacturer; status=[string]$_.Status; vid=$vid; pid=$pid}
-  }
-} catch { $errors += ('USB 设备查询失败：' + $_.Exception.Message) }
-
-$bluetooth=@()
-try {
-  Get-CimInstance Win32_PnPEntity -ErrorAction Stop | Where-Object { $_.PNPClass -eq 'Bluetooth' -and -not [string]::IsNullOrWhiteSpace($_.Name) } | ForEach-Object {
-    $id=[string]$_.DeviceID
+    $usb += @{name=[string]$device.Name; manufacturer=[string]$device.Manufacturer; status=[string]$device.Status; vid=$vid; pid=$pid}
+  } elseif($class -eq 'Bluetooth'){
+    $id=[string]$device.DeviceID
     $kind=if($id -like 'BTHENUM*' -or $id -like 'BTHLE*'){ '已配对/近场设备' } elseif($id -like 'BTH*'){ '适配器' } else { '蓝牙设备' }
-    $bluetooth += @{name=[string]$_.Name; manufacturer=[string]$_.Manufacturer; status=[string]$_.Status; kind=$kind}
+    $bluetooth += @{name=[string]$device.Name; manufacturer=[string]$device.Manufacturer; status=[string]$device.Status; kind=$kind}
+  } elseif($class -eq 'Camera' -or $class -eq 'Image'){
+    $cameras += @{name=[string]$device.Name; manufacturer=[string]$device.Manufacturer; status=[string]$device.Status; pnpClass=$class}
   }
-} catch { $errors += ('蓝牙设备查询失败：' + $_.Exception.Message) }
-
-$cameras=@()
-try {
-  Get-CimInstance Win32_PnPEntity -ErrorAction Stop | Where-Object { ($_.PNPClass -eq 'Camera' -or $_.PNPClass -eq 'Image') -and -not [string]::IsNullOrWhiteSpace($_.Name) } | ForEach-Object {
-    $cameras += @{name=[string]$_.Name; manufacturer=[string]$_.Manufacturer; status=[string]$_.Status; pnpClass=[string]$_.PNPClass}
-  }
-} catch { $errors += ('摄像头查询失败：' + $_.Exception.Message) }
+}
 
 @{monitors=@($monitors);audio=@($audio);usb=@($usb);bluetooth=@($bluetooth);cameras=@($cameras);errors=@($errors)} | ConvertTo-Json -Depth 5 -Compress
 "#
@@ -378,5 +376,18 @@ mod tests {
         }));
         assert_eq!(details.monitors[0].name, "通用显示器");
         assert_eq!(details.bluetooth[0].kind, "蓝牙设备");
+    }
+
+    #[test]
+    #[ignore = "依赖真实 WMI 环境"]
+    fn collects_real_devices() {
+        let details = collect().expect("collect device details");
+        assert!(
+            !details.audio.is_empty()
+                || !details.usb.is_empty()
+                || !details.cameras.is_empty()
+                || !details.monitors.is_empty(),
+            "expected at least one device group from real WMI"
+        );
     }
 }

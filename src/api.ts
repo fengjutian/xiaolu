@@ -1,7 +1,19 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import type { BenchmarkPreflight, BenchmarkRecord, BenchmarkResult, CleanupPreview, DiagnosticReport, DirectoryListing, DriverAssessmentReport, DriverInventory, DriverUpdate, DuplicateScan, EventLogResult, HardwareDetails, LargeFileScan, NetworkDiagnosticReport, NvmeHealthReport, ScheduledTaskInventory, SensorHistorySeries, SensorSettings, SensorSnapshot, SensorValue, SlimScan, SoftwareInventory, StartupItem, StorageKind, StorageScan, SystemHistorySeries, SystemSnapshot, ToolDescriptor } from "./types";
+import type { BenchmarkPreflight, BenchmarkRecord, BenchmarkResult, CleanupPreview, DeviceDetails, DiagnosticReport, DirectoryListing, DriverAssessmentReport, DriverInventory, DriverUpdate, DuplicateScan, EventLogResult, HardwareDetails, LargeFileScan, NetworkDiagnosticReport, NotificationOutcome, NotificationSettings, NvmeHealthReport, ScheduledTaskInventory, SensorHistorySeries, SensorSettings, SensorSnapshot, SensorValue, SlimScan, SoftwareInventory, StartupItem, StorageDrive, StorageKind, StorageScan, SystemHistorySeries, SystemSnapshot, ToolDescriptor } from "./types";
 
 const gib = 1024 ** 3;
+
+const storageLabel = (kind: string): string => {
+  if (kind.startsWith("drive:")) {
+    return `${kind.slice("drive:".length).toUpperCase()} 盘`;
+  }
+  return (
+    { downloads: "下载", documents: "文档", desktop: "桌面" } as Record<
+      string,
+      string
+    >
+  )[kind] ?? kind;
+};
 
 function mockSnapshot(): SystemSnapshot {
   return {
@@ -317,16 +329,86 @@ export async function getSoftwareInventory(): Promise<SoftwareInventory> {
   return invoke<SoftwareInventory>("get_software_inventory");
 }
 
-export async function scanStorage(kind: StorageScan["kind"]): Promise<StorageScan> {
-  if (!isTauri()) return { kind, label: { downloads: "下载", documents: "文档", desktop: "桌面" }[kind], path: `C:\\Users\\Demo\\${kind}`, fileCount: 1280, directoryCount: 94, totalBytes: 12.4 * gib, errorCount: 0, truncated: false, categories: [{ extension: ".zip", fileCount: 18, totalBytes: 4.2 * gib }, { extension: ".mp4", fileCount: 12, totalBytes: 3.8 * gib }, { extension: ".exe", fileCount: 21, totalBytes: 2.1 * gib }] };
+export async function scanStorage(kind: string): Promise<StorageScan> {
+  if (!isTauri()) return { kind, label: storageLabel(kind), path: `C:\\Users\\Demo\\${kind}`, fileCount: 1280, directoryCount: 94, totalBytes: 12.4 * gib, errorCount: 0, truncated: false, categories: [{ extension: ".zip", fileCount: 18, totalBytes: 4.2 * gib }, { extension: ".mp4", fileCount: 12, totalBytes: 3.8 * gib }, { extension: ".exe", fileCount: 21, totalBytes: 2.1 * gib }] };
   return invoke<StorageScan>("scan_storage", { kind });
+}
+
+export async function getStorageDrives(): Promise<StorageDrive[]> {
+  if (!isTauri()) {
+    return [
+      { letter: "C", label: "系统盘", mountPoint: "C:\\", fileSystem: "NTFS", totalBytes: 512 * gib, freeBytes: 120 * gib, removable: false },
+      { letter: "D", label: "数据盘", mountPoint: "D:\\", fileSystem: "NTFS", totalBytes: 1024 * gib, freeBytes: 640 * gib, removable: false },
+    ];
+  }
+  return invoke<StorageDrive[]>("get_storage_drives");
+}
+
+export async function getDeviceDetails(): Promise<DeviceDetails> {
+  if (!isTauri()) {
+    return {
+      capturedAtUnixMs: Date.now(),
+      monitors: [{ name: "DELL U2723QE", manufacturer: "DEL", product: "U2723QE", serial: "DEMO1234", year: 2023 }],
+      audio: [
+        { name: "扬声器 (Realtek(R) Audio)", manufacturer: "Realtek", status: "OK" },
+        { name: "麦克风阵列 (Intel Smart Sound)", manufacturer: "Intel", status: "OK" },
+      ],
+      usb: [
+        { name: "USB Composite Device", manufacturer: "(标准 USB 主机控制器)", status: "OK", vid: "046D", pid: "C52B" },
+        { name: "USB 大容量存储设备", manufacturer: "Generic", status: "OK", vid: "0781", pid: "5581" },
+      ],
+      bluetooth: [
+        { name: "Intel(R) Wireless Bluetooth(R)", manufacturer: "Intel", status: "OK", kind: "适配器" },
+        { name: "WH-1000XM5", manufacturer: "Sony", status: "OK", kind: "已配对/近场设备" },
+      ],
+      cameras: [
+        { name: "Integrated Camera", manufacturer: "SunplusIT", status: "OK", pnpClass: "Camera" },
+      ],
+      unavailable: [],
+      source: "浏览器演示",
+    };
+  }
+  return invoke<DeviceDetails>("get_device_details");
+}
+
+export async function getNotificationSettings(): Promise<NotificationSettings> {
+  if (!isTauri()) {
+    return { enabled: true, cooldownMinutes: 10, quietStartHour: 23, quietEndHour: 8 };
+  }
+  return invoke<NotificationSettings>("get_notification_settings");
+}
+
+export async function saveNotificationSettings(
+  settings: NotificationSettings,
+): Promise<NotificationSettings> {
+  if (!isTauri()) return settings;
+  return invoke<NotificationSettings>("save_notification_settings", { settings });
+}
+
+export async function notifySensorAlert(payload: {
+  alertId: string;
+  level: string;
+  title: string;
+  message: string;
+}): Promise<NotificationOutcome> {
+  if (!isTauri()) {
+    return { status: "disabled", message: "浏览器演示不发送系统通知。" };
+  }
+  return invoke<NotificationOutcome>("notify_sensor_alert", payload);
+}
+
+export async function sendTestNotification(): Promise<NotificationOutcome> {
+  if (!isTauri()) {
+    return { status: "disabled", message: "浏览器演示不发送系统通知。" };
+  }
+  return invoke<NotificationOutcome>("send_test_notification");
 }
 
 export async function scanLargeFiles(kind: StorageKind, minBytes: number, limit = 50): Promise<LargeFileScan> {
   if (!isTauri()) {
     return {
       kind,
-      label: { downloads: "下载", documents: "文档", desktop: "桌面" }[kind],
+      label: storageLabel(kind),
       root: `C:\\Users\\Demo\\${kind}`,
       minBytes,
       files: [
@@ -350,7 +432,7 @@ export async function scanLargeFiles(kind: StorageKind, minBytes: number, limit 
 export async function scanDuplicates(kind: StorageKind, limit = 50): Promise<DuplicateScan> {  if (!isTauri()) {
     return {
       kind,
-      label: { downloads: "下载", documents: "文档", desktop: "桌面" }[kind],
+      label: storageLabel(kind),
       root: `C:\\Users\\Demo\\${kind}`,
       groups: [
         {
@@ -392,7 +474,7 @@ export async function scanDirectory(
     const totalFiles = children.reduce((sum, item) => sum + item.fileCount, 0);
     return {
       kind,
-      label: { downloads: "下载", documents: "文档", desktop: "桌面" }[kind],
+      label: storageLabel(kind),
       root: `C:\\Users\\Demo\\${kind}`,
       relativePath: relative,
       path: relative ? `C:\\Users\\Demo\\${kind}\\${relative}` : `C:\\Users\\Demo\\${kind}`,

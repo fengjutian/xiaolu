@@ -445,7 +445,7 @@ export interface SoftwareInventory {
 }
 
 export interface StorageScan {
-  kind: "downloads" | "documents" | "desktop";
+  kind: string;
   label: string;
   path: string;
   fileCount: number;
@@ -456,7 +456,7 @@ export interface StorageScan {
   categories: Array<{ extension: string; fileCount: number; totalBytes: number }>;
 }
 
-export type StorageKind = StorageScan["kind"];
+export type StorageKind = string;
 
 export interface LargeFileEntry {
   path: string;
@@ -530,6 +530,76 @@ export interface DirectoryListing {
   totalFiles: number;
   errorCount: number;
   truncated: boolean;
+  exclusions?: string[];
+}
+
+export interface StorageDrive {
+  letter: string;
+  label: string;
+  mountPoint: string;
+  fileSystem: string;
+  totalBytes: number;
+  freeBytes: number;
+  removable: boolean;
+}
+
+export interface MonitorInfo {
+  name: string;
+  manufacturer: string;
+  product: string;
+  serial: string;
+  year: number;
+}
+
+export interface AudioDevice {
+  name: string;
+  manufacturer: string;
+  status: string;
+}
+
+export interface UsbDevice {
+  name: string;
+  manufacturer: string;
+  status: string;
+  vid: string;
+  pid: string;
+}
+
+export interface BluetoothDevice {
+  name: string;
+  manufacturer: string;
+  status: string;
+  kind: string;
+}
+
+export interface CameraDevice {
+  name: string;
+  manufacturer: string;
+  status: string;
+  pnpClass: string;
+}
+
+export interface DeviceDetails {
+  capturedAtUnixMs: number;
+  monitors: MonitorInfo[];
+  audio: AudioDevice[];
+  usb: UsbDevice[];
+  bluetooth: BluetoothDevice[];
+  cameras: CameraDevice[];
+  unavailable: string[];
+  source: string;
+}
+
+export interface NotificationSettings {
+  enabled: boolean;
+  cooldownMinutes: number;
+  quietStartHour: number;
+  quietEndHour: number;
+}
+
+export interface NotificationOutcome {
+  status: string;
+  message: string;
 }
 
 export interface ScheduledTask {

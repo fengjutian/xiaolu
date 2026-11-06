@@ -212,7 +212,15 @@ pub async fn notify_sensor_alert(
             "sent",
             "已发送 Windows 通知；未看到时请检查系统“通知和操作”设置。",
         )),
-        Err(error) => Ok(outcome("failed", error)),
+        Err(error) => {
+            // 发送失败不应占用冷却时间，允许用户修复系统设置后重试。
+            if let Ok(mut last_sent) = runtime.last_sent.lock() {
+                if last_sent.get(&alert_id) == Some(&now) {
+                    last_sent.remove(&alert_id);
+                }
+            }
+            Ok(outcome("failed", error))
+        }
     }
 }
 

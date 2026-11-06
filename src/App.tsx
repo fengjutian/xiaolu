@@ -7,6 +7,7 @@ import {
   Button,
   Card,
   Center,
+  Checkbox,
   Group,
   Loader,
   NavLink,
@@ -35,7 +36,9 @@ import {
   IconApps,
   IconBolt,
   IconCalendarTime,
+  IconCamera,
   IconCpu,
+  IconDeviceDesktop,
   IconDownload,
   IconFolder,
   IconGauge,
@@ -48,8 +51,11 @@ import {
   IconSearch,
   IconServer,
   IconShieldCheck,
+  IconSpeakerphone,
   IconTemperature,
   IconTool,
+  IconUsb,
+  IconBluetooth,
   IconMoon,
   IconSun,
   IconWind,
@@ -73,12 +79,18 @@ import {
   cancelGpuBenchmark,
   getDriverInventory,
   getDiagnosticReport,
+  getDeviceDetails,
+  getNotificationSettings,
+  getStorageDrives,
   getHardwareDetails,
   getNetworkDiagnostics,
   getNvmeHealth,
   getSensorHistory,
   listToolboxTools,
+  notifySensorAlert,
   runToolAction,
+  sendTestNotification,
+  saveNotificationSettings,
   getSensorSettings,
   getSensorSnapshot,
   getScheduledTasks,
@@ -106,6 +118,7 @@ import type {
   DriverUpdateAssessment,
   DriverUpdate,
   DiagnosticReport,
+  DeviceDetails,
   DirectoryListing,
   DuplicateScan,
   EventLogResult,
@@ -114,6 +127,7 @@ import type {
   LargeFileScan,
   NetworkDiagnosticReport,
   NvmeHealthReport,
+  NotificationSettings,
   ScheduledTaskInventory,
   SensorHistorySeries,
   SensorSettings,
@@ -122,6 +136,7 @@ import type {
   SlimScan,
   SoftwareInventory,
   StorageScan,
+  StorageDrive,
   StartupItem,
   SystemHistorySeries,
   SystemSnapshot,
@@ -144,6 +159,7 @@ type Tab =
   | "software"
   | "storage"
   | "hardware"
+  | "devices"
   | "processes"
   | "startup"
   | "tasks"
@@ -169,6 +185,7 @@ const nav = [
   ["software", "软件清单", IconApps],
   ["storage", "空间分析", IconFolder],
   ["hardware", "硬件详情", IconCpu],
+  ["devices", "设备详情", IconDeviceDesktop],
   ["processes", "运行进程", IconActivity],
   ["startup", "启动项管理", IconRocket],
   ["tasks", "计划任务", IconCalendarTime],
@@ -376,6 +393,43 @@ function SensorsPanel({ data }: { data: SensorSnapshot | null }) {
   const [nvme, setNvme] = useState<NvmeHealthReport | null>(null);
   const [nvmeLoading, setNvmeLoading] = useState(false);
   const [nvmeError, setNvmeError] = useState<string | null>(null);
+  const [notifySettings, setNotifySettings] =
+    useState<NotificationSettings | null>(null);
+  const [notifySaving, setNotifySaving] = useState(false);
+  const [notifyStatus, setNotifyStatus] = useState<string | null>(null);
+  const [notifyError, setNotifyError] = useState(false);
+
+  useEffect(() => {
+    void getNotificationSettings()
+      .then(setNotifySettings)
+      .catch(() => undefined);
+  }, []);
+
+  const saveNotifySettings = async () => {
+    if (!notifySettings) return;
+    setNotifySaving(true);
+    try {
+      setNotifySettings(await saveNotificationSettings(notifySettings));
+      setNotifyStatus("通知设置已保存。");
+      setNotifyError(false);
+    } catch (error) {
+      setNotifyStatus(error instanceof Error ? error.message : String(error));
+      setNotifyError(true);
+    } finally {
+      setNotifySaving(false);
+    }
+  };
+
+  const testNotification = async () => {
+    try {
+      const outcome = await sendTestNotification();
+      setNotifyStatus(outcome.message);
+      setNotifyError(outcome.status !== "sent");
+    } catch (error) {
+      setNotifyStatus(error instanceof Error ? error.message : String(error));
+      setNotifyError(true);
+    }
+  };
 
   const temperatures = useMemo(
     () =>
@@ -1146,6 +1200,103 @@ function SensorsPanel({ data }: { data: SensorSnapshot | null }) {
           </Group>
         </Card>
       )}
+      {notifySettings && (
+        <Card className="glass-card" radius="lg">
+          <Group justify="space-between" align="flex-start" wrap="wrap">
+            <Box>
+              <Text fw={800}>桌面通知</Text>
+              <Text size="xs" c="dimmed">
+                温度告警通过 Windows 通知弹出；同一告警有冷却时间，免打扰时段只记录不弹窗
+              </Text>
+            </Box>
+            <Switch
+              checked={notifySettings.enabled}
+              onChange={(event) =>
+                setNotifySettings({
+                  ...notifySettings,
+                  enabled: event.currentTarget.checked,
+                })
+              }
+              label="启用桌面通知"
+            />
+          </Group>
+          <Group mt="md" align="flex-end" wrap="wrap">
+            <NumberInput
+              size="xs"
+              label="冷却（分钟）"
+              min={1}
+              max={60}
+              w={140}
+              value={notifySettings.cooldownMinutes}
+              onChange={(value) => {
+                const parsed =
+                  typeof value === "number" ? value : Number.parseFloat(value);
+                if (Number.isFinite(parsed)) {
+                  setNotifySettings({
+                    ...notifySettings,
+                    cooldownMinutes: Math.round(parsed),
+                  });
+                }
+              }}
+            />
+            <NumberInput
+              size="xs"
+              label="免打扰开始（时）"
+              min={0}
+              max={23}
+              w={150}
+              value={notifySettings.quietStartHour}
+              onChange={(value) => {
+                const parsed =
+                  typeof value === "number" ? value : Number.parseFloat(value);
+                if (Number.isFinite(parsed)) {
+                  setNotifySettings({
+                    ...notifySettings,
+                    quietStartHour: Math.round(parsed),
+                  });
+                }
+              }}
+            />
+            <NumberInput
+              size="xs"
+              label="免打扰结束（时）"
+              min={0}
+              max={23}
+              w={150}
+              value={notifySettings.quietEndHour}
+              onChange={(value) => {
+                const parsed =
+                  typeof value === "number" ? value : Number.parseFloat(value);
+                if (Number.isFinite(parsed)) {
+                  setNotifySettings({
+                    ...notifySettings,
+                    quietEndHour: Math.round(parsed),
+                  });
+                }
+              }}
+            />
+            <Button
+              size="xs"
+              loading={notifySaving}
+              onClick={() => void saveNotifySettings()}
+            >
+              保存通知设置
+            </Button>
+            <Button
+              size="xs"
+              variant="light"
+              onClick={() => void testNotification()}
+            >
+              发送测试通知
+            </Button>
+          </Group>
+          {notifyStatus && (
+            <Text size="sm" mt="sm" c={notifyError ? "red" : "teal"}>
+              {notifyStatus}
+            </Text>
+          )}
+        </Card>
+      )}
     </Stack>
   );
 }
@@ -1425,6 +1576,239 @@ function DriversPanel({ data }: { data: DriverInventory | null }) {
   );
 }
 
+function DevicePanel({ data }: { data: DeviceDetails | null }) {
+  if (!data)
+    return (
+      <Center h={260}>
+        <Loader />
+      </Center>
+    );
+  const maskedSerial = (serial: string) =>
+    serial
+      ? `${serial.slice(0, 2)}${"*".repeat(Math.max(3, serial.length - 2))}`
+      : "未提供";
+  return (
+    <Stack gap="md">
+      <Alert color="blue" icon={<IconShieldCheck />}>
+        只读枚举：显示器 EDID、音频、USB、蓝牙与摄像头。不打开设备、不配对、不安装或修改驱动；显示器序列号已掩码。
+      </Alert>
+      {data.unavailable.map((message) => (
+        <Alert key={message} color="orange" icon={<IconAlertCircle />}>
+          {message}
+        </Alert>
+      ))}
+      <SimpleGrid cols={{ base: 1, lg: 2 }}>
+        <Card className="glass-card" radius="lg">
+          <Group justify="space-between">
+            <Text fw={800}>显示器</Text>
+            <Badge variant="light">{data.monitors.length} 台</Badge>
+          </Group>
+          {data.monitors.length === 0 ? (
+            <Text size="sm" c="dimmed" mt="sm">
+              未读取到 WmiMonitorID 数据（部分虚拟机和远程会话不提供 EDID）。
+            </Text>
+          ) : (
+            <Table mt="sm" verticalSpacing="xs">
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>名称</Table.Th>
+                  <Table.Th>厂商</Table.Th>
+                  <Table.Th>型号</Table.Th>
+                  <Table.Th>年份</Table.Th>
+                  <Table.Th>序列号</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {data.monitors.map((monitor) => (
+                  <Table.Tr key={`${monitor.name}-${monitor.serial}`}>
+                    <Table.Td>
+                      <Text size="sm" fw={600}>
+                        {monitor.name}
+                      </Text>
+                    </Table.Td>
+                    <Table.Td>{monitor.manufacturer || "—"}</Table.Td>
+                    <Table.Td>{monitor.product || "—"}</Table.Td>
+                    <Table.Td>{monitor.year || "—"}</Table.Td>
+                    <Table.Td>
+                      <Text size="xs" c="dimmed" ff="monospace">
+                        {maskedSerial(monitor.serial)}
+                      </Text>
+                    </Table.Td>
+                  </Table.Tr>
+                ))}
+              </Table.Tbody>
+            </Table>
+          )}
+        </Card>
+
+        <Card className="glass-card" radius="lg">
+          <Group justify="space-between">
+            <Text fw={800}>音频设备</Text>
+            <Badge variant="light">{data.audio.length} 个</Badge>
+          </Group>
+          {data.audio.length === 0 ? (
+            <Text size="sm" c="dimmed" mt="sm">
+              未发现音频设备。
+            </Text>
+          ) : (
+            <Table mt="sm" verticalSpacing="xs">
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>名称</Table.Th>
+                  <Table.Th>厂商</Table.Th>
+                  <Table.Th>状态</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {data.audio.map((device) => (
+                  <Table.Tr key={device.name}>
+                    <Table.Td>{device.name}</Table.Td>
+                    <Table.Td>{device.manufacturer || "—"}</Table.Td>
+                    <Table.Td>
+                      <Badge size="xs" variant="light">
+                        {device.status || "未知"}
+                      </Badge>
+                    </Table.Td>
+                  </Table.Tr>
+                ))}
+              </Table.Tbody>
+            </Table>
+          )}
+        </Card>
+
+        <Card className="glass-card" radius="lg">
+          <Group justify="space-between">
+            <Text fw={800}>USB 设备</Text>
+            <Badge variant="light">{data.usb.length} 个</Badge>
+          </Group>
+          {data.usb.length === 0 ? (
+            <Text size="sm" c="dimmed" mt="sm">
+              未发现 USB 设备。
+            </Text>
+          ) : (
+            <Table mt="sm" verticalSpacing="xs">
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>名称</Table.Th>
+                  <Table.Th>VID / PID</Table.Th>
+                  <Table.Th>状态</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {data.usb.map((device) => (
+                  <Table.Tr key={`${device.name}-${device.vid}-${device.pid}`}>
+                    <Table.Td>
+                      <Text size="sm" fw={600} truncate maw={260}>
+                        {device.name}
+                      </Text>
+                      <Text size="xs" c="dimmed" truncate maw={260}>
+                        {device.manufacturer || "厂商未知"}
+                      </Text>
+                    </Table.Td>
+                    <Table.Td>
+                      <Text size="xs" ff="monospace">
+                        {device.vid ? `${device.vid}:${device.pid || "????"}` : "—"}
+                      </Text>
+                    </Table.Td>
+                    <Table.Td>
+                      <Badge size="xs" variant="light">
+                        {device.status || "未知"}
+                      </Badge>
+                    </Table.Td>
+                  </Table.Tr>
+                ))}
+              </Table.Tbody>
+            </Table>
+          )}
+        </Card>
+
+        <Card className="glass-card" radius="lg">
+          <Group justify="space-between">
+            <Text fw={800}>蓝牙</Text>
+            <Badge variant="light">{data.bluetooth.length} 个</Badge>
+          </Group>
+          {data.bluetooth.length === 0 ? (
+            <Text size="sm" c="dimmed" mt="sm">
+              未发现蓝牙适配器或已配对设备。
+            </Text>
+          ) : (
+            <Table mt="sm" verticalSpacing="xs">
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>名称</Table.Th>
+                  <Table.Th>类型</Table.Th>
+                  <Table.Th>状态</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {data.bluetooth.map((device) => (
+                  <Table.Tr key={`${device.name}-${device.kind}`}>
+                    <Table.Td>
+                      <Text size="sm" fw={600}>
+                        {device.name}
+                      </Text>
+                      <Text size="xs" c="dimmed">
+                        {device.manufacturer || "厂商未知"}
+                      </Text>
+                    </Table.Td>
+                    <Table.Td>
+                      <Badge size="xs" variant="light">
+                        {device.kind}
+                      </Badge>
+                    </Table.Td>
+                    <Table.Td>{device.status || "未知"}</Table.Td>
+                  </Table.Tr>
+                ))}
+              </Table.Tbody>
+            </Table>
+          )}
+        </Card>
+
+        <Card className="glass-card" radius="lg">
+          <Group justify="space-between">
+            <Text fw={800}>摄像头</Text>
+            <Badge variant="light">{data.cameras.length} 个</Badge>
+          </Group>
+          {data.cameras.length === 0 ? (
+            <Text size="sm" c="dimmed" mt="sm">
+              未发现摄像头设备。
+            </Text>
+          ) : (
+            <Table mt="sm" verticalSpacing="xs">
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>名称</Table.Th>
+                  <Table.Th>厂商</Table.Th>
+                  <Table.Th>类型</Table.Th>
+                  <Table.Th>状态</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {data.cameras.map((camera) => (
+                  <Table.Tr key={camera.name}>
+                    <Table.Td>{camera.name}</Table.Td>
+                    <Table.Td>{camera.manufacturer || "—"}</Table.Td>
+                    <Table.Td>
+                      <Badge size="xs" variant="light">
+                        {camera.pnpClass}
+                      </Badge>
+                    </Table.Td>
+                    <Table.Td>{camera.status || "未知"}</Table.Td>
+                  </Table.Tr>
+                ))}
+              </Table.Tbody>
+            </Table>
+          )}
+        </Card>
+      </SimpleGrid>
+      <Text size="xs" c="dimmed">
+        来源：{data.source} · 采集于{" "}
+        {new Date(data.capturedAtUnixMs).toLocaleString()}
+      </Text>
+    </Stack>
+  );
+}
+
 function StoragePanel() {
   const [running, setRunning] = useState<StorageScan["kind"] | null>(null);
   const [results, setResults] = useState<Record<string, StorageScan>>({});
@@ -1442,6 +1826,12 @@ function StoragePanel() {
   const [listing, setListing] = useState<DirectoryListing | null>(null);
   const [loadingDirectory, setLoadingDirectory] = useState(false);
   const [directoryError, setDirectoryError] = useState<string | null>(null);
+  const [drives, setDrives] = useState<StorageDrive[]>([]);
+  useEffect(() => {
+    void getStorageDrives()
+      .then(setDrives)
+      .catch(() => undefined);
+  }, []);
   const scan = async (kind: StorageScan["kind"]) => {
     setRunning(kind);
     setFailure(null);
@@ -1502,16 +1892,17 @@ function StoragePanel() {
     1,
     ...(large?.directories.map((item) => item.bytes) ?? []),
   );
-  const storageLabel = {
-    downloads: "下载",
-    documents: "文档",
-    desktop: "桌面",
-  }[deepKind];
+  const storageLabel = deepKind.startsWith("drive:")
+    ? `${deepKind.slice("drive:".length).toUpperCase()} 盘`
+    : (({ downloads: "下载", documents: "文档", desktop: "桌面" }) as Record<
+        string,
+        string
+      >)[deepKind] ?? deepKind;
   return (
     <Stack gap="md">
       <Alert color="blue" icon={<IconShieldCheck />}>
-        只扫描下载、文档和桌面三个标准目录；结果按扩展名聚合，不显示文件名，也不会删除文件。每次最多统计
-        25 万个文件。
+        默认只扫描下载、文档和桌面三个标准目录；在“大文件与重复文件”中可切换到整盘。结果按扩展名聚合，不显示文件内容，也不会删除文件。每次最多统计
+        25 万个文件；整盘扫描会跳过 Windows、回收站、System Volume Information 等系统目录。
       </Alert>
 
       <Card className="glass-card" radius="lg">
@@ -1697,12 +2088,12 @@ function StoragePanel() {
           <Group gap="sm">
             <Select
               size="xs"
-              w={120}
+              w={200}
               allowDeselect={false}
               value={deepKind}
               onChange={(value) => {
                 if (!value) return;
-                setDeepKind(value as StorageScan["kind"]);
+                setDeepKind(value);
                 setLarge(null);
                 setDupes(null);
                 setListing(null);
@@ -1711,6 +2102,10 @@ function StoragePanel() {
                 { value: "downloads", label: "下载" },
                 { value: "documents", label: "文档" },
                 { value: "desktop", label: "桌面" },
+                ...drives.map((drive) => ({
+                  value: `drive:${drive.letter}`,
+                  label: `${drive.letter} 盘 · ${bytes(drive.freeBytes)} 可用`,
+                })),
               ]}
             />
             <Select
@@ -1875,7 +2270,7 @@ function StoragePanel() {
           <Box>
             <Text fw={800}>目录钻取</Text>
             <Text size="xs" c="dimmed">
-              仅在{storageLabel}目录内导航；Treemap 面积代表占用，不显示文件内容。
+              在当前范围（{storageLabel}）内导航；Treemap 面积代表占用，不显示文件内容。
             </Text>
           </Box>
           <Group gap="sm">
@@ -1921,6 +2316,11 @@ function StoragePanel() {
                 </Text>
               )}
             </Group>
+            {listing.exclusions && listing.exclusions.length > 0 && (
+              <Text size="xs" c="dimmed" mt={4}>
+                已跳过系统目录与文件：{listing.exclusions.join("、")}
+              </Text>
+            )}
             <SimpleGrid cols={{ base: 1, lg: 2 }} mt="md">
               <Box h={300}>
                 {listing.children.length === 0 ? (
@@ -3140,6 +3540,7 @@ function ToolboxPanel() {
   const [genericError, setGenericError] = useState<string | null>(null);
   const [applying, setApplying] = useState<string | null>(null);
   const [applyError, setApplyError] = useState<string | null>(null);
+  const [selection, setSelection] = useState<string[]>([]);
 
   useEffect(() => {
     void listToolboxTools()
@@ -3153,6 +3554,18 @@ function ToolboxPanel() {
     try {
       const data = (await runToolAction(tool.id, "preview")) as ToolResult;
       setGeneric({ tool, data });
+      if (tool.id === "clean_master") {
+        setSelection(
+          (data.rows ?? [])
+            .filter(
+              (row) =>
+                row.status === "可用" &&
+                Number(row.files) > 0 &&
+                row.requiresAdmin !== true,
+            )
+            .map((row) => String(row.id)),
+        );
+      }
     } catch (reason) {
       setGenericError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -3182,6 +3595,7 @@ function ToolboxPanel() {
         parameters,
       )) as ToolResult;
       setGeneric({ tool, data });
+      setSelection([]);
     } catch (reason) {
       setApplyError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -3273,8 +3687,13 @@ function ToolboxPanel() {
                 loading={runningTool === tool.id}
                 onClick={() => void runGeneric(tool)}
               >
-                运行预览
+                {tool.id === "clean_master" ? "扫描清理位置" : "运行预览"}
               </Button>
+            )}
+            {tool.id === "clean_master" && tool.uiKind === "table" && (
+              <Text size="xs" c="dimmed" mt={4}>
+                扫描后勾选位置，文件会移入回收站
+              </Text>
             )}
           </Card>
         ))}
@@ -3338,6 +3757,7 @@ function ToolboxPanel() {
           {(generic.tool.actions ?? []).some((action) => action.write) && (
             <Group gap="xs" mt="md">
               {generic.tool.id !== "pc_optimizer" &&
+                generic.tool.id !== "clean_master" &&
                 (generic.tool.actions ?? [])
                   .filter((action) => action.write)
                   .map((action) => (
@@ -3381,6 +3801,69 @@ function ToolboxPanel() {
                   ))}
             </Group>
           )}
+          {generic.tool.id === "clean_master" &&
+            (generic.data.rows ?? []).some(
+              (row) => typeof row.id === "string",
+            ) && (
+              <Box mt="md">
+                <Text size="sm" fw={600}>
+                  勾选要移入回收站的位置
+                </Text>
+                <Stack gap={6} mt="xs">
+                  {(generic.data.rows ?? []).map((row) => {
+                    const id = String(row.id ?? "");
+                    const disabled =
+                      row.status === "不存在" || Number(row.files) === 0;
+                    return (
+                      <Checkbox
+                        key={id}
+                        checked={selection.includes(id)}
+                        disabled={disabled}
+                        onChange={(event) =>
+                          setSelection((current) =>
+                            event.currentTarget.checked
+                              ? [...current, id]
+                              : current.filter((item) => item !== id),
+                          )
+                        }
+                        label={`${row.label} · ${row.size} · ${row.files} 个文件${
+                          Number(row.locked) > 0
+                            ? ` · ${row.locked} 个占用/只读`
+                            : ""
+                        }${row.truncated ? " · 已截断" : ""}${
+                          row.requiresAdmin ? " · 需要管理员" : ""
+                        }${disabled ? ` · ${row.status}` : ""}`}
+                      />
+                    );
+                  })}
+                </Stack>
+                <Group mt="sm" align="center">
+                  <Button
+                    size="xs"
+                    color="orange"
+                    variant="light"
+                    disabled={selection.length === 0}
+                    loading={applying === `${generic.tool.id}:apply`}
+                    onClick={() =>
+                      void runApply(
+                        generic.tool,
+                        {
+                          id: "apply",
+                          label: "清理所选位置",
+                          write: true,
+                        },
+                        { candidateIds: selection },
+                      )
+                    }
+                  >
+                    清理所选（移入回收站）
+                  </Button>
+                  <Text size="xs" c="dimmed">
+                    已选 {selection.length} 个位置；清理后可到回收站还原
+                  </Text>
+                </Group>
+              </Box>
+            )}
           {applyError && (
             <Alert color="red" mt="sm" icon={<IconAlertCircle />}>
               {applyError}
@@ -3531,6 +4014,7 @@ export default function App() {
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [hardware, setHardware] = useState<HardwareDetails | null>(null);
   const [sensors, setSensors] = useState<SensorSnapshot | null>(null);
+  const [deviceDetails, setDeviceDetails] = useState<DeviceDetails | null>(null);
   const [drivers, setDrivers] = useState<DriverInventory | null>(null);
   const [diagnostics, setDiagnostics] = useState<DiagnosticReport | null>(null);
   const [networkDiagnostics, setNetworkDiagnostics] =
@@ -3613,6 +4097,12 @@ export default function App() {
         .catch((e) => setError(String(e)));
   }, [tab, hardware]);
   useEffect(() => {
+    if (tab === "devices" && !deviceDetails)
+      void getDeviceDetails()
+        .then(setDeviceDetails)
+        .catch((e) => setError(String(e)));
+  }, [tab, deviceDetails]);
+  useEffect(() => {
     // 传感器采样与页面无关：即使停留在概览页，告警状态和托盘摘要也要持续更新。
     let cancelled = false;
     const load = () =>
@@ -3630,6 +4120,20 @@ export default function App() {
       window.clearInterval(timer);
     };
   }, []);
+  useEffect(() => {
+    // 桌面通知由后端做冷却与免打扰判断，这里只负责把活动告警交给后端。
+    for (const alert of sensors?.alerts ?? []) {
+      void notifySensorAlert({
+        alertId: alert.id,
+        level: alert.level,
+        title:
+          alert.level === "critical"
+            ? `小鲁 · 危险：${alert.sensorName}`
+            : `小鲁 · 温度警告：${alert.sensorName}`,
+        message: alert.message,
+      }).catch(() => undefined);
+    }
+  }, [sensors]);
   useEffect(() => {
     if (tab === "drivers" && !drivers)
       void getDriverInventory()
@@ -3778,7 +4282,7 @@ export default function App() {
           </Text>
         </Paper>
         <Text size="xs" c="dimmed">
-          v0.34.0 · 14 个只读工具 · 2 个写操作
+          v0.36.0 · 17 个工具 · 清理大师
         </Text>
       </aside>
       <main className="content">
@@ -3977,6 +4481,7 @@ export default function App() {
         )}
         {tab === "benchmark" && <BenchmarkPanel />}
         {tab === "hardware" && <HardwarePanel details={hardware} />}
+        {tab === "devices" && <DevicePanel data={deviceDetails} />}
         {tab === "sensors" && <SensorsPanel data={sensors} />}
         {tab === "drivers" && <DriversPanel data={drivers} />}
         {tab === "diagnostics" && <DiagnosticsPanel data={diagnostics} />}

@@ -679,7 +679,7 @@ fn listing_in(
                 continue;
             }
         };
-        if relative_path.is_empty() && is_excluded(entry.file_name(), exclusions) {
+        if relative_path.is_empty() && is_excluded(&entry.file_name(), exclusions) {
             continue;
         }
         let child_relative = path
@@ -736,6 +736,7 @@ fn listing_in(
         )
     };
 
+    let at_root = relative_path.is_empty();
     Ok(DirectoryListing {
         kind: kind.into(),
         label: label.into(),
@@ -748,7 +749,7 @@ fn listing_in(
         total_files,
         error_count,
         truncated,
-        exclusions: if relative_path.is_empty() {
+        exclusions: if at_root {
             exclusions.to_vec()
         } else {
             Vec::new()
