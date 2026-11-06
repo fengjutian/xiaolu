@@ -4,9 +4,14 @@
 //! is verified against the local facts. Findings without a valid evidence
 //! reference are discarded instead of being shown as deterministic advice.
 
-use super::model::{AiFinding, AiRecommendation, DiagnosticFact, MAX_AI_FINDINGS, Severity};
+use super::model::{
+    AiFinding, AiRecommendation, AiRequestedCheck, DiagnosticFact, MAX_AI_FINDINGS, Severity,
+};
 use serde::Deserialize;
+use serde_json::Value;
 use std::collections::HashSet;
+
+const MAX_REQUESTED_CHECKS: usize = 3;
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -14,6 +19,7 @@ pub struct RawAnswer {
     pub summary: String,
     pub findings: Vec<AiFinding>,
     pub limitations: Vec<String>,
+    pub requested_checks: Vec<AiRequestedCheck>,
 }
 
 #[derive(Debug, Default)]
@@ -21,6 +27,7 @@ pub struct ValidatedAnswer {
     pub summary: String,
     pub findings: Vec<AiFinding>,
     pub limitations: Vec<String>,
+    pub requested_checks: Vec<AiRequestedCheck>,
 }
 
 fn clamp_text(value: &str, max: usize) -> String {
@@ -96,6 +103,34 @@ fn normalize_recommendations(items: Vec<AiRecommendation>) -> Vec<AiRecommendati
         .collect()
 }
 
+fn normalize_checks(items: Vec<AiRequestedCheck>) -> Vec<AiRequestedCheck> {
+    let mut seen = HashSet::new();
+    items
+        .into_iter()
+        .filter_map(|item| {
+            let tool_id = clamp_text(&item.tool_id, 80).to_ascii_lowercase();
+            if tool_id.is_empty()
+                || !tool_id
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric() || matches!(character, '.' | '-' | '_'))
+                || !seen.insert(tool_id.clone())
+            {
+                return None;
+            }
+            let parameters = match serde_json::to_string(&item.parameters) {
+                Ok(encoded) if encoded.len() <= 2000 => item.parameters,
+                _ => Value::Null,
+            };
+            Some(AiRequestedCheck {
+                tool_id,
+                reason: clamp_text(&item.reason, 240),
+                parameters,
+            })
+        })
+        .take(MAX_REQUESTED_CHECKS)
+        .collect()
+}
+
 /// Ensures a model answer cannot quietly contradict a local warning/critical
 /// rule. The UI shows local findings separately, but the answer must say that
 /// the local rule takes precedence when it did not reference the same evidence.
@@ -160,6 +195,7 @@ pub fn validate(raw: RawAnswer, facts: &[DiagnosticFact]) -> Result<ValidatedAns
     let valid_ids: HashSet<&str> = facts.iter().map(|fact| fact.id.as_str()).collect();
     let mut limitations = Vec::new();
     let mut findings = Vec::new();
+    let requested_checks = normalize_checks(raw.requested_checks);
 
     for (index, finding) in raw.findings.into_iter().take(8).enumerate() {
         let title = clamp_text(&finding.title, 120);
@@ -215,7 +251,7 @@ pub fn validate(raw: RawAnswer, facts: &[DiagnosticFact]) -> Result<ValidatedAns
     });
 
     let summary = clamp_text(&raw.summary, 2000);
-    if summary.is_empty() && findings.is_empty() {
+    if summary.is_empty() && findings.is_empty() && requested_checks.is_empty() {
         return Err("模型未返回可用的诊断结论。".to_string());
     }
     for limitation in raw.limitations {
@@ -231,6 +267,7 @@ pub fn validate(raw: RawAnswer, facts: &[DiagnosticFact]) -> Result<ValidatedAns
         summary,
         findings,
         limitations,
+        requested_checks,
     })
 }
 
@@ -304,6 +341,25 @@ mod tests {
         .unwrap();
         let validated = validate(raw, &facts()).unwrap();
         assert!(validated.findings[0].recommendations[0].requires_confirmation);
+    }
+
+    #[test]
+    fn allows_plan_only_response_and_normalizes_checks() {
+        let raw = parse_answer(
+            r#"{"summary":"","findings":[],"requestedChecks":[
+                {"toolId":"event_log.recent","reason":"查看崩溃","parameters":{"hours":24}},
+                {"toolId":"EVENT_LOG.RECENT","reason":"重复","parameters":{}},
+                {"toolId":"bad tool!","reason":"x","parameters":{}},
+                {"toolId":"drivers.problems","reason":"驱动","parameters":{}},
+                {"toolId":"network.summary","reason":"网络","parameters":{}},
+                {"toolId":"startup.summary","reason":"第四项","parameters":{}}
+            ]}"#,
+        )
+        .unwrap();
+        let validated = validate(raw, &facts()).unwrap();
+        assert_eq!(validated.requested_checks.len(), 3);
+        assert_eq!(validated.requested_checks[0].tool_id, "event_log.recent");
+        assert_eq!(validated.requested_checks[1].tool_id, "drivers.problems");
     }
 
     #[test]

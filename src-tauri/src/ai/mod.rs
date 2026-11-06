@@ -11,15 +11,16 @@ mod redact;
 mod rules;
 mod settings;
 mod store;
+mod tools;
 
 pub use model::{
     AiAnswer, AiPayloadPreview, AiSettings, AiSettingsView, AiStreamEvent, AiTurn, DiagnosticSnapshot,
 };
 pub use store::AiSessionRecord;
 
-use self::answer::{parse_answer, validate};
+use self::answer::{enforce_local_priority, parse_answer, validate, ValidatedAnswer};
 use self::model::{AiUsage, ChatMessage, ProviderRequest, AI_PROMPT_VERSION};
-use self::provider::{provider_for, CancelHandle, StreamEvent, CANCELLED};
+use self::provider::{provider_for, AiProvider, CancelHandle, StreamEvent, CANCELLED};
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager};
@@ -238,39 +239,43 @@ fn fallback_answer(
         limitations,
         local_findings: snapshot.local_findings.clone(),
         usage: None,
+        checks: Vec::new(),
     }
 }
 
-async fn run_model_analysis(
-    app: AppHandle,
-    settings: AiSettings,
-    api_key: String,
-    snapshot: DiagnosticSnapshot,
-    question: Option<String>,
-    history: Vec<AiTurn>,
-    request_id: String,
-    cancel: Arc<CancelHandle>,
-) -> Result<AiAnswer, String> {
-    let (messages, _, _, _) = prompt::build_messages(&snapshot, question.as_deref(), &history);
-    let provider = provider_for(&settings)?;
-    let mut usage: Option<AiUsage> = None;
-    let mut last_error = String::new();
+struct ModelTurn {
+    validated: ValidatedAnswer,
+    model: String,
+}
 
+#[allow(clippy::too_many_arguments)]
+async fn call_and_validate(
+    app: &AppHandle,
+    provider: &dyn AiProvider,
+    settings: &AiSettings,
+    api_key: &str,
+    cancel: Arc<CancelHandle>,
+    request_id: &str,
+    messages: Vec<ChatMessage>,
+    snapshot: &DiagnosticSnapshot,
+    usage: &mut Option<AiUsage>,
+) -> Result<ModelTurn, String> {
+    let mut last_error = String::new();
     for attempt in 0..2 {
         if cancel.is_cancelled() {
             return Err(CANCELLED.to_string());
         }
         if attempt > 0 {
             emit_stream(
-                &app,
-                &request_id,
+                app,
+                request_id,
                 "status",
                 String::new(),
                 0,
                 "模型输出格式不正确，正在重试一次…".to_string(),
             );
         }
-        let mut attempt_messages: Vec<ChatMessage> = messages.clone();
+        let mut attempt_messages = messages.clone();
         if attempt > 0 {
             attempt_messages.push(ChatMessage {
                 role: "user".to_string(),
@@ -281,7 +286,7 @@ async fn run_model_analysis(
         }
 
         let event_app = app.clone();
-        let event_request = request_id.clone();
+        let event_request = request_id.to_string();
         let emit = move |event: StreamEvent| match event {
             StreamEvent::Status(message) => {
                 emit_stream(&event_app, &event_request, "status", String::new(), 0, message);
@@ -299,46 +304,117 @@ async fn run_model_analysis(
                     max_tokens: settings.max_output_tokens,
                     timeout_seconds: settings.timeout_seconds,
                 },
-                api_key.clone(),
+                api_key.to_string(),
                 cancel.clone(),
                 Box::new(emit),
             )
-            .await;
+            .await?;
+        merge_usage(usage, response.usage.clone());
 
-        let response = match response {
-            Ok(response) => response,
-            Err(error) => return Err(error),
-        };
-        merge_usage(&mut usage, response.usage.clone());
-
-        let parsed = parse_answer(&response.text).and_then(|raw| validate(raw, &snapshot.facts));
-        match parsed {
+        match parse_answer(&response.text).and_then(|raw| validate(raw, &snapshot.facts)) {
             Ok(mut validated) => {
-                answer::enforce_local_priority(&snapshot.local_findings, &mut validated);
-                return Ok(AiAnswer {
-                    request_id: request_id.clone(),
-                    snapshot_id: snapshot.snapshot_id.clone(),
-                    generated_at_unix_ms: now_unix_ms(),
-                    provider: provider.id().to_string(),
+                enforce_local_priority(&snapshot.local_findings, &mut validated);
+                return Ok(ModelTurn {
+                    validated,
                     model: response.model,
-                    prompt_version: AI_PROMPT_VERSION.to_string(),
-                    degraded: false,
-                    degraded_reason: None,
-                    summary: validated.summary,
-                    findings: validated.findings,
-                    limitations: validated.limitations,
-                    local_findings: snapshot.local_findings.clone(),
-                    usage,
                 });
             }
-            Err(error) => {
-                last_error = error;
-            }
+            Err(error) => last_error = error,
         }
     }
     Err(format!(
         "模型连续两次输出都无法通过校验：{last_error}"
     ))
+}
+
+async fn run_model_analysis(
+    app: AppHandle,
+    settings: AiSettings,
+    api_key: String,
+    snapshot: DiagnosticSnapshot,
+    question: Option<String>,
+    history: Vec<AiTurn>,
+    request_id: String,
+    cancel: Arc<CancelHandle>,
+) -> Result<AiAnswer, String> {
+    let provider = provider_for(&settings)?;
+    let mut usage: Option<AiUsage> = None;
+    let (messages, _, _, _) = prompt::build_messages(&snapshot, question.as_deref(), &history);
+    let first = call_and_validate(
+        &app,
+        provider.as_ref(),
+        &settings,
+        &api_key,
+        cancel.clone(),
+        &request_id,
+        messages,
+        &snapshot,
+        &mut usage,
+    )
+    .await?;
+
+    let mut checks = Vec::new();
+    let turn = if first.validated.requested_checks.is_empty() {
+        first
+    } else {
+        checks = tools::execute_checks(
+            &app,
+            &request_id,
+            &first.validated.requested_checks,
+            cancel.clone(),
+        )
+        .await?;
+        let (messages, _, _, _) = prompt::build_messages_with_results(
+            &snapshot,
+            question.as_deref(),
+            &history,
+            &checks,
+        );
+        let mut second = call_and_validate(
+            &app,
+            provider.as_ref(),
+            &settings,
+            &api_key,
+            cancel.clone(),
+            &request_id,
+            messages,
+            &snapshot,
+            &mut usage,
+        )
+        .await?;
+        if !second.validated.requested_checks.is_empty() {
+            second
+                .validated
+                .limitations
+                .push("每轮最多执行一组只读检查，后续检查请求已忽略。".to_string());
+        }
+        for run in checks.iter().filter(|run| !run.ok) {
+            second
+                .validated
+                .limitations
+                .push(format!("只读检查“{}”未完成，相关结论请谨慎对待。", run.label));
+        }
+        second.validated.limitations.dedup();
+        second.validated.limitations.truncate(8);
+        second
+    };
+
+    Ok(AiAnswer {
+        request_id,
+        snapshot_id: snapshot.snapshot_id.clone(),
+        generated_at_unix_ms: now_unix_ms(),
+        provider: provider.id().to_string(),
+        model: turn.model,
+        prompt_version: AI_PROMPT_VERSION.to_string(),
+        degraded: false,
+        degraded_reason: None,
+        summary: turn.validated.summary,
+        findings: turn.validated.findings,
+        limitations: turn.validated.limitations,
+        local_findings: snapshot.local_findings.clone(),
+        usage,
+        checks,
+    })
 }
 
 #[tauri::command]

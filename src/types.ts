@@ -412,6 +412,14 @@ export interface WinoptSetting {
   requiresAdmin?: boolean;
 }
 
+export interface ServiceItem {
+  name: string;
+  display: string;
+  start: number;
+  startLabel: string;
+  path: string;
+}
+
 export interface ToolResult {
   summary?: { label: string; value: string }[];
   columns?: { key: string; label: string }[];
@@ -425,6 +433,9 @@ export interface ToolResult {
   winoptUndo?: { id: string; value: number | null }[];
   startupItems?: StartupToolItem[];
   systemStartupItems?: StartupToolItem[];
+  serviceItems?: ServiceItem[];
+  journalPath?: string;
+  journalDir?: string;
   startupRegistryError?: string;
 }
 
@@ -879,6 +890,22 @@ export interface AiUsage {
   totalTokens: number | null;
 }
 
+export interface AiToolRun {
+  toolId: string;
+  label: string;
+  reason: string;
+  ok: boolean;
+  durationMs: number;
+  summary: unknown;
+  error: string | null;
+}
+
+export interface AiRequestedCheck {
+  toolId: string;
+  reason: string;
+  parameters: Record<string, unknown>;
+}
+
 export interface AiAnswer {
   requestId: string;
   snapshotId: string;
@@ -893,6 +920,7 @@ export interface AiAnswer {
   limitations: string[];
   localFindings: AiFinding[];
   usage: AiUsage | null;
+  checks?: AiToolRun[];
 }
 
 export interface AiTurn {

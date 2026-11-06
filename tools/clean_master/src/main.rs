@@ -706,7 +706,7 @@ fn apply(request: &Request) -> Result<Value, ToolError> {
         item("复核减少", human_bytes(verified_freed)),
     ]);
 
-    Ok(table(
+    let mut data = table(
         summary,
         json!([
             column("label", "位置"),
@@ -717,7 +717,16 @@ fn apply(request: &Request) -> Result<Value, ToolError> {
         ]),
         Value::Array(rows),
         json!(notes),
-    ))
+    );
+    if let Value::Object(map) = &mut data {
+        if let Ok(path) = &journal_path {
+            map.insert("journalPath".into(), json!(path.to_string_lossy()));
+            if let Some(parent) = path.parent() {
+                map.insert("journalDir".into(), json!(parent.to_string_lossy()));
+            }
+        }
+    }
+    Ok(data)
 }
 
 fn main() {

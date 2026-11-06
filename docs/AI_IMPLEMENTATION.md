@@ -1,7 +1,7 @@
 # AI 健康解读：实现说明与安全边界
 
-- 状态：AI-0 / AI-1 MVP 已实现
-- 版本：0.53.0
+- 状态：AI-0 / AI-1 已实现；AI-2 只读工具网关已实现首版
+- 版本：0.54.0
 - 关联文档：[AI 能力需求](AI_REQUIREMENTS.md)、[项目需求](../PROJECT_REQUIREMENTS.md)
 
 ## 1. 已实现范围
@@ -20,8 +20,20 @@
 | 发送预览 | `preview_ai_payload` 返回脱敏后的完整诊断载荷、估算输入 token 和脱敏摘要 |
 | 本地会话 | 回答自动保存到 app data 的 `ai-sessions.json`（最多 50 条）；支持逐条删除和全部清除，不保存原始事实和 API 密钥 |
 | 会话绑定 | 历史追问按 `snapshotId` 过滤；快照变化后旧回答在界面标记为历史结果 |
+| 只读检查编排（AI-2） | 模型可请求最多 3 项白名单只读检查；宿主校验参数、限制超时、顺序执行、脱敏并截断结果，再发起一次最终解读；每轮最多一组 |
+| 工具审计 | 每次只读检查写入 `ai-tool-audit.jsonl`：请求 ID、工具 ID、耗时、成功状态、脱敏后的参数，不记录结果正文 |
 
-未实现（保留给后续里程碑）：AI 自动调用只读工具、模型能力探测、费用估算、本地模型专用适配器、AI 辅助写操作。**当前代码没有任何模型到工具/命令的执行通道。**
+已支持的白名单工具：
+
+| 工具 ID | 内容 | 隐私处理 |
+| --- | --- | --- |
+| `event_log.recent` | System/Application 最近 1–7 天 critical/error/warning 事件 | 只返回来源、事件 ID、级别和时间，不返回日志全文 |
+| `drivers.problems` | 驱动总数、缺失/异常数量和最多 3 个问题设备名 | 不返回设备 ID |
+| `network.summary` | 网关、DNS、代理、Hosts 和连接状态统计 | 不返回 IP 或远程地址 |
+| `startup.summary` | 启动项名称、范围、启用状态 | 不返回注册表命令或路径 |
+| `scheduled_tasks.summary` | 计划任务总数、状态和失败任务名称 | 不返回任务路径或参数 |
+
+未实现（保留给后续里程碑）：模型能力探测、费用估算、本地模型专用适配器、AI 辅助写操作。**只读检查网关不包含任何 shell、脚本、路径、注册表或写操作入口。**
 
 ## 2. 数据流
 
@@ -33,10 +45,12 @@ DiagnosticFact[]  ← 不含主机名、用户名、序列号、MAC/IP、命令�
 不可变 DiagnosticSnapshot（snapshotId + 事实 + 本地规则结论 + 数据限制）
         ↓  用户点击“预览”或“解读”
 build_payload → redact_payload → OpenAI 兼容 /chat/completions（流式）
+        ↓  模型返回 findings 和可选的 requestedChecks
+validate（证据必须存在于快照 facts）→ 白名单只读检查（最多 3 个，一次）
+        ↓  工具结果脱敏/截断，再发给同一模型 → 最终 JSON
+AiAnswer（含 checks、证据、限制、token 用量）
         ↓
-parse_answer → validate（证据必须存在于快照 facts）→ AiAnswer
-        ↓
-界面：结论 / 严重度 / 置信度 / 证据 / 建议 / 限制 / token 用量
+界面：结论 / 严重度 / 置信度 / 证据 / 建议 / 限制 / 只读检查 / token 用量
 ```
 
 失败路径：请求异常或两次校验失败 → `degraded: true` 的 `AiAnswer`，携带 `degradedReason` 与 `localFindings`。
@@ -61,7 +75,8 @@ parse_answer → validate（证据必须存在于快照 facts）→ AiAnswer
 
 - `ai-settings.json`：启用状态、Provider、HTTPS 地址、模型名、token 上限、超时；
 - `ai-credentials.bin`：`SLK1` + DPAPI 密文；
-- `ai-sessions.json`：最近 50 条 AI 回答与追问（应用数据目录，不含原始事实、载荷或密钥），可在页面逐条删除或全部清除。
+- `ai-sessions.json`：最近 50 条 AI 回答与追问（应用数据目录，不含原始事实、载荷或密钥），可在页面逐条删除或全部清除；
+- `ai-tool-audit.jsonl`：只读检查审计元数据（应用数据目录），不含结果正文。
 
 ### 本地规则优先
 
@@ -80,10 +95,16 @@ parse_answer → validate（证据必须存在于快照 facts）→ AiAnswer
 
 - 模型输出是**不可信数据**：只作为 JSON 解析并校验，不能改变工具权限或系统指令；
 - 提示词明确把事实数据视为数据，不允许执行命令、写注册表或生成下载地址；
-- 工具白名单/写操作网关尚未接入 AI，因此不存在模型绕过白名单的入口；
+- 只读检查只能使用固定工具 ID；参数按类型反序列化并白名单归一化，未知字段直接拒绝；
+- 每个工具都有独立超时，单次请求最多 3 项、只执行一轮；不存在模型指定路径、命令行或脚本的入口；
+- 工具结果在发送回模型前再次脱敏并限制大小；审计只记录元数据，不记录结果正文；
 - 本地规则决定严重度，模型不得把 `critical`/`warning` 说成正常；
 - 没有证据引用的结论不展示；没有把握时写入 `limitations` 并降低置信度；
 - 请求只在用户显式启用并点击解析后发生，关闭 AI 后不产生任何模型网络请求。
+
+写操作（清理、卸载、驱动安装、系统设置修改）仍完全在 AI 之外，继续走本地 UI 预览、二次确认、确认令牌、审计和回滚流程。
+
+取消或超时会让 AI 请求立即返回；已经进入系统采集的同步只读任务可能在后台短暂完成，但其结果不会被使用、发送或写入会话。
 
 ## 6. 代码结构
 
@@ -95,7 +116,8 @@ parse_answer → validate（证据必须存在于快照 facts）→ AiAnswer
 | `src-tauri/src/ai/redact.rs` | 载荷脱敏和敏感事实过滤 |
 | `src-tauri/src/ai/prompt.rs` | 系统提示词、载荷与消息构建、token 估算 |
 | `src-tauri/src/ai/provider.rs` | Provider trait、OpenAI 兼容流式客户端、取消句柄 |
-| `src-tauri/src/ai/answer.rs` | JSON 解析、证据校验、字段归一化 |
+| `src-tauri/src/ai/answer.rs` | JSON 解析、证据校验、字段归一化、检查请求归一化 |
+| `src-tauri/src/ai/tools.rs` | 只读工具白名单、参数校验、超时/取消、结果脱敏与审计 |
 | `src-tauri/src/ai/settings.rs` | 设置与 DPAPI 凭据存储 |
 | `src-tauri/src/ai/mod.rs` | 快照缓存、请求编排、Tauri 命令 |
 | `src/AiPanel.tsx` / `src/aiApi.ts` | 页面、设置、预览、流式进度、追问与历史标记 |
@@ -107,6 +129,6 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib ai::
 npx tsc --noEmit
 ```
 
-`ai::` 单元测试覆盖：脱敏字段与路径、URL 不误伤、设置范围与 HTTPS 校验、DPAPI 往返、SSE 解析、取消句柄、证据校验、结论数量上限、写操作预览强制确认、快照历史过滤、规则引擎可用性。
+`ai::` 单元测试覆盖：脱敏字段与路径、URL 不误伤、设置范围与 HTTPS 校验、DPAPI 往返、SSE 解析、取消句柄、证据校验、结论数量上限、写操作预览强制确认、快照历史过滤、规则引擎可用性、只读工具白名单/参数拒绝/结果截断、检查请求数量上限。
 
 模型服务真实调用未纳入自动化测试（需要外部凭据）；上线前应按 [AI 需求第 10 节](AI_REQUIREMENTS.md#10-可观测性与评测) 建立固定脱敏样本集并做失败降级验收。

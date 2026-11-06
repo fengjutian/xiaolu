@@ -1,6 +1,6 @@
 [package]
 name = "system-lens"
-version = "0.53.0"
+version = "0.54.0"
 description = "Local-first Windows system information and health dashboard"
 authors = ["System Lens contributors"]
 edition = "2021"
@@ -21,7 +21,7 @@ tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-notification = "2"
 walkdir = "2.5.0"
 reqwest = { version = "0.13", default-features = false, features = ["json", "stream", "native-tls", "charset", "http2", "system-proxy"] }
-tokio = { version = "1", features = ["sync", "macros"] }
+tokio = { version = "1", features = ["sync", "macros", "time"] }
 futures-util = "0.3"
 url = "2"
 

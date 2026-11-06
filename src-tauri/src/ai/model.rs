@@ -213,6 +213,26 @@ pub struct AiUsage {
     pub total_tokens: Option<u64>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AiRequestedCheck {
+    pub tool_id: String,
+    pub reason: String,
+    pub parameters: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AiToolRun {
+    pub tool_id: String,
+    pub label: String,
+    pub reason: String,
+    pub ok: bool,
+    pub duration_ms: u64,
+    pub summary: serde_json::Value,
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AiAnswer {
@@ -229,6 +249,8 @@ pub struct AiAnswer {
     pub limitations: Vec<String>,
     pub local_findings: Vec<AiFinding>,
     pub usage: Option<AiUsage>,
+    #[serde(default)]
+    pub checks: Vec<AiToolRun>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

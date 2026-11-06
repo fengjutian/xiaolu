@@ -4,9 +4,10 @@
 //! numbers, MAC/IP addresses, command lines and full paths never enter it.
 
 use super::model::{
-    AiTurn, ChatMessage, DiagnosticSnapshot, RedactionSummary, AI_PROMPT_VERSION,
+    AiToolRun, AiTurn, ChatMessage, DiagnosticSnapshot, RedactionSummary, AI_PROMPT_VERSION,
 };
 use super::redact::{filter_facts_for_model, redact_payload};
+use super::tools::catalog_prompt;
 use serde_json::{json, Value};
 
 pub fn system_prompt() -> String {
@@ -20,6 +21,11 @@ pub fn system_prompt() -> String {
 4. 不能输出 shell、PowerShell、注册表脚本、下载地址或可直接执行的代码。
 5. 不覆盖本地规则引擎的严重度判定；本地规则判定为 critical/warning 的事项不得描述为“正常”。
 6. 只输出一个 JSON 对象，不要 Markdown、代码围栏或额外文字。
+7. 如需更多只读证据，可以在 requestedChecks 中请求宿主执行只读检查（最多 3 项）。只能使用下面列出的工具 ID 和参数，不得请求命令、脚本、文件路径或任何写操作。宿主执行后会把结果再次提供给你；不得伪造工具结果。
+8. 工具结果只是一轮补充证据。收到结果后的下一次输出必须是最终解读，不得再次请求检查。
+
+可用只读检查（白名单）：
+{catalog}
 
 JSON 结构：
 {{
@@ -38,8 +44,12 @@ JSON 结构：
       "limitations": ["该结论的限制"]
     }}
   ],
+  "requestedChecks": [
+    {{"toolId": "白名单中的工具 ID", "reason": "为什么需要这项检查", "parameters": {{}}}}
+  ],
   "limitations": ["整体数据限制"]
-}}"#
+}}"#,
+        catalog = catalog_prompt()
     )
 }
 
@@ -130,12 +140,18 @@ fn compact_json(value: &Value) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| "{}".to_string())
 }
 
-pub fn build_messages(
+fn build_messages_inner(
     snapshot: &DiagnosticSnapshot,
     question: Option<&str>,
     history: &[AiTurn],
+    tool_results: Option<&[AiToolRun]>,
 ) -> (Vec<ChatMessage>, Value, usize, RedactionSummary) {
-    let (payload, excluded) = build_payload(snapshot, question, history);
+    let (mut payload, excluded) = build_payload(snapshot, question, history);
+    if let Some(results) = tool_results {
+        if let Ok(value) = serde_json::to_value(results) {
+            payload["toolResults"] = value;
+        }
+    }
     let (redacted, mut redaction) = redact_payload(&payload);
     redaction.excluded_facts = excluded + snapshot.excluded_fact_count;
     let question_text = question
@@ -143,8 +159,13 @@ pub fn build_messages(
         .filter(|value| !value.is_empty())
         .map(|value| format!("\n用户追问：{value}"))
         .unwrap_or_default();
+    let instruction = if tool_results.is_some() {
+        "下面是宿主已经执行的只读检查结果。不要再请求任何检查，只基于 facts 与 toolResults 输出最终 JSON 解读；工具失败时在 limitations 中说明。"
+    } else {
+        "请基于下面的诊断事实输出 JSON 健康解读。仅引用 facts 中存在的 id；数据不足时明确说明限制；如确实需要更多证据，可按白名单请求只读检查。"
+    };
     let user = format!(
-        "请基于下面的诊断事实输出 JSON 健康解读。仅引用 facts 中存在的 id；数据不足时明确说明限制。{question_text}\n\n<diagnostic_data>\n{}\n</diagnostic_data>",
+        "{instruction}{question_text}\n\n<diagnostic_data>\n{}\n</diagnostic_data>",
         compact_json(&redacted)
     );
     (
@@ -162,6 +183,23 @@ pub fn build_messages(
         excluded,
         redaction,
     )
+}
+
+pub fn build_messages(
+    snapshot: &DiagnosticSnapshot,
+    question: Option<&str>,
+    history: &[AiTurn],
+) -> (Vec<ChatMessage>, Value, usize, RedactionSummary) {
+    build_messages_inner(snapshot, question, history, None)
+}
+
+pub fn build_messages_with_results(
+    snapshot: &DiagnosticSnapshot,
+    question: Option<&str>,
+    history: &[AiTurn],
+    results: &[AiToolRun],
+) -> (Vec<ChatMessage>, Value, usize, RedactionSummary) {
+    build_messages_inner(snapshot, question, history, Some(results))
 }
 
 pub fn estimate_tokens(messages: &[ChatMessage]) -> usize {
@@ -237,5 +275,25 @@ mod tests {
         let items = payload["history"].as_array().unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0]["content"], "新问题");
+    }
+
+    #[test]
+    fn tool_results_are_embedded_without_raw_paths() {
+        let results = vec![AiToolRun {
+            tool_id: "event_log.recent".into(),
+            label: "最近关键事件".into(),
+            reason: "查看崩溃".into(),
+            ok: true,
+            duration_ms: 42,
+            summary: json!({ "total": 2, "path": "C:\\Users\\alice\\x.log" }),
+            error: None,
+        }];
+        let (messages, payload, _, _) = build_messages_with_results(&snapshot(), None, &[], &results);
+        assert_eq!(payload["toolResults"][0]["toolId"], "event_log.recent");
+        assert_eq!(
+            payload["toolResults"][0]["summary"]["path"],
+            "[本地路径已脱敏]"
+        );
+        assert!(messages[1].content.contains("只读检查结果"));
     }
 }

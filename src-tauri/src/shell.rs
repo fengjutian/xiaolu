@@ -22,3 +22,12 @@ pub fn open_path_in_explorer(path: String) -> Result<(), String> {
         .map_err(|error| format!("无法打开资源管理器：{error}"))?;
     Ok(())
 }
+
+#[tauri::command]
+pub fn open_recycle_bin() -> Result<(), String> {
+    Command::new("explorer.exe")
+        .arg("shell:RecycleBinFolder")
+        .spawn()
+        .map_err(|error| format!("无法打开回收站：{error}"))?;
+    Ok(())
+}

@@ -40,4 +40,22 @@ Get-ChildItem -Path $toolsRoot -Directory | Where-Object { $_.Name -notlike "_*"
     Write-Host "  -> $destination"
 }
 
+# lens_helper 不是工具箱协议工具，单独构建并放到 software_pm 同目录。
+$helperRoot = Join-Path $toolsRoot "lens_helper"
+$helperProject = Join-Path $helperRoot "Cargo.toml"
+if (Test-Path $helperProject) {
+    Write-Host "Building lens_helper..."
+    cargo build "--$Configuration" --manifest-path $helperProject
+    if ($LASTEXITCODE -ne 0) { throw "Build failed for lens_helper" }
+    $targetDir = if ($Configuration -eq "release") { "release" } else { "debug" }
+    $helperBinary = Join-Path $helperRoot "target/$targetDir/lens_helper.exe"
+    if (-not (Test-Path $helperBinary)) { throw "Missing binary: $helperBinary" }
+    $softwarePmDir = Join-Path $outRoot "software_pm"
+    if (-not (Test-Path $softwarePmDir)) {
+        New-Item -ItemType Directory -Force -Path $softwarePmDir | Out-Null
+    }
+    Copy-Item $helperBinary (Join-Path $softwarePmDir "lens_helper.exe") -Force
+    Write-Host "  -> lens_helper.exe"
+}
+
 Write-Host "Tool packaging complete: $outRoot"

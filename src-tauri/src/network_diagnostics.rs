@@ -47,7 +47,7 @@ struct PowerShellReport {
 }
 
 #[cfg(windows)]
-fn collect() -> Result<NetworkDiagnosticReport, String> {
+pub(crate) fn collect() -> Result<NetworkDiagnosticReport, String> {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x08000000;
     let script = r#"
@@ -69,7 +69,7 @@ $connections=@(Get-NetTCPConnection -State Established -ErrorAction SilentlyCont
 }
 
 #[cfg(not(windows))]
-fn collect() -> Result<NetworkDiagnosticReport, String> {
+pub(crate) fn collect() -> Result<NetworkDiagnosticReport, String> {
     Ok(NetworkDiagnosticReport { captured_at_unix_ms: 0, default_gateways: vec![], dns: vec![], proxy_enabled: false, proxy_server: String::new(), auto_config_url: String::new(), hosts_custom_entries: 0, connections: vec![], source: "unsupported".into() })
 }
 

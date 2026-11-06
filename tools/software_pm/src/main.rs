@@ -203,13 +203,110 @@ fn startup_digest(items: &[StartupValue]) -> String {
     digest_of(&refs)
 }
 
-/// 令牌同时绑定当前用户与系统级启动项，任一侧变化都会失效。
-fn full_digest(hkcu: &[StartupValue], machine: &[StartupValue]) -> String {
+/// 令牌同时绑定当前用户启动项、系统级启动项与服务启动类型。
+fn full_digest(
+    hkcu: &[StartupValue],
+    machine: &[StartupValue],
+    services: &[ServiceItem],
+) -> String {
     let mut parts = Vec::new();
     digest_parts("HKCU", hkcu, &mut parts);
     digest_parts("HKLM", machine, &mut parts);
+    for service in services {
+        parts.push(format!("SVC|{}|{}", service.name, service.start));
+    }
     let refs = parts.iter().map(String::as_str).collect::<Vec<_>>();
     digest_of(&refs)
+}
+
+#[derive(Clone)]
+struct ServiceItem {
+    name: String,
+    display: String,
+    start: u32,
+    path: String,
+}
+
+fn start_label(start: u32) -> &'static str {
+    match start {
+        2 => "自动",
+        3 => "手动",
+        4 => "禁用",
+        _ => "其他",
+    }
+}
+
+/// 只列出第三方 Win32 服务（ImagePath 不在 Windows 目录），并限制数量。
+fn read_service_items() -> Vec<ServiceItem> {
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let Ok(root) = hklm.open_subkey_with_flags("SYSTEM\\CurrentControlSet\\Services", KEY_READ)
+    else {
+        return Vec::new();
+    };
+    let mut items = Vec::new();
+    for name in root.enum_keys().flatten() {
+        let Ok(key) = root.open_subkey_with_flags(&name, KEY_READ) else {
+            continue;
+        };
+        let Ok(start) = key.get_value::<u32, _>("Start") else {
+            continue;
+        };
+        if !(2..=4).contains(&start) {
+            continue;
+        }
+        let Ok(kind) = key.get_value::<u32, _>("Type") else {
+            continue;
+        };
+        // 只保留 Win32 服务，排除内核/文件系统驱动。
+        if kind & 0x30 == 0 {
+            continue;
+        }
+        let path: String = key.get_value("ImagePath").unwrap_or_default();
+        let display: String = key
+            .get_value("DisplayName")
+            .unwrap_or_else(|_| name.clone());
+        let lower_path = path.to_lowercase();
+        let lower_display = display.to_lowercase();
+        // 过滤系统服务：Windows 目录、SystemRoot/WinDir 变量与系统资源型显示名。
+        let system = lower_path.contains("\\windows\\")
+            || lower_path.contains("%systemroot%")
+            || lower_path.contains("%windir%")
+            || lower_path.contains("system32")
+            || lower_path.contains("syswow64")
+            || lower_path.contains("windows")
+            || lower_display.contains("%systemroot%")
+            || lower_display.contains("%windir%")
+            || lower_display.contains("windows");
+        if system {
+            continue;
+        }
+        items.push(ServiceItem {
+            name,
+            display,
+            start,
+            path,
+        });
+    }
+    items.sort_by(|left, right| left.display.to_lowercase().cmp(&right.display.to_lowercase()));
+    items.truncate(100);
+    items
+}
+
+fn services_json(services: &[ServiceItem]) -> Value {
+    Value::Array(
+        services
+            .iter()
+            .map(|service| {
+                json!({
+                    "name": service.name,
+                    "display": service.display,
+                    "start": service.start,
+                    "startLabel": start_label(service.start),
+                    "path": service.path,
+                })
+            })
+            .collect(),
+    )
 }
 
 fn startup_items_json(items: &[StartupValue], hive: &str) -> Value {
@@ -450,17 +547,21 @@ fn scan() -> Result<Value, ToolError> {
     match read_startup_items() {
         Ok(items) => {
             let machine = read_machine_startup_items();
-            let token =
-                tool_protocol::issue_token(ACTION_TOGGLE, &full_digest(&items, &machine))?;
+            let services = read_service_items();
+            let token = tool_protocol::issue_token(
+                ACTION_TOGGLE,
+                &full_digest(&items, &machine, &services),
+            )?;
             if let Value::Object(map) = &mut data {
                 map.insert("startupItems".into(), startup_items_json(&items, "HKCU"));
                 map.insert(
                     "systemStartupItems".into(),
                     startup_items_json(&machine, "HKLM"),
                 );
+                map.insert("serviceItems".into(), services_json(&services));
                 if let Some(notes) = map.get_mut("notes").and_then(Value::as_array_mut) {
                     notes.push(Value::String(
-                        "系统级启动项启停需要管理员授权（UAC），由独立 lens_helper.exe 执行。"
+                        "系统级启动项与第三方服务启动类型需要管理员授权（UAC），由独立 lens_helper.exe 执行。"
                             .into(),
                     ));
                 }
@@ -787,7 +888,12 @@ fn toggle_startup(request: &Request) -> Result<Value, ToolError> {
     let change = change_from_value(&request.parameters)?;
     let before = read_startup_items()?;
     let machine = read_machine_startup_items();
-    tool_protocol::verify_token(token, ACTION_TOGGLE, &full_digest(&before, &machine))?;
+    let services = read_service_items();
+    tool_protocol::verify_token(
+        token,
+        ACTION_TOGGLE,
+        &full_digest(&before, &machine, &services),
+    )?;
     execute_changes(&before, vec![change], ACTION_TOGGLE)
 }
 
@@ -801,7 +907,12 @@ fn toggle_startups(request: &Request) -> Result<Value, ToolError> {
     let changes = parse_changes(request)?;
     let before = read_startup_items()?;
     let machine = read_machine_startup_items();
-    tool_protocol::verify_token(token, ACTION_TOGGLE, &full_digest(&before, &machine))?;
+    let services = read_service_items();
+    tool_protocol::verify_token(
+        token,
+        ACTION_TOGGLE,
+        &full_digest(&before, &machine, &services),
+    )?;
     execute_changes(&before, changes, "toggle_startups")
 }
 
@@ -814,7 +925,12 @@ fn restore_all(request: &Request) -> Result<Value, ToolError> {
     })?;
     let before = read_startup_items()?;
     let machine = read_machine_startup_items();
-    tool_protocol::verify_token(token, ACTION_TOGGLE, &full_digest(&before, &machine))?;
+    let services = read_service_items();
+    tool_protocol::verify_token(
+        token,
+        ACTION_TOGGLE,
+        &full_digest(&before, &machine, &services),
+    )?;
     let changes = before
         .iter()
         .filter(|entry| !entry.enabled)
@@ -869,30 +985,32 @@ fn ps_quote(text: &str) -> String {
     format!("'{}'", text.replace('\'', "''"))
 }
 
+fn new_nonce() -> String {
+    let source = format!("{}-{}", tool_protocol::now_ms(), std::process::id());
+    tool_protocol::digest_of(&[&source])[..32].to_string()
+}
+
 /// 通过 UAC 启动独立助手；请求/结果只经由受限目录下的 JSON 文件交换。
-fn run_elevated(nonce: &str, key: &str, name: &str, enable: bool) -> Result<Value, ToolError> {
+fn run_elevated(mut payload: Value) -> Result<Value, ToolError> {
     let dir = elevated_dir();
     std::fs::create_dir_all(&dir)
         .map_err(|error| ToolError::new("INTERNAL", format!("无法创建提权请求目录：{error}")))?;
+    let nonce = new_nonce();
     let request_path = dir.join(format!("req-{nonce}.json"));
     let result_path = dir.join(format!("res-{nonce}.json"));
-    let request = json!({
-        "version": 1,
-        "nonce": nonce,
-        "op": "system_startup_set",
-        "key": key,
-        "name": name,
-        "enable": enable,
-        "resultPath": result_path,
-    });
-    let serialized = serde_json::to_string(&request)
+    if let Value::Object(map) = &mut payload {
+        map.insert("version".into(), json!(1));
+        map.insert("nonce".into(), json!(nonce));
+        map.insert("resultPath".into(), json!(result_path));
+    }
+    let serialized = serde_json::to_string(&payload)
         .map_err(|error| ToolError::new("INTERNAL", format!("无法序列化提权请求：{error}")))?;
     std::fs::write(&request_path, serialized)
         .map_err(|error| ToolError::new("INTERNAL", format!("无法写入提权请求：{error}")))?;
 
     let helper = helper_path()?;
     let script = format!(
-        "$ErrorActionPreference='Stop'; try {{ $p = Start-Process -FilePath {} -ArgumentList '--request',{} -Verb RunAs -PassThru -Wait -WindowStyle Hidden; exit $p.ExitCode }} catch {{ exit 1223 }}",
+        "$ErrorActionPreference='Stop'; try {{ $p = Start-Process -FilePath {} -ArgumentList ('--request',('\"' + {} + '\"')) -Verb RunAs -PassThru -Wait -WindowStyle Hidden; exit $p.ExitCode }} catch {{ exit 1223 }}",
         ps_quote(&helper.to_string_lossy()),
         ps_quote(&request_path.to_string_lossy())
     );
@@ -949,10 +1067,11 @@ fn toggle_system_startup(request: &Request) -> Result<Value, ToolError> {
     let change = change_from_value(&request.parameters)?;
     let before = read_startup_items()?;
     let machine_before = read_machine_startup_items();
+    let services_before = read_service_items();
     tool_protocol::verify_token(
         token,
         ACTION_TOGGLE,
-        &full_digest(&before, &machine_before),
+        &full_digest(&before, &machine_before, &services_before),
     )?;
     let entry = machine_before
         .iter()
@@ -963,12 +1082,15 @@ fn toggle_system_startup(request: &Request) -> Result<Value, ToolError> {
         return Err(ToolError::new("CONFLICT", "系统级启动项已是目标状态。"));
     }
 
-    let nonce_source = format!("{}-{}", tool_protocol::now_ms(), std::process::id());
-    let nonce_full = tool_protocol::digest_of(&[&nonce_source]);
-    let nonce = &nonce_full[..32];
-    run_elevated(nonce, &change.key, &change.name, change.enable)?;
+    run_elevated(json!({
+        "op": "system_startup_set",
+        "key": change.key,
+        "name": change.name,
+        "enable": change.enable,
+    }))?;
 
     let machine_after = read_machine_startup_items();
+    let services_after = read_service_items();
     let verified = machine_after.iter().any(|entry| {
         entry.key == change.key && entry.name == change.name && entry.enabled == change.enable
     });
@@ -1014,10 +1136,160 @@ fn toggle_system_startup(request: &Request) -> Result<Value, ToolError> {
             "systemStartupItems".into(),
             startup_items_json(&machine_after, "HKLM"),
         );
+        map.insert("serviceItems".into(), services_json(&services_after));
     }
-    if let Ok(new_token) =
-        tool_protocol::issue_token(ACTION_TOGGLE, &full_digest(&after, &machine_after))
-    {
+    if let Ok(new_token) = tool_protocol::issue_token(
+        ACTION_TOGGLE,
+        &full_digest(&after, &machine_after, &services_after),
+    ) {
+        attach_token(&mut data, new_token);
+    }
+    Ok(data)
+}
+
+fn validate_service_name(name: &str) -> Result<(), ToolError> {
+    let valid = !name.trim().is_empty()
+        && name.chars().count() <= 256
+        && name != "."
+        && name != ".."
+        && !name.contains("::")
+        && !name.contains('\\')
+        && !name.contains('/')
+        && !name
+            .chars()
+            .any(|character| character == '\0' || character.is_control());
+    if valid {
+        Ok(())
+    } else {
+        Err(ToolError::new(
+            "INVALID_INPUT",
+            "服务名称无效：不能为空、不能包含路径分隔符或控制字符。",
+        ))
+    }
+}
+
+fn set_service_start(request: &Request) -> Result<Value, ToolError> {
+    let token = request.confirmation.as_deref().ok_or_else(|| {
+        ToolError::new(
+            "CONFIRMATION_REQUIRED",
+            "修改服务启动类型需要确认令牌，请先预览。",
+        )
+    })?;
+    let name = request
+        .parameters
+        .get("name")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ToolError::new("INVALID_INPUT", "缺少参数 name。"))?;
+    validate_service_name(name)?;
+    let start_type = request
+        .parameters
+        .get("startType")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| ToolError::new("INVALID_INPUT", "缺少参数 startType。"))?;
+    if !(2..=4).contains(&start_type) {
+        return Err(ToolError::new(
+            "INVALID_INPUT",
+            "startType 只能是 2（自动）、3（手动）或 4（禁用）。",
+        ));
+    }
+    let expect = request
+        .parameters
+        .get("expectCurrent")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| ToolError::new("INVALID_INPUT", "缺少参数 expectCurrent。"))?;
+
+    let hkcu = read_startup_items()?;
+    let machine = read_machine_startup_items();
+    let services = read_service_items();
+    tool_protocol::verify_token(
+        token,
+        ACTION_TOGGLE,
+        &full_digest(&hkcu, &machine, &services),
+    )?;
+    let entry = services
+        .iter()
+        .find(|service| service.name == name)
+        .ok_or_else(|| {
+            ToolError::new(
+                "CONFLICT",
+                "服务不存在，或不是第三方 Win32 服务，可能已被移除。",
+            )
+        })?;
+    if entry.start as u64 != expect {
+        return Err(ToolError::new(
+            "CONFLICT",
+            "服务启动类型已变化，请重新预览后再操作。",
+        ));
+    }
+    if entry.start as u64 == start_type {
+        return Err(ToolError::new("CONFLICT", "服务启动类型已是目标值。"));
+    }
+
+    run_elevated(json!({
+        "op": "service_set_start",
+        "service": name,
+        "startType": start_type,
+        "expectCurrent": expect,
+    }))?;
+
+    let services_after = read_service_items();
+    let verified = services_after
+        .iter()
+        .any(|service| service.name == name && service.start as u64 == start_type);
+    if !verified {
+        return Err(ToolError::new(
+            "INTERNAL",
+            "提权后回读服务启动类型不一致。",
+        ));
+    }
+    let hkcu_after = read_startup_items()?;
+    let machine_after = read_machine_startup_items();
+    let _ = tool_protocol::append_audit_log(json!({
+        "tool": "software_pm",
+        "action": "set_service_start",
+        "service": name,
+        "before": expect,
+        "after": start_type,
+        "result": "ok",
+        "at": tool_protocol::now_ms(),
+    }));
+
+    let mut data = table(
+        json!([
+            item("服务", name),
+            item("原启动类型", start_label(expect as u32)),
+            item("新启动类型", start_label(start_type as u32)),
+        ]),
+        json!([
+            column("name", "服务"),
+            column("before", "原启动类型"),
+            column("after", "新启动类型"),
+            column("status", "结果"),
+        ]),
+        json!([{
+            "name": name,
+            "before": start_label(expect as u32),
+            "after": start_label(start_type as u32),
+            "status": "已修改",
+        }]),
+        json!([
+            "服务启动类型已由独立提权助手修改，并已回读确认。",
+            "修改在重启后完全生效；正在运行的服务不会被停止。",
+            "再次操作需要重新预览获取新令牌。",
+        ]),
+    );
+    if let Value::Object(map) = &mut data {
+        map.insert("startupItems".into(), startup_items_json(&hkcu_after, "HKCU"));
+        map.insert(
+            "systemStartupItems".into(),
+            startup_items_json(&machine_after, "HKLM"),
+        );
+        map.insert("serviceItems".into(), services_json(&services_after));
+    }
+    if let Ok(new_token) = tool_protocol::issue_token(
+        ACTION_TOGGLE,
+        &full_digest(&hkcu_after, &machine_after, &services_after),
+    ) {
         attach_token(&mut data, new_token);
     }
     Ok(data)
@@ -1033,6 +1305,7 @@ fn main() {
             "toggle_startups",
             "restore_all",
             "toggle_system_startup",
+            "set_service_start",
         ],
         |request| match request.action.as_str() {
             "preview" => scan(),
@@ -1040,6 +1313,7 @@ fn main() {
             "toggle_startups" => toggle_startups(request),
             "restore_all" => restore_all(request),
             "toggle_system_startup" => toggle_system_startup(request),
+            "set_service_start" => set_service_start(request),
             other => Err(ToolError::unsupported(other)),
         },
     );
@@ -1246,12 +1520,32 @@ mod tests {
             enabled: true,
         }];
         assert_ne!(
-            full_digest(&hkcu, &machine),
-            full_digest(&hkcu, &Vec::new())
+            full_digest(&hkcu, &machine, &[]),
+            full_digest(&hkcu, &Vec::new(), &[])
         );
         assert_eq!(
-            full_digest(&hkcu, &machine),
-            full_digest(&hkcu, &machine.clone())
+            full_digest(&hkcu, &machine, &[]),
+            full_digest(&hkcu, &machine.clone(), &[])
+        );
+    }
+
+    #[test]
+    fn full_digest_binds_service_start_types() {
+        let auto = vec![ServiceItem {
+            name: "VendorAgent".into(),
+            display: "Vendor Agent".into(),
+            start: 2,
+            path: "C:\\Vendor\\agent.exe".into(),
+        }];
+        let disabled = vec![ServiceItem {
+            name: "VendorAgent".into(),
+            display: "Vendor Agent".into(),
+            start: 4,
+            path: "C:\\Vendor\\agent.exe".into(),
+        }];
+        assert_ne!(
+            full_digest(&[], &[], &auto),
+            full_digest(&[], &[], &disabled)
         );
     }
 

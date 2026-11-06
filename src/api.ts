@@ -1051,3 +1051,10 @@ export async function openPathInExplorer(path: string): Promise<void> {
   }
   await invoke("open_path_in_explorer", { path });
 }
+
+export async function openRecycleBin(): Promise<void> {
+  if (!isTauri()) {
+    throw new Error("打开回收站仅在 Windows 桌面版中可用");
+  }
+  await invoke("open_recycle_bin");
+}

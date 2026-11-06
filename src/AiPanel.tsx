@@ -682,6 +682,45 @@ export default function AiPanel() {
                         </Group>
                       </Group>
 
+                      {(entry.answer.checks?.length ?? 0) > 0 && (
+                        <Box mt="md">
+                          <Text size="xs" c="dimmed" fw={700}>
+                            AI 请求的只读检查
+                          </Text>
+                          <Stack gap={6} mt={6}>
+                            {(entry.answer.checks ?? []).map((check, checkIndex) => (
+                              <Group
+                                key={`${check.toolId}-${checkIndex}`}
+                                gap="xs"
+                                wrap="nowrap"
+                                align="flex-start"
+                              >
+                                <Badge
+                                  color={check.ok ? "teal" : "red"}
+                                  variant="light"
+                                  size="sm"
+                                  style={{ flexShrink: 0 }}
+                                >
+                                  {check.label}
+                                </Badge>
+                                <Tooltip
+                                  label={compactValue(check.summary)}
+                                  multiline
+                                  maw={420}
+                                  position="top-start"
+                                >
+                                  <Text size="xs" c="dimmed" truncate>
+                                    {check.ok ? "完成" : "失败"} · {check.durationMs} ms
+                                    {check.error ? ` · ${check.error}` : ""}
+                                    {check.reason ? ` · ${check.reason}` : ""}
+                                  </Text>
+                                </Tooltip>
+                              </Group>
+                            ))}
+                          </Stack>
+                        </Box>
+                      )}
+
                       {entry.answer.degraded ? (
                         <Alert color="orange" mt="md" icon={<IconAlertCircle />} title="AI 解读不可用">
                           {entry.answer.degradedReason ?? "模型服务不可用。"}
@@ -1051,7 +1090,7 @@ export default function AiPanel() {
                 </Box>
               </SimpleGrid>
               <Alert color="blue" variant="light" mt="md" icon={<IconLock />}>
-                模型输出不直接执行任何命令。首版没有写工具调用通道；写操作仍需本地 UI
+                模型只能请求白名单内的只读检查（最近事件元数据、驱动问题、网络摘要、启动项、计划任务），由宿主校验参数、限制超时并记录审计；没有 shell、脚本、路径或写操作通道。写操作仍需本地 UI
                 预览、二次确认和确认令牌。发送前可在“AI 解读”页预览完整载荷。
               </Alert>
             </Card>

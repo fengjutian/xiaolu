@@ -6,6 +6,27 @@ use winreg::RegKey;
 const RUN_SUBKEYS: [&str; 2] = ["Run", "RunOnce"];
 const BACKUP_PATH: &str = "Software\\SystemLens\\DisabledStartup";
 const OP_STARTUP: &str = "system_startup_set";
+const OP_SERVICE: &str = "service_set_start";
+const SERVICE_PATH: &str = "SYSTEM\\CurrentControlSet\\Services";
+const START_TYPES: [u32; 3] = [2, 3, 4];
+
+fn valid_service_name(name: &str) -> bool {
+    !name.trim().is_empty()
+        && name.chars().count() <= 256
+        && name != "."
+        && name != ".."
+        && !name.contains("::")
+        && !name.contains('\\')
+        && !name.contains('/')
+        && !name
+            .chars()
+            .any(|character| character == '\0' || character.is_control())
+}
+
+fn valid_start_type(value: u64) -> Option<u32> {
+    let value = u32::try_from(value).ok()?;
+    START_TYPES.contains(&value).then_some(value)
+}
 
 fn elevated_dir() -> Option<PathBuf> {
     let base = std::env::var_os("LOCALAPPDATA")?;
@@ -124,6 +145,34 @@ fn set_startup(key: &str, name: &str, enable: bool) -> Result<String, String> {
     })
 }
 
+fn set_service_start(service: &str, start_type: u32, expect: u32) -> Result<String, String> {
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let path = format!("{SERVICE_PATH}\\{service}");
+    let key = hklm
+        .open_subkey_with_flags(&path, KEY_READ | KEY_WRITE)
+        .map_err(|error| registry_error("打开服务注册表", error))?;
+    let current: u32 = key
+        .get_value("Start")
+        .map_err(|error| registry_error("读取服务启动类型", error))?;
+    if current != expect {
+        return Err(format!(
+            "服务启动类型已变化（当前 {current}，预期 {expect}）。"
+        ));
+    }
+    if current == start_type {
+        return Ok("服务启动类型已是目标值".into());
+    }
+    key.set_value("Start", &start_type)
+        .map_err(|error| registry_error("写入服务启动类型", error))?;
+    let after: u32 = key
+        .get_value("Start")
+        .map_err(|error| registry_error("回读服务启动类型", error))?;
+    if after != start_type {
+        return Err("写入后回读不一致。".into());
+    }
+    Ok("服务启动类型已修改，重启后完全生效。".into())
+}
+
 fn write_result(path: &Path, payload: &Value) -> Result<(), String> {
     let text = serde_json::to_string_pretty(payload)
         .map_err(|error| format!("无法序列化结果：{error}"))?;
@@ -195,18 +244,23 @@ fn main() {
         std::process::exit(2);
     };
 
+    let op = request
+        .get("op")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
     let response = match run(&request) {
         Ok(message) => json!({
             "ok": true,
             "nonce": nonce,
-            "op": OP_STARTUP,
+            "op": op,
             "message": message,
             "at": now_ms(),
         }),
         Err(error) => json!({
             "ok": false,
             "nonce": nonce,
-            "op": OP_STARTUP,
+            "op": op,
             "error": error,
             "at": now_ms(),
         }),
@@ -223,9 +277,14 @@ fn run(request: &Value) -> Result<String, String> {
         return Err("不支持的请求版本。".into());
     }
     let op = request.get("op").and_then(Value::as_str).unwrap_or_default();
-    if op != OP_STARTUP {
-        return Err(format!("不支持的操作：{op}"));
+    match op {
+        OP_STARTUP => run_startup(request),
+        OP_SERVICE => run_service(request),
+        _ => Err(format!("不支持的操作：{op}")),
     }
+}
+
+fn run_startup(request: &Value) -> Result<String, String> {
     let key = request.get("key").and_then(Value::as_str).unwrap_or_default();
     if !valid_key(key) {
         return Err("只支持 HKLM Run / RunOnce。".into());
@@ -239,6 +298,27 @@ fn run(request: &Value) -> Result<String, String> {
         .and_then(Value::as_bool)
         .ok_or_else(|| "缺少 enable。".to_string())?;
     set_startup(key, name, enable)
+}
+
+fn run_service(request: &Value) -> Result<String, String> {
+    let service = request
+        .get("service")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if !valid_service_name(service) {
+        return Err("服务名称无效。".into());
+    }
+    let start_type = request
+        .get("startType")
+        .and_then(Value::as_u64)
+        .and_then(valid_start_type)
+        .ok_or_else(|| "startType 必须是 2（自动）、3（手动）或 4（禁用）。".to_string())?;
+    let expect = request
+        .get("expectCurrent")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "缺少 expectCurrent。".to_string())?;
+    let expect = u32::try_from(expect).map_err(|_| "expectCurrent 超出范围。".to_string())?;
+    set_service_start(service, start_type, expect)
 }
 
 fn now_ms() -> u64 {
@@ -294,5 +374,24 @@ mod tests {
         assert!(result_path(&wrong_name, &dir).is_none());
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn service_name_rejects_path_separators() {
+        assert!(valid_service_name("Spooler"));
+        assert!(valid_service_name("Vendor Agent"));
+        assert!(!valid_service_name(""));
+        assert!(!valid_service_name("..\\evil"));
+        assert!(!valid_service_name("a/b"));
+        assert!(!valid_service_name("line\nbreak"));
+    }
+
+    #[test]
+    fn start_types_are_limited_to_auto_manual_disabled() {
+        assert_eq!(valid_start_type(2), Some(2));
+        assert_eq!(valid_start_type(3), Some(3));
+        assert_eq!(valid_start_type(4), Some(4));
+        assert_eq!(valid_start_type(0), None);
+        assert_eq!(valid_start_type(5), None);
     }
 }

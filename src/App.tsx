@@ -111,6 +111,7 @@ import {
   listToolboxTools,
   notifySensorAlert,
   openPathInExplorer,
+  openRecycleBin,
   runToolAction,
   sendTestNotification,
   saveNotificationSettings,
@@ -4956,6 +4957,57 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
     }
   };
 
+  const setServiceStart = async (
+    tool: ToolDescriptor,
+    item: NonNullable<ToolResult["serviceItems"]>[number],
+    startType: number,
+  ) => {
+    const token = generic?.data.confirmationToken;
+    if (!token) {
+      setApplyError("确认令牌缺失或已使用，请重新运行预览。");
+      return;
+    }
+    const label =
+      startType === 2 ? "自动" : startType === 3 ? "手动" : "禁用";
+    if (
+      !window.confirm(
+        `确认将服务「${item.display}」的启动类型改为「${label}」？将弹出管理员授权（UAC）。`,
+      )
+    )
+      return;
+    setApplying(`${tool.id}:set_service_start`);
+    setApplyError(null);
+    try {
+      await runToolAction(tool.id, "set_service_start", token, {
+        name: item.name,
+        startType,
+        expectCurrent: item.start,
+      });
+      setGenericSuccess(`「${item.display}」已改为${label}，正在刷新…`);
+      await runGeneric(tool);
+    } catch (reason) {
+      setApplyError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setApplying(null);
+    }
+  };
+
+  const openCleanupRecycleBin = async () => {
+    try {
+      await openRecycleBin();
+    } catch (reason) {
+      setApplyError(reason instanceof Error ? reason.message : String(reason));
+    }
+  };
+
+  const openCleanupJournal = async (dir: string) => {
+    try {
+      await openPathInExplorer(dir);
+    } catch (reason) {
+      setApplyError(reason instanceof Error ? reason.message : String(reason));
+    }
+  };
+
   const scan = async () => {
     setScanning(true);
     setScanError(null);
@@ -5311,6 +5363,32 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                 </Group>
               </Box>
             )}
+          {generic.tool.id === "clean_master" &&
+            typeof generic.data.journalPath === "string" && (
+              <Group mt="md" gap="xs" align="center">
+                <Button
+                  size="xs"
+                  variant="light"
+                  onClick={() => void openCleanupRecycleBin()}
+                >
+                  打开回收站还原
+                </Button>
+                {typeof generic.data.journalDir === "string" && (
+                  <Button
+                    size="xs"
+                    variant="light"
+                    onClick={() =>
+                      void openCleanupJournal(String(generic.data.journalDir))
+                    }
+                  >
+                    打开清单目录
+                  </Button>
+                )}
+                <Text size="xs" c="dimmed" truncate maw={420}>
+                  清单：{generic.data.journalPath}
+                </Text>
+              </Group>
+            )}
           {generic.tool.id === "software_pm" &&
             (generic.data.startupItems?.length ?? 0) > 0 && (
               <Box mt="md">
@@ -5453,6 +5531,82 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                                 >
                                   {item.enabled ? "停用" : "启用（还原）"}
                                 </Button>
+                              </Table.Td>
+                            </Table.Tr>
+                          ))}
+                        </Table.Tbody>
+                      </Table>
+                    </ScrollArea>
+                  </Box>
+                )}
+                {(generic.data.serviceItems?.length ?? 0) > 0 && (
+                  <Box mt="lg">
+                    <Text size="sm" fw={700}>
+                      第三方服务启动类型
+                    </Text>
+                    <Text size="xs" c="dimmed" mt={4}>
+                      修改需要管理员授权，重启后完全生效；不会停止正在运行的服务
+                    </Text>
+                    <ScrollArea type="auto" mt="xs">
+                      <Table miw={820} verticalSpacing="xs">
+                        <Table.Thead>
+                          <Table.Tr>
+                            <Table.Th>服务</Table.Th>
+                            <Table.Th>当前</Table.Th>
+                            <Table.Th>改为</Table.Th>
+                          </Table.Tr>
+                        </Table.Thead>
+                        <Table.Tbody>
+                          {(generic.data.serviceItems ?? []).map((item) => (
+                            <Table.Tr key={item.name}>
+                              <Table.Td>
+                                <Text size="sm" fw={600}>
+                                  {item.display}
+                                </Text>
+                                <Text size="xs" c="dimmed">
+                                  {item.name}
+                                </Text>
+                              </Table.Td>
+                              <Table.Td>
+                                <Badge size="xs" variant="light">
+                                  {item.startLabel}
+                                </Badge>
+                              </Table.Td>
+                              <Table.Td>
+                                <Group gap={4}>
+                                  {[2, 3, 4].map((value) => (
+                                    <Button
+                                      key={value}
+                                      size="xs"
+                                      variant="light"
+                                      color={
+                                        value === 2
+                                          ? "teal"
+                                          : value === 3
+                                            ? "blue"
+                                            : "orange"
+                                      }
+                                      disabled={item.start === value}
+                                      loading={
+                                        applying ===
+                                        `${generic.tool.id}:set_service_start`
+                                      }
+                                      onClick={() =>
+                                        void setServiceStart(
+                                          generic.tool,
+                                          item,
+                                          value,
+                                        )
+                                      }
+                                    >
+                                      {value === 2
+                                        ? "自动"
+                                        : value === 3
+                                          ? "手动"
+                                          : "禁用"}
+                                    </Button>
+                                  ))}
+                                </Group>
                               </Table.Td>
                             </Table.Tr>
                           ))}
@@ -6406,7 +6560,7 @@ export default function App() {
           </Text>
         </Paper>
         <Text size="xs" c="dimmed">
-          v0.53.0 · 25 个工具 · AI 解读
+          v0.54.0 · 25 个工具 · AI 解读
         </Text>
       </aside>
       <main className="content">

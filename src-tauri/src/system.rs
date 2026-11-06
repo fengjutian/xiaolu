@@ -222,6 +222,18 @@ mod startup {
 #[tauri::command(async)]
 pub fn get_startup_items() -> Vec<startup::StartupItem> { startup::list() }
 
+/// Read-only startup summary for the AI tool gateway: names and state only,
+/// no registry commands or executable paths.
+#[cfg(windows)]
+pub(crate) fn startup_items_json() -> Result<serde_json::Value, String> {
+    serde_json::to_value(startup::list()).map_err(|error| format!("无法序列化启动项：{error}"))
+}
+
+#[cfg(not(windows))]
+pub(crate) fn startup_items_json() -> Result<serde_json::Value, String> {
+    Ok(serde_json::json!([]))
+}
+
 #[cfg(windows)]
 #[tauri::command(async)]
 pub fn set_startup_enabled(name: String, enabled: bool) -> Result<(), String> { startup::set_enabled(name, enabled) }
