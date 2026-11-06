@@ -4684,6 +4684,19 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
     }
   };
 
+  const openDriverTarget = async (tool: ToolDescriptor, id: string) => {
+    setApplying(`${tool.id}:open_official`);
+    setApplyError(null);
+    try {
+      await runToolAction(tool.id, "open_official", null, { id });
+      setGenericSuccess("已打开 Windows 官方驱动界面");
+    } catch (reason) {
+      setApplyError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setApplying(null);
+    }
+  };
+
   const openOfficialRuntime = async (tool: ToolDescriptor, id: string) => {
     setApplying(`${tool.id}:open_official`);
     setApplyError(null);
@@ -5679,6 +5692,46 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                 )}
               </Box>
             )}
+          {generic.tool.id === "driver_manager" && (
+            <Box mt="md">
+              <Text size="sm" fw={700}>
+                驱动安装与回滚
+              </Text>
+              <Text size="xs" c="dimmed" mt={4}>
+                本工具只做检测；安装、更新与回滚在 Windows 官方界面完成
+              </Text>
+              <Group mt="xs">
+                <Button
+                  size="xs"
+                  variant="light"
+                  loading={applying === `${generic.tool.id}:open_official`}
+                  onClick={() =>
+                    void openDriverTarget(generic.tool, "device_manager")
+                  }
+                >
+                  打开设备管理器
+                </Button>
+                <Button
+                  size="xs"
+                  variant="light"
+                  onClick={() =>
+                    void openDriverTarget(generic.tool, "windows_update")
+                  }
+                >
+                  Windows 更新
+                </Button>
+                <Button
+                  size="xs"
+                  variant="light"
+                  onClick={() =>
+                    void openDriverTarget(generic.tool, "optional_updates")
+                  }
+                >
+                  可选更新
+                </Button>
+              </Group>
+            </Box>
+          )}
           {generic.tool.id === "c_expand" &&
             (generic.data.expandItems?.length ?? 0) > 0 && (
               <Box mt="md">

@@ -80,7 +80,12 @@ if (Test-Path $helperProject) {
         New-Item -ItemType Directory -Force -Path $winoptDir | Out-Null
     }
     Copy-Item $helperBinary (Join-Path $winoptDir "lens_helper.exe") -Force
-    Write-Host "  -> lens_helper.exe (software_pm, ai_cooling, defrag, adblock_master, bsod_repair, winopt_assistant)"
+    $expandDir = Join-Path $outRoot "c_expand"
+    if (-not (Test-Path $expandDir)) {
+        New-Item -ItemType Directory -Force -Path $expandDir | Out-Null
+    }
+    Copy-Item $helperBinary (Join-Path $expandDir "lens_helper.exe") -Force
+    Write-Host "  -> lens_helper.exe (software_pm, ai_cooling, defrag, adblock_master, bsod_repair, winopt_assistant, c_expand)"
 }
 
 Write-Host "Tool packaging complete: $outRoot"

@@ -2,9 +2,33 @@ use serde_json::{json, Value};
 use std::cmp::Ordering;
 use std::os::windows::process::CommandExt;
 use std::process::Command;
-use tool_protocol::{column, item, table, ToolError};
+use tool_protocol::{column, item, table, Request, ToolError};
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+const ACTION_OPEN: &str = "open_official";
+
+fn error_label(code: u64) -> &'static str {
+    match code {
+        1 => "设备未配置正确",
+        10 => "无法启动",
+        12 => "资源不足",
+        18 => "需重新安装驱动",
+        22 => "设备已禁用",
+        28 => "未安装驱动",
+        31 => "无法加载驱动",
+        43 => "驱动报告设备故障",
+        _ => "设备异常",
+    }
+}
+
+fn official_target(id: &str) -> Option<(&'static str, &'static str)> {
+    match id {
+        "device_manager" => Some(("mmc.exe", "devmgmt.msc")),
+        "windows_update" => Some(("explorer.exe", "ms-settings:windowsupdate")),
+        "optional_updates" => Some(("explorer.exe", "ms-settings:windowsupdate-optionalupdates")),
+        _ => None,
+    }
+}
 
 fn scan() -> Result<Value, ToolError> {
     let script = r#"
@@ -38,7 +62,6 @@ try {
   }
 } catch { $wuError=[string]$_.Exception.Message }
 @{drivers=@($drivers); problems=@($problems); updates=@($updates); wuError=$wuError} | ConvertTo-Json -Depth 5 -Compress
-@{drivers=@($drivers); problems=@($problems); updates=@($updates)} | ConvertTo-Json -Depth 5 -Compress
 "#;
     let output = Command::new("powershell.exe")
         .creation_flags(CREATE_NO_WINDOW)
@@ -90,7 +113,7 @@ try {
         let detail = if !signed {
             "驱动未签名".to_string()
         } else {
-            format!("PnP 错误码 {error}")
+            format!("{}（PnP {error}）", error_label(error))
         };
         rows.push(json!({
             "kind": "驱动异常",
@@ -155,9 +178,9 @@ try {
     }
 
     let mut notes = vec![
-        json!("只读预检：只读取驱动清单与 Windows Update 候选，不下载、不安装、不回滚。"),
+        json!("只读预检：读取驱动清单与 Windows Update 候选，不下载、不安装、不回滚。"),
         json!("Windows Update 常不返回签名标记，本工具不把“未知”当作未签名。"),
-        json!("安装与驱动回滚需后续版本单独授权并提供恢复点。"),
+        json!("安装/回滚请通过设备管理器或 Windows 更新完成；本工具只打开官方入口。"),
     ];
     if !wu_error.is_empty() {
         notes.push(json!(format!("Windows Update 查询失败：{wu_error}")));
@@ -216,11 +239,66 @@ fn compare_versions(left: &str, right: &str) -> Ordering {
     Ordering::Equal
 }
 
+fn open_official(request: &Request) -> Result<Value, ToolError> {
+    let id = request
+        .parameters
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ToolError::new("INVALID_INPUT", "缺少参数 id。"))?;
+    let (executable, argument) = official_target(id)
+        .ok_or_else(|| ToolError::new("INVALID_INPUT", "不支持的官方入口。"))?;
+    Command::new(executable)
+        .creation_flags(CREATE_NO_WINDOW)
+        .arg(argument)
+        .spawn()
+        .map_err(|error| ToolError::new("INTERNAL", format!("无法打开系统界面：{error}")))?;
+    let _ = tool_protocol::append_audit_log(json!({
+        "tool": "driver_manager",
+        "action": ACTION_OPEN,
+        "id": id,
+        "at": tool_protocol::now_ms(),
+    }));
+    Ok(table(
+        json!([item("已打开", id)]),
+        json!([column("item", "项目"), column("value", "结果")]),
+        json!([{"item": "系统界面", "value": id}]),
+        json!([
+            "已打开 Windows 自带界面，请在其中手动完成安装、更新或回滚。",
+            "本工具不下载、不安装、不替换驱动。",
+        ]),
+    ))
+}
+
 fn main() {
-    tool_protocol::serve(
+    tool_protocol::serve_with_request(
         "driver_manager",
         env!("CARGO_PKG_VERSION"),
-        &["preview"],
-        |_| scan(),
+        &["preview", ACTION_OPEN],
+        |request| match request.action.as_str() {
+            "preview" => scan(),
+            ACTION_OPEN => open_official(request),
+            other => Err(ToolError::unsupported(other)),
+        },
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_known_official_targets() {
+        assert!(official_target("device_manager").is_some());
+        assert!(official_target("windows_update").is_some());
+        assert!(official_target("optional_updates").is_some());
+        assert!(official_target("cmd").is_none());
+        assert!(official_target("").is_none());
+    }
+
+    #[test]
+    fn error_codes_have_labels() {
+        assert_eq!(error_label(28), "未安装驱动");
+        assert_eq!(error_label(10), "无法启动");
+        assert_eq!(error_label(99), "设备异常");
+    }
 }

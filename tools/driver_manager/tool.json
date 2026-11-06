@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "id": "driver_manager",
   "name": "驱动管理",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "apiVersion": 1,
-  "description": "只读检查驱动异常与 Windows Update 更新候选",
+  "description": "检查驱动异常与 Windows Update 候选，可打开设备管理器/Windows 更新",
   "category": "driver",
   "risk": "read_only",
   "entry": "driver_manager.exe",
@@ -16,7 +16,10 @@
     "network": true,
     "elevation": "none"
   },
-  "actions": [{ "id": "preview", "label": "预览", "write": false }],
+  "actions": [
+    { "id": "preview", "label": "预览", "write": false },
+    { "id": "open_official", "label": "打开系统驱动界面", "write": false }
+  ],
   "limits": { "timeoutMs": 180000, "maxOutputBytes": 4194304 },
   "ui": { "kind": "table" },
   "rollback": "none",
