@@ -238,3 +238,36 @@ dist-tools/
 3. 工具是否需要独立安装包/可选下载，还是随主应用分发？
 4. 清单签名使用 Authenticode，还是仅 SHA-256 + 发布清单？
 5. 共享 `tools/shared` 与“一程序一目录”是否冲突（共享代码编译进每个二进制）？
+
+## 11. 实现状态（0.34.0）
+
+### 确认令牌（已实现）
+
+- 工具在 `preview` 中签发令牌：`hex(payload).hex(HMAC-SHA256(secret, payload))`。
+- payload 包含协议版本、动作、对象摘要、过期时间（5 分钟）与随机 nonce。
+- 宿主每次启动生成 32 字节随机密钥（`BCryptGenRandom`），通过
+  `SYSTEM_LENS_TOKEN_SECRET` 环境变量只下发给工具子进程。
+- 宿主校验：动作必须在清单中声明 `write: true`、工具非 `read_only`、令牌非空且未被使用。
+  一次性使用由宿主内存集合保证；重复提交返回“确认令牌已使用”。
+- 工具校验：签名、动作、对象摘要与有效期；对象变化（如电源计划列表）会使旧令牌失效。
+- 实现位置：`tools/shared/src/lib.rs`（令牌与摘要）、`src-tauri/src/toolbox_host.rs`（下发与授权）。
+
+### 操作日志（已实现）
+
+- 路径：`%LOCALAPPDATA%\SystemLens\tool-actions.jsonl`（可用 `SYSTEM_LENS_STATE_DIR` 覆盖）。
+- 每次写操作追加一行 JSON：工具、动作、对象标识、原值/目标值、时间、结果；
+  不记录文件名、文件内容或用户数据。
+
+### 已实现的写工具
+
+| 工具 | 动作 | 回滚方式 |
+|---|---|---|
+| `lockscreen` | `lock` | 无状态变更，解锁即恢复 |
+| `pc_optimizer` | `apply`（切换电源计划） | 日志记录原计划 GUID，重新预览后切回 |
+
+### 尚未实现
+
+- 缓存/回收站清理：需要回收站回滚、占用检测与路径白名单。
+- 逐项电源设置、启动项修改：需要逐项原值记录与恢复点。
+- 清单哈希校验（`hash` 字段）与 Authenticode 签名。
+- `confirmationToken` 的前端过期提示；当前由工具在过期后返回 `TOKEN_EXPIRED`。

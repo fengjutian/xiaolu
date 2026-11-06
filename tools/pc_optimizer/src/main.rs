@@ -316,6 +316,12 @@ fn apply(request: &Request) -> Result<Value, ToolError> {
 
     // SAFETY: target 来自已枚举且校验过的计划 GUID。
     let rc = unsafe { PowerSetActiveScheme(std::ptr::null_mut(), &target) };
+    if rc == 5 {
+        return Err(ToolError::new(
+            "PERMISSION_DENIED",
+            "当前进程没有写入电源策略的权限（受限账户或沙箱环境）。请在普通桌面会话中重试；仍失败时以管理员身份运行。",
+        ));
+    }
     if rc != 0 {
         return Err(ToolError::new(
             "INTERNAL",

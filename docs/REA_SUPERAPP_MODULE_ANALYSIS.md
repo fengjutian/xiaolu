@@ -96,7 +96,7 @@
 
 ## 6. 实施状态（2026-11-06）
 
-按第 4 节的 P0 顺序，只读诊断工具已全部落地为 `tools/<id>/` 独立进程（14 个可运行工具）：
+按第 4 节的 P0 顺序，只读诊断工具已全部落地为 `tools/<id>/` 独立进程（16 个可运行工具：14 只读 + 2 写）：
 
 | REA 功能 | 本仓库工具 | 当前能力 | 边界 |
 |---|---|---|---|
@@ -108,9 +108,9 @@
 
 其余已登记但未复刻的模块保持在工具箱“规划中”状态，按 P1–P3 顺序逐项评审后再实现：
 
-- P1 低风险写操作：`eye_care`、`lockscreen`、缓存清理、逐项电源设置与用户确认的启动项修改。
+- P1 低风险写操作：`lockscreen`（会话锁定）与 `pc_optimizer`（活动电源计划切换）已实现确认令牌、审计日志与原值记录；缓存清理、逐项电源设置、用户确认的启动项修改与 `eye_care` 待实现。
 - P2 独立工具：`omni_zip`、`master_pdf`、`start_menu_pro`、`desktop_quick`。
 - P3 高风险能力：`c_expand`、`adblock_master`、`intercept_bs`、服务批量修改。
 - 暂缓：`multi_wechat`、`push_accelerator`、`push_open_claw`。
 
-写操作目前全部未实现；`preview → confirmationToken → apply`、工具清单哈希校验与回滚记录仍待 P1 完成。
+写操作框架已落地：`preview → confirmationToken → apply`、一次性令牌（宿主记录）与本地操作日志已用于上述两个写工具。清单哈希校验、恢复点与批量回滚仍待后续完成。

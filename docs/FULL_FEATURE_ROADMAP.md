@@ -243,6 +243,9 @@ v0.34.0 新增（P1 写操作框架与首批写工具）：
 - 操作审计：`%LOCALAPPDATA%\SystemLens\tool-actions.jsonl`，只记录工具、动作、
   对象标识、时间与结果，不记录用户内容
 - 工具箱累计 **16 个可运行工具**（14 只读 + 2 写），规划中 **15 项**
+- 验证：`lockscreen` 预览签发令牌、篡改令牌返回 `INVALID_TOKEN`、缺失令牌返回
+  `CONFIRMATION_REQUIRED`；`pc_optimizer` 计划枚举、令牌与计划列表绑定通过，
+  切换在受限沙箱返回 `PERMISSION_DENIED`（需普通桌面会话复核）
 - 缓存清理、逐项电源设置、启动项修改与哈希校验仍待后续版本
 
 现有代码入口：

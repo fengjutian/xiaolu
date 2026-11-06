@@ -11,6 +11,7 @@ pub const TOKEN_TTL_MS: u64 = 5 * 60 * 1000;
 const TOKEN_SECRET_ENV: &str = "SYSTEM_LENS_TOKEN_SECRET";
 const STATE_DIR_ENV: &str = "SYSTEM_LENS_STATE_DIR";
 
+#[derive(Debug)]
 pub struct ToolError {
     pub code: String,
     pub message: String,
@@ -391,6 +392,18 @@ mod tests {
     fn digest_is_order_independent() {
         assert_eq!(digest_of(&["b", "a"]), digest_of(&["a", "b"]));
         assert_ne!(digest_of(&["a", "b"]), digest_of(&["a", "c"]));
+    }
+
+    #[test]
+    fn audit_log_appends_json_line() {
+        let dir = std::env::temp_dir().join(format!("system-lens-audit-{}", std::process::id()));
+        std::env::set_var(STATE_DIR_ENV, &dir);
+        append_audit_log(json!({"tool": "test", "action": "run"})).expect("write audit log");
+        let text = std::fs::read_to_string(dir.join("tool-actions.jsonl")).expect("read log");
+        std::env::remove_var(STATE_DIR_ENV);
+        std::fs::remove_dir_all(&dir).ok();
+        assert!(text.contains("\"tool\":\"test\""));
+        assert!(text.ends_with('\n'));
     }
 
     #[test]
