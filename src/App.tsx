@@ -178,6 +178,7 @@ import type {
   SystemSnapshot,
   PowerSettingOption,
   WinoptSetting,
+  PrivacySetting,
   ToolActionDescriptor,
   ToolDescriptor,
   ToolResult,
@@ -4765,6 +4766,12 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
 
   const [winoptDraft, setWinoptDraft] = useState<Record<string, number>>({});
   const [dupKeep, setDupKeep] = useState<Record<string, string>>({});
+  const [privacyDraft, setPrivacyDraft] = useState<Record<string, string>>({});
+
+  const updatePrivacyValue = (id: string, value: string | null) => {
+    if (value == null) return;
+    setPrivacyDraft((current) => ({ ...current, [id]: value }));
+  };
 
   const updateWinoptValue = (id: string, value: number | string) => {
     const parsed = typeof value === "number" ? value : Number.parseInt(value, 10);
@@ -4823,6 +4830,9 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
           ),
         );
       }
+      if (tool.id === "privacy_protection") {
+        setPrivacyDraft({});
+      }
     } catch (reason) {
       setGenericError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -4864,6 +4874,9 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
       }
       if (data.winoptSettings) {
         setWinoptDraft({});
+      }
+      if (data.privacySettings) {
+        setPrivacyDraft({});
       }
       setGenericSuccess(`${action.label}执行完成`);
       setSelection([]);
@@ -5081,6 +5094,15 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
     return [{ id: setting.id, value: draft }];
   });
   const winoptUndo = generic?.data.winoptUndo ?? [];
+  const privacySettings: PrivacySetting[] = generic?.data.privacySettings ?? [];
+  const privacyChanges = privacySettings.flatMap((setting) => {
+    const draft = privacyDraft[setting.id];
+    if (draft == null || setting.current === draft) {
+      return [] as { id: string; value: string }[];
+    }
+    return [{ id: setting.id, value: draft }];
+  });
+  const privacyUndo = generic?.data.privacyUndo ?? [];
 
   return (
     <Stack gap="md">
@@ -5270,6 +5292,7 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                 generic.tool.id !== "master_pdf" &&
                 generic.tool.id !== "winopt_assistant" &&
                 generic.tool.id !== "DuplicateFileClean" &&
+                generic.tool.id !== "privacy_protection" &&
                 (generic.tool.actions ?? [])
                   .filter((action) => action.write)
                   .map((action) => (
@@ -5700,6 +5723,118 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                     </ScrollArea>
                   </Box>
                 )}
+              </Box>
+            )}
+          {generic.tool.id === "privacy_protection" &&
+            privacySettings.length > 0 && (
+              <Box mt="md">
+                <Text size="sm" fw={700}>
+                  可应用的隐私设置
+                </Text>
+                <Text size="xs" c="dimmed" mt={4}>
+                  仅写入 HKCU；写入后立即回读，可单项应用或一键撤销
+                </Text>
+                <Table miw={720} mt="xs" verticalSpacing="xs">
+                  <Table.Thead>
+                    <Table.Tr>
+                      <Table.Th>设置项</Table.Th>
+                      <Table.Th>当前</Table.Th>
+                      <Table.Th>修改为</Table.Th>
+                    </Table.Tr>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {privacySettings.map((setting) => {
+                      const currentLabel =
+                        setting.current == null
+                          ? "未记录"
+                          : setting.options.find(
+                              (option) => option.value === setting.current,
+                            )?.label ?? setting.current;
+                      const value =
+                        privacyDraft[setting.id] ??
+                        setting.current ??
+                        setting.options[0]?.value ??
+                        "";
+                      return (
+                        <Table.Tr key={setting.id}>
+                          <Table.Td>
+                            <Text size="sm" fw={600}>
+                              {setting.label}
+                            </Text>
+                          </Table.Td>
+                          <Table.Td>
+                            <Badge size="xs" variant="light">
+                              {currentLabel}
+                            </Badge>
+                          </Table.Td>
+                          <Table.Td>
+                            <Select
+                              size="xs"
+                              w={150}
+                              data={setting.options.map((option) => ({
+                                value: option.value,
+                                label: option.label,
+                              }))}
+                              value={value}
+                              allowDeselect={false}
+                              onChange={(next) =>
+                                updatePrivacyValue(setting.id, next)
+                              }
+                            />
+                          </Table.Td>
+                        </Table.Tr>
+                      );
+                    })}
+                  </Table.Tbody>
+                </Table>
+                <Group mt="sm" align="center">
+                  <Button
+                    size="xs"
+                    color="orange"
+                    variant="light"
+                    disabled={privacyChanges.length === 0}
+                    loading={applying === `${generic.tool.id}:apply_settings`}
+                    onClick={() =>
+                      void runApply(
+                        generic.tool,
+                        {
+                          id: "apply_settings",
+                          label: "应用隐私设置",
+                          write: true,
+                        },
+                        { changes: privacyChanges },
+                      )
+                    }
+                  >
+                    应用所选设置
+                  </Button>
+                  {privacyUndo.length > 0 && (
+                    <Button
+                      size="xs"
+                      color="red"
+                      variant="light"
+                      loading={applying === `${generic.tool.id}:apply_settings`}
+                      onClick={() =>
+                        void runApply(
+                          generic.tool,
+                          {
+                            id: "apply_settings",
+                            label: "撤销本次修改",
+                            write: true,
+                          },
+                          { changes: privacyUndo },
+                        )
+                      }
+                    >
+                      撤销本次修改
+                    </Button>
+                  )}
+                  <Text size="xs" c="dimmed">
+                    {privacyChanges.length > 0
+                      ? `将修改 ${privacyChanges.length} 项；原值写入本地快照`
+                      : "修改选项后可应用"}
+                  </Text>
+                </Group>
               </Box>
             )}
           {generic.tool.id === "winopt_assistant" &&

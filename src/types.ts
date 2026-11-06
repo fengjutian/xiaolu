@@ -412,6 +412,14 @@ export interface WinoptSetting {
   requiresAdmin?: boolean;
 }
 
+export interface PrivacySetting {
+  id: string;
+  label: string;
+  current: string | null;
+  options: { value: string; label: string }[];
+  requiresAdmin?: boolean;
+}
+
 export interface DuplicateToolGroup {
   id: string;
   sizeBytes: number;
@@ -444,6 +452,8 @@ export interface ToolResult {
   systemStartupItems?: StartupToolItem[];
   serviceItems?: ServiceItem[];
   duplicateFileGroups?: DuplicateToolGroup[];
+  privacySettings?: PrivacySetting[];
+  privacyUndo?: { id: string; value: string }[];
   journalPath?: string;
   journalDir?: string;
   startupRegistryError?: string;
@@ -952,4 +962,15 @@ export interface AiSessionRecord {
   savedAtUnixMs: number;
   question: string | null;
   answer: AiAnswer;
+}
+
+export interface AiToolAuditEntry {
+  savedAtUnixMs: number;
+  requestId: string;
+  toolId: string;
+  ok: boolean;
+  durationMs: number;
+  reason: string;
+  parameters: unknown;
+  error: string | null;
 }

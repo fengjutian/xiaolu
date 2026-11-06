@@ -233,6 +233,19 @@ pub struct AiToolRun {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AiToolAuditEntry {
+    pub saved_at_unix_ms: u64,
+    pub request_id: String,
+    pub tool_id: String,
+    pub ok: bool,
+    pub duration_ms: u64,
+    pub reason: String,
+    pub parameters: serde_json::Value,
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AiAnswer {

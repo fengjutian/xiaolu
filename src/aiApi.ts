@@ -7,6 +7,7 @@ import type {
   AiSettings,
   AiSettingsView,
   AiStreamEvent,
+  AiToolAuditEntry,
   AiTurn,
   DiagnosticSnapshot,
 } from "./types";
@@ -103,6 +104,16 @@ export async function deleteAiSession(sessionId: string): Promise<void> {
 export async function clearAiSessions(): Promise<void> {
   if (!isTauri()) return;
   await invoke("clear_ai_sessions");
+}
+
+export async function getAiToolAudit(limit = 50): Promise<AiToolAuditEntry[]> {
+  if (!isTauri()) return [];
+  return invoke<AiToolAuditEntry[]>("get_ai_tool_audit", { limit });
+}
+
+export async function clearAiToolAudit(): Promise<void> {
+  if (!isTauri()) return;
+  await invoke("clear_ai_tool_audit");
 }
 
 export async function listenAiStream(

@@ -46,9 +46,11 @@ import {
   cancelAiRequest,
   clearAiApiKey,
   clearAiSessions,
+  clearAiToolAudit,
   deleteAiSession,
   getAiSessions,
   getAiSettings,
+  getAiToolAudit,
   listenAiStream,
   newAiRequestId,
   previewAiPayload,
@@ -62,6 +64,7 @@ import type {
   AiSessionRecord,
   AiSettings,
   AiSettingsView,
+  AiToolAuditEntry,
   AiTurn,
   DiagnosticFact,
   DiagnosticSnapshot,
@@ -260,6 +263,20 @@ export default function AiPanel() {
 
   const [sessions, setSessions] = useState<AiSessionRecord[]>([]);
   const [sessionsBusy, setSessionsBusy] = useState(false);
+  const [audits, setAudits] = useState<AiToolAuditEntry[]>([]);
+  const [auditBusy, setAuditBusy] = useState(false);
+
+  const refreshAudits = useCallback(async () => {
+    try {
+      setAudits(await getAiToolAudit(30));
+    } catch {
+      // 审计读取失败不应影响 AI 解读主流程。
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshAudits();
+  }, [refreshAudits]);
 
   const refreshSessions = useCallback(async () => {
     try {
@@ -375,6 +392,7 @@ export default function AiPanel() {
       );
       setEntries((previous) => [...previous, { question: nextQuestion, answer, snapshot }]);
       void refreshSessions();
+      void refreshAudits();
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : String(reason);
       if (message.includes("已取消")) {
@@ -1090,9 +1108,110 @@ export default function AiPanel() {
                 </Box>
               </SimpleGrid>
               <Alert color="blue" variant="light" mt="md" icon={<IconLock />}>
-                模型只能请求白名单内的只读检查（最近事件元数据、驱动问题、网络摘要、启动项、计划任务），由宿主校验参数、限制超时并记录审计；没有 shell、脚本、路径或写操作通道。写操作仍需本地 UI
+                模型只能请求白名单内的只读检查（最近事件元数据、驱动问题、网络摘要、启动项、计划任务、温度与存储健康、系统诊断），由宿主校验参数、限制超时并记录审计；没有 shell、脚本、路径或写操作通道。写操作仍需本地 UI
                 预览、二次确认和确认令牌。发送前可在“AI 解读”页预览完整载荷。
               </Alert>
+            </Card>
+
+            <Card className="glass-card" radius="lg">
+              <Group justify="space-between" align="flex-start">
+                <Box>
+                  <Title order={4}>只读检查审计</Title>
+                  <Text size="sm" c="dimmed" mt={4}>
+                    本机记录工具 ID、耗时、状态和脱敏参数，不记录结果正文；最多读取最近 30 条。
+                  </Text>
+                </Box>
+                <Group gap="xs">
+                  <Button
+                    size="xs"
+                    variant="light"
+                    loading={auditBusy}
+                    onClick={async () => {
+                      setAuditBusy(true);
+                      try {
+                        await refreshAudits();
+                      } finally {
+                        setAuditBusy(false);
+                      }
+                    }}
+                  >
+                    刷新
+                  </Button>
+                  {audits.length > 0 && (
+                    <Button
+                      size="xs"
+                      variant="light"
+                      color="red"
+                      loading={auditBusy}
+                      onClick={async () => {
+                        if (!window.confirm("确定要清除全部只读检查审计记录吗？")) return;
+                        setAuditBusy(true);
+                        try {
+                          await clearAiToolAudit();
+                          setAudits([]);
+                        } catch (reason) {
+                          setSettingsMessage({
+                            text: reason instanceof Error ? reason.message : String(reason),
+                            error: true,
+                          });
+                        } finally {
+                          setAuditBusy(false);
+                        }
+                      }}
+                    >
+                      清除
+                    </Button>
+                  )}
+                </Group>
+              </Group>
+              {audits.length === 0 ? (
+                <Text size="sm" c="dimmed" mt="sm">
+                  还没有只读检查审计记录。AI 请求只读检查后会写入本机。
+                </Text>
+              ) : (
+                <ScrollArea.Autosize mah={280} mt="sm">
+                  <Stack gap="xs">
+                    {audits.map((entry, index) => (
+                      <Group
+                        key={`${entry.requestId}-${entry.toolId}-${index}`}
+                        justify="space-between"
+                        wrap="nowrap"
+                        align="flex-start"
+                      >
+                        <Box style={{ minWidth: 0 }}>
+                          <Group gap="xs">
+                            <Badge
+                              size="sm"
+                              color={entry.ok ? "teal" : "red"}
+                              variant="light"
+                            >
+                              {entry.ok ? "完成" : "失败"}
+                            </Badge>
+                            <Text size="sm" fw={600} truncate>
+                              {entry.toolId}
+                            </Text>
+                          </Group>
+                          <Text size="xs" c="dimmed" truncate>
+                            {formatTime(entry.savedAtUnixMs)} · {entry.durationMs} ms
+                            {entry.reason ? ` · ${entry.reason}` : ""}
+                            {entry.error ? ` · ${entry.error}` : ""}
+                          </Text>
+                        </Box>
+                        <Tooltip
+                          label={compactValue(entry.parameters)}
+                          multiline
+                          maw={420}
+                          position="top-start"
+                        >
+                          <Text size="xs" c="dimmed" style={{ flexShrink: 0 }}>
+                            {entry.requestId.slice(0, 16)}
+                          </Text>
+                        </Tooltip>
+                      </Group>
+                    ))}
+                  </Stack>
+                </ScrollArea.Autosize>
+              )}
             </Card>
           </Stack>
         </Tabs.Panel>

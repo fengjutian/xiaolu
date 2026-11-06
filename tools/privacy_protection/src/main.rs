@@ -3,7 +3,7 @@ use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command;
 use tool_protocol::{attach_token, column, digest_of, item, table, Request, ToolError};
-use winreg::enums::{HKEY_CURRENT_USER, KEY_READ, KEY_WRITE};
+use winreg::enums::{HKEY_CURRENT_USER, KEY_READ};
 use winreg::RegKey;
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;

@@ -5,20 +5,21 @@
 //! size and writes a metadata-only audit line. There is no path, command line,
 //! script, registry or write capability in this gateway.
 
-use super::model::{AiRequestedCheck, AiToolRun};
+use super::model::{AiRequestedCheck, AiToolAuditEntry, AiToolRun};
 use super::provider::{CancelHandle, CANCELLED};
 use super::redact::redact_payload;
-use crate::{drivers, event_log, network_diagnostics, scheduled_tasks, system};
+use crate::{diagnostics, drivers, event_log, network_diagnostics, scheduled_tasks, sensors, system};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashSet};
 use std::future::Future;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
 
 const MAX_CHECKS: usize = 3;
 const MAX_RESULT_BYTES: usize = 6000;
+static AUDIT_LOCK: Mutex<()> = Mutex::new(());
 
 pub struct ToolSpec {
     pub id: &'static str,
@@ -57,6 +58,18 @@ pub const TOOL_SPECS: &[ToolSpec] = &[
         label: "计划任务摘要",
         description: "读取计划任务的总数、启用/运行状态和最近失败任务名称；不返回任务路径或参数。",
         timeout_ms: 30_000,
+    },
+    ToolSpec {
+        id: "sensors.storage",
+        label: "温度与存储健康",
+        description: "读取当前温度、本地告警和 SMART 存储健康摘要；只返回温度值、健康状态、磨损/温度/错误计数，不返回序列号、设备实例名或原始 SMART 属性表。",
+        timeout_ms: 25_000,
+    },
+    ToolSpec {
+        id: "diagnostics.summary",
+        label: "系统诊断摘要",
+        description: "读取待重启、崩溃/转储、服务异常和电池健康摘要；不返回事件日志全文或转储内容。",
+        timeout_ms: 40_000,
     },
 ];
 
@@ -324,7 +337,94 @@ fn summarize_scheduled_tasks(inventory: Value) -> Value {
     })
 }
 
+fn summarize_sensors(snapshot: Value) -> Value {
+    let temperatures: Vec<Value> = snapshot
+        .get("values")
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter(|value| {
+                    value.get("category").and_then(Value::as_str) == Some("temperature")
+                        && value.get("availability").and_then(Value::as_str) == Some("ok")
+                })
+                .take(12)
+                .map(|value| {
+                    json!({
+                        "hardwareClass": value.get("hardwareClass").and_then(Value::as_str),
+                        "name": value.get("name").and_then(Value::as_str).map(|text| truncate_text(text, 60)),
+                        "valueC": value.get("value").and_then(Value::as_f64),
+                        "source": value.get("source").and_then(Value::as_str).map(|text| truncate_text(text, 60)),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let storage: Vec<Value> = snapshot
+        .get("storage")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .take(8)
+                .map(|item| {
+                    json!({
+                        "name": item.get("name").and_then(Value::as_str).map(|text| truncate_text(text, 80)),
+                        "healthStatus": item.get("healthStatus").and_then(Value::as_str),
+                        "temperatureC": item.get("temperatureC").and_then(Value::as_f64),
+                        "wearPercent": item.get("wearPercent").and_then(Value::as_f64),
+                        "powerOnHours": item.get("powerOnHours").and_then(Value::as_u64),
+                        "readErrorsTotal": item.get("readErrorsTotal").and_then(Value::as_u64),
+                        "writeErrorsTotal": item.get("writeErrorsTotal").and_then(Value::as_u64),
+                        "signals": item.get("assessment").and_then(|assessment| assessment.get("signals")).and_then(Value::as_array).map(|signals| signals.iter().take(6).filter_map(|signal| signal.get("code").and_then(Value::as_str)).collect::<Vec<_>>()).unwrap_or_default(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let predict_failure_count = snapshot
+        .get("smartDevices")
+        .and_then(Value::as_array)
+        .map(|devices| {
+            devices
+                .iter()
+                .filter(|device| device.get("predictFailure").and_then(Value::as_bool) == Some(true))
+                .count()
+        })
+        .unwrap_or(0);
+
+    json!({
+        "temperatures": temperatures,
+        "alerts": snapshot.get("alerts").and_then(Value::as_array).map(|alerts| alerts.iter().take(6).map(|alert| json!({
+            "level": alert.get("level").and_then(Value::as_str),
+            "sensorName": alert.get("sensorName").and_then(Value::as_str).map(|text| truncate_text(text, 60)),
+            "value": alert.get("value").and_then(Value::as_f64),
+            "threshold": alert.get("threshold").and_then(Value::as_f64),
+        })).collect::<Vec<_>>()).unwrap_or_default(),
+        "storage": storage,
+        "predictFailureCount": predict_failure_count,
+        "elevated": snapshot.get("elevated").and_then(Value::as_bool),
+        "limitationCount": snapshot.get("limitations").and_then(Value::as_array).map(Vec::len).unwrap_or(0),
+    })
+}
+
+fn summarize_diagnostics(report: Value) -> Value {
+    json!({
+        "pendingReboot": report.get("pendingReboot").and_then(Value::as_bool),
+        "pendingWindowsUpdateReboot": report.get("pendingWindowsUpdateReboot").and_then(Value::as_bool),
+        "crashEventCount": report.get("crashEvents").and_then(Value::as_array).map(Vec::len),
+        "minidumpCount": report.get("minidumpCount").and_then(Value::as_u64),
+        "serviceIssueCount": report.get("serviceIssues").and_then(Value::as_array).map(Vec::len),
+        "batteryPresent": report.get("battery").and_then(|battery| battery.get("present")).and_then(Value::as_bool),
+        "batteryHealthPercent": report.get("battery").and_then(|battery| battery.get("healthPercent")).and_then(Value::as_f64),
+        "batteryCycleCount": report.get("battery").and_then(|battery| battery.get("cycleCount")).and_then(Value::as_u64),
+    })
+}
+
 async fn run_spec(
+    app: &AppHandle,
     spec: &ToolSpec,
     parameters: &Value,
     cancel: &Arc<CancelHandle>,
@@ -386,17 +486,49 @@ async fn run_spec(
             .await?;
             Ok(summarize_scheduled_tasks(inventory))
         }
+        "sensors.storage" => {
+            let app = app.clone();
+            let snapshot = run_limited(spec, cancel, async move {
+                blocking(move || sensors::snapshot_blocking(&app)).await
+            })
+            .await?;
+            let value = serde_json::to_value(&snapshot)
+                .map_err(|error| format!("无法序列化温度与存储健康：{error}"))?;
+            Ok(summarize_sensors(value))
+        }
+        "diagnostics.summary" => {
+            let report = run_limited(spec, cancel, async {
+                blocking(diagnostics::collect_report).await
+            })
+            .await?;
+            let value = serde_json::to_value(&report)
+                .map_err(|error| format!("无法序列化系统诊断：{error}"))?;
+            Ok(summarize_diagnostics(value))
+        }
         other => Err(format!("未授权的只读检查：{other}")),
     }
 }
 
+fn audit_path(app: &AppHandle) -> Option<std::path::PathBuf> {
+    app.path()
+        .app_data_dir()
+        .ok()
+        .map(|directory| directory.join("ai-tool-audit.jsonl"))
+}
+
 fn audit(app: &AppHandle, request_id: &str, run: &AiToolRun, parameters: &Value) {
-    let Ok(directory) = app.path().app_data_dir() else {
+    let Some(path) = audit_path(app) else {
         return;
     };
-    if std::fs::create_dir_all(&directory).is_err() {
-        return;
+    if let Some(parent) = path.parent() {
+        if std::fs::create_dir_all(parent).is_err() {
+            return;
+        }
     }
+    let _guard = match AUDIT_LOCK.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
     let (redacted_params, _) = redact_payload(parameters);
     let line = json!({
         "savedAtUnixMs": super::now_unix_ms(),
@@ -408,7 +540,6 @@ fn audit(app: &AppHandle, request_id: &str, run: &AiToolRun, parameters: &Value)
         "parameters": redacted_params,
         "error": run.error,
     });
-    let path = directory.join("ai-tool-audit.jsonl");
     if let Ok(mut file) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -416,6 +547,49 @@ fn audit(app: &AppHandle, request_id: &str, run: &AiToolRun, parameters: &Value)
     {
         use std::io::Write;
         let _ = writeln!(file, "{line}");
+    }
+}
+
+pub fn read_audit(app: &AppHandle, limit: usize) -> Result<Vec<AiToolAuditEntry>, String> {
+    let Some(path) = audit_path(app) else {
+        return Ok(Vec::new());
+    };
+    let _guard = match AUDIT_LOCK.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let content = match std::fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(format!("无法读取只读检查审计：{error}")),
+    };
+    let mut entries = Vec::new();
+    for line in content.lines().rev() {
+        if entries.len() >= limit {
+            break;
+        }
+        if line.trim().is_empty() {
+            continue;
+        }
+        if let Ok(entry) = serde_json::from_str::<AiToolAuditEntry>(line) {
+            entries.push(entry);
+        }
+    }
+    Ok(entries)
+}
+
+pub fn clear_audit(app: &AppHandle) -> Result<(), String> {
+    let Some(path) = audit_path(app) else {
+        return Ok(());
+    };
+    let _guard = match AUDIT_LOCK.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    match std::fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("无法清除只读检查审计：{error}")),
     }
 }
 
@@ -472,7 +646,7 @@ pub async fn execute_checks(
             ),
         );
         let started = Instant::now();
-        let outcome = run_spec(spec, &check.parameters, &cancel).await;
+        let outcome = run_spec(app, spec, &check.parameters, &cancel).await;
         let duration_ms = started.elapsed().as_millis() as u64;
         let (ok, summary, error) = match outcome {
             Ok(value) => (true, cap_summary(value), None),

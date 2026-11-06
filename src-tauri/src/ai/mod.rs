@@ -13,8 +13,12 @@ mod settings;
 mod store;
 mod tools;
 
+#[cfg(test)]
+mod evaluation;
+
 pub use model::{
-    AiAnswer, AiPayloadPreview, AiSettings, AiSettingsView, AiStreamEvent, AiTurn, DiagnosticSnapshot,
+    AiAnswer, AiPayloadPreview, AiSettings, AiSettingsView, AiStreamEvent, AiToolAuditEntry,
+    AiTurn, DiagnosticSnapshot,
 };
 pub use store::AiSessionRecord;
 
@@ -485,6 +489,19 @@ pub async fn delete_ai_session(app: AppHandle, session_id: String) -> Result<(),
 #[tauri::command]
 pub async fn clear_ai_sessions(app: AppHandle) -> Result<(), String> {
     store::clear(&app)
+}
+
+#[tauri::command]
+pub async fn get_ai_tool_audit(
+    app: AppHandle,
+    limit: Option<u32>,
+) -> Result<Vec<AiToolAuditEntry>, String> {
+    tools::read_audit(&app, limit.unwrap_or(50).clamp(1, 200) as usize)
+}
+
+#[tauri::command]
+pub async fn clear_ai_tool_audit(app: AppHandle) -> Result<(), String> {
+    tools::clear_audit(&app)
 }
 
 #[tauri::command]
