@@ -4684,6 +4684,19 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
     }
   };
 
+  const exportAppxList = async (tool: ToolDescriptor) => {
+    setApplying(`${tool.id}:export_list`);
+    setApplyError(null);
+    try {
+      await runToolAction(tool.id, "export_list", null, {});
+      setGenericSuccess("可移除清单已导出到本地");
+    } catch (reason) {
+      setApplyError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setApplying(null);
+    }
+  };
+
   const openDriverTarget = async (tool: ToolDescriptor, id: string) => {
     setApplying(`${tool.id}:open_official`);
     setApplyError(null);
@@ -5864,6 +5877,15 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                 <Text size="xs" c="dimmed" mt={4}>
                   仅影响当前用户，移除后可从 Microsoft Store 重装
                 </Text>
+                <Button
+                  mt="xs"
+                  size="xs"
+                  variant="outline"
+                  loading={applying === `${generic.tool.id}:export_list`}
+                  onClick={() => void exportAppxList(generic.tool)}
+                >
+                  导出可移除清单
+                </Button>
                 <ScrollArea type="auto" mt="xs">
                   <Table miw={760} verticalSpacing="xs">
                     <Table.Thead>
@@ -5974,6 +5996,17 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                 }
               />
               <Group mt="sm" align="center">
+                <Button
+                  size="xs"
+                  variant="outline"
+                  onClick={() =>
+                    setAdblockDomains(
+                      (generic.data.builtinDomains ?? []).join("\n"),
+                    )
+                  }
+                >
+                  载入内置规则（{generic.data.builtinDomains?.length ?? 0}）
+                </Button>
                 <Button
                   size="xs"
                   color="orange"

@@ -1,4 +1,4 @@
-﻿use serde_json::{json, Value};
+use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::ffi::c_void;
 use std::fs::File;
@@ -18,11 +18,18 @@ fn user_dirs() -> Vec<PathBuf> {
     let Some(profile) = std::env::var_os("USERPROFILE").map(PathBuf::from) else {
         return Vec::new();
     };
-    ["Downloads", "Documents", "Desktop"]
-        .iter()
-        .map(|name| profile.join(name))
-        .filter(|path| path.is_dir())
-        .collect()
+    [
+        "Downloads",
+        "Documents",
+        "Desktop",
+        "Pictures",
+        "Music",
+        "Videos",
+    ]
+    .iter()
+    .map(|name| profile.join(name))
+    .filter(|path| path.is_dir())
+    .collect()
 }
 
 /// 快速指纹：大小 + 首尾 64 KiB，仅用于扫描分组。
@@ -257,7 +264,7 @@ fn preview() -> Result<Value, ToolError> {
                 if scan.truncated {
                     "已达到 2 万文件上限，结果可能不完整。"
                 } else {
-                    "扫描范围为下载、文档、桌面三个目录。"
+                    "扫描范围为下载、文档、桌面、图片、音乐、视频六个目录。"
                 },
             ]),
         );
@@ -296,7 +303,7 @@ fn preview() -> Result<Value, ToolError> {
         json!([
             "扫描只读取大小与首尾片段，不移动文件；分组为快速启发式，可能把不同文件归为一组。",
             "清理前会对保留文件与待删除文件做完整内容哈希复核，只有完全一致才会移入回收站。",
-            "扫描范围为下载、文档、桌面三个目录；单个文件至少 1 MiB。",
+            "扫描范围为下载、文档、桌面、图片、音乐、视频六个目录；单个文件至少 1 MiB。",
             if scan.truncated {
                 "已达到 2 万文件上限，结果可能不完整。".to_string()
             } else {

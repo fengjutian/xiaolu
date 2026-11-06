@@ -6,6 +6,40 @@ use tool_protocol::{attach_token, column, digest_of, item, table, Request, ToolE
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const ACTION_HOSTS: &str = "hosts_write";
+const BUILTIN_DOMAINS: [&str; 32] = [
+    "doubleclick.net",
+    "googleadservices.com",
+    "googlesyndication.com",
+    "google-analytics.com",
+    "googletagmanager.com",
+    "scorecardresearch.com",
+    "quantserve.com",
+    "outbrain.com",
+    "taboola.com",
+    "criteo.com",
+    "criteo.net",
+    "adsrvr.org",
+    "rubiconproject.com",
+    "pubmatic.com",
+    "openx.net",
+    "casalemedia.com",
+    "bluekai.com",
+    "exelator.com",
+    "2mdn.net",
+    "adnxs.com",
+    "adform.net",
+    "smartadserver.com",
+    "teads.tv",
+    "moatads.com",
+    "serving-sys.com",
+    "flashtalking.com",
+    "media.net",
+    "yieldmo.com",
+    "sharethrough.com",
+    "triplelift.com",
+    "spotxchange.com",
+    "bidswitch.net",
+];
 const HOSTS_BEGIN: &str = "# BEGIN SystemLens AdBlock";
 const HOSTS_END: &str = "# END SystemLens AdBlock";
 
@@ -360,6 +394,7 @@ fn scan() -> Result<Value, ToolError> {
     if let Value::Object(map) = &mut data {
         map.insert("hostsManagedDomains".into(), json!(managed));
         map.insert("hostsPath".into(), json!(hosts_path().to_string_lossy()));
+        map.insert("builtinDomains".into(), json!(BUILTIN_DOMAINS));
     }
     if let Ok(token) = tool_protocol::issue_token(ACTION_HOSTS, &hosts_digest()) {
         attach_token(&mut data, token);

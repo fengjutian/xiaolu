@@ -6,6 +6,7 @@ use tool_protocol::{attach_token, column, digest_of, item, table, Request, ToolE
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const MAX_ROWS: usize = 300;
 const ACTION_REMOVE: &str = "remove_appx";
+const ACTION_EXPORT: &str = "export_list";
 
 /// 只允许移除这些已知可重装的内置应用族；其余一律只读。
 const REMOVABLE: [&str; 18] = [
@@ -243,14 +244,82 @@ fn remove_appx(request: &Request) -> Result<Value, ToolError> {
     ))
 }
 
+fn export_list() -> Result<Value, ToolError> {
+    let packages = scan_packages()?;
+    let removals = packages
+        .iter()
+        .filter(|package| {
+            package
+                .get("name")
+                .and_then(Value::as_str)
+                .map(is_removable)
+                .unwrap_or(false)
+        })
+        .map(|package| {
+            json!({
+                "name": package.get("name").cloned().unwrap_or(Value::Null),
+                "fullName": package.get("fullName").cloned().unwrap_or(Value::Null),
+                "version": package.get("version").cloned().unwrap_or(Value::Null),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let base = std::env::var_os("LOCALAPPDATA")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+        .join("SystemLens")
+        .join("sys_clean");
+    std::fs::create_dir_all(&base)
+        .map_err(|error| ToolError::new("INTERNAL", format!("无法创建导出目录：{error}")))?;
+    let path = base.join(format!("appx-removals-{}.json", tool_protocol::now_ms()));
+    let payload = json!({
+        "exportedAt": tool_protocol::now_ms(),
+        "count": removals.len(),
+        "packages": removals,
+    });
+    std::fs::write(
+        &path,
+        serde_json::to_vec_pretty(&payload)
+            .map_err(|error| ToolError::new("INTERNAL", format!("无法序列化清单：{error}")))?,
+    )
+    .map_err(|error| ToolError::new("INTERNAL", format!("无法写入清单：{error}")))?;
+    let _ = tool_protocol::append_audit_log(json!({
+        "tool": "sys_clean",
+        "action": ACTION_EXPORT,
+        "path": path.to_string_lossy(),
+        "count": payload.get("count").cloned().unwrap_or(Value::Null),
+        "at": tool_protocol::now_ms(),
+    }));
+
+    Ok(table(
+        json!([
+            item("导出数量", removals.len().to_string()),
+            item("文件", path.to_string_lossy()),
+        ]),
+        json!([
+            column("item", "项目"),
+            column("value", "结果"),
+        ]),
+        json!([{
+            "item": "清单文件",
+            "value": path.to_string_lossy(),
+        }]),
+        json!([
+            "清单只包含白名单可移除应用，不包含系统关键组件。",
+            "导出为 JSON，可用于审计或重装后对照。",
+        ]),
+    ))
+}
+
 fn main() {
     tool_protocol::serve_with_request(
         "sys_clean",
         env!("CARGO_PKG_VERSION"),
-        &["preview", ACTION_REMOVE],
+        &["preview", ACTION_REMOVE, ACTION_EXPORT],
         |request| match request.action.as_str() {
             "preview" => scan(),
             ACTION_REMOVE => remove_appx(request),
+            ACTION_EXPORT => export_list(),
             other => Err(ToolError::unsupported(other)),
         },
     );

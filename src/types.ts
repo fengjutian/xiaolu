@@ -526,6 +526,7 @@ export interface ToolResult {
   volumeItems?: VolumeItem[];
   hostsManagedDomains?: number;
   hostsPath?: string;
+  builtinDomains?: string[];
   dumpMode?: DumpMode;
   appxItems?: AppxItem[];
   runtimeItems?: RuntimeItem[];

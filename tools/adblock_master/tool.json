@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "adblock_master",
   "name": "广告拦截",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "apiVersion": 1,
   "description": "审计 Hosts/DNS/扩展/防火墙，并可经 UAC 写入或移除 SystemLens 管理的 Hosts 规则",
   "category": "工具箱",
