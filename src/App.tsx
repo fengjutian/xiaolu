@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActionIcon,
   Alert,
@@ -7070,6 +7070,13 @@ export default function App() {
   const { colorScheme, setColorScheme } = useMantineColorScheme();
   const [tab, setTab] = useState<Tab>("overview");
   const [appSettings, setAppSettings] = useState<AppSettings | null>(null);
+  const navViewportRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    navViewportRef.current
+      ?.querySelector<HTMLElement>("[data-active]")
+      ?.scrollIntoView({ block: "nearest" });
+  }, [tab]);
 
   useEffect(() => {
     void getAppSettings()
@@ -7390,17 +7397,25 @@ export default function App() {
             </Text>
           </Box>
         </Group>
-        <Stack gap={5} mt="xl">
-          {nav.map(([id, label, Icon]) => (
-            <NavLink
-              key={id}
-              active={tab === id}
-              label={label}
-              leftSection={<Icon size={19} />}
-              onClick={() => setTab(id)}
-            />
-          ))}
-        </Stack>
+        <ScrollArea
+          className="side-nav"
+          type="auto"
+          scrollbarSize={6}
+          offsetScrollbars
+          viewportRef={navViewportRef}
+        >
+          <Stack gap={5} pr={2}>
+            {nav.map(([id, label, Icon]) => (
+              <NavLink
+                key={id}
+                active={tab === id}
+                label={label}
+                leftSection={<Icon size={19} />}
+                onClick={() => setTab(id)}
+              />
+            ))}
+          </Stack>
+        </ScrollArea>
         <Paper className="privacy" radius="lg" p="md">
           <Group gap="xs">
             <IconShieldCheck size={18} />

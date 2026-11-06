@@ -1,6 +1,9 @@
 use serde::Serialize;
 use std::{process::Command, time::{Instant, SystemTime, UNIX_EPOCH}};
-use sysinfo::{Disks, Networks, ProcessesToUpdate, System};
+use sysinfo::{
+    CpuRefreshKind, Disks, MemoryRefreshKind, Networks, ProcessRefreshKind, ProcessesToUpdate,
+    RefreshKind, System,
+};
 use tauri::Manager;
 
 #[derive(Debug, Serialize)]
@@ -47,8 +50,17 @@ pub struct SystemCollector {
 
 impl SystemCollector {
     pub fn new() -> Result<Self, String> {
+        // `System::new_all()` enumerates every process (exe path, command line, cwd,
+        // environment, GPU usage…) before the window is even created. The overview
+        // only needs CPU + memory, so skip the expensive process pass at startup and
+        // fill the process list lazily when the process page asks for it.
         Ok(Self {
-            system: System::new_all().map_err(|e| format!("无法初始化系统信息：{e}"))?,
+            system: System::new_with_specifics(
+                RefreshKind::nothing()
+                    .with_cpu(CpuRefreshKind::everything())
+                    .with_memory(MemoryRefreshKind::everything()),
+            )
+            .map_err(|e| format!("无法初始化系统信息：{e}"))?,
             networks: Networks::new_with_refreshed_list().map_err(|e| format!("无法读取网络信息：{e}"))?,
             disks: Disks::new_with_refreshed_list().map_err(|e| format!("无法读取磁盘信息：{e}"))?,
             last_sample: Instant::now(),
@@ -57,9 +69,8 @@ impl SystemCollector {
     }
 
     pub fn snapshot(&mut self) -> Result<SystemSnapshot, String> {
-        // `new_all` and the `new_with_refreshed_list` constructors already did
-        // a full collection. Repeating it for the first IPC request keeps the
-        // splash screen visible for no benefit, so reuse that initial sample.
+        // 构造时已经做过一次 CPU / 内存采样，第一次 IPC 直接复用这次快照，
+        // 不再重复采集，避免无谓地延长启动页停留时间。
         if self.first_snapshot {
             self.first_snapshot = false;
         } else {
@@ -103,7 +114,13 @@ impl SystemCollector {
     }
 
     pub fn processes(&mut self) -> Vec<ProcessInfo> {
-        self.system.refresh_processes(ProcessesToUpdate::All, true);
+        // Only name / CPU / memory are displayed; skip command lines, cwd, users,
+        // environment and task trees that `refresh_processes` would collect.
+        self.system.refresh_processes_specifics(
+            ProcessesToUpdate::All,
+            true,
+            ProcessRefreshKind::nothing().with_cpu().with_memory(),
+        );
         let mut processes: Vec<_> = self.system.processes().iter().map(|(pid, process)| ProcessInfo {
             pid: pid.as_u32(), name: process.name().to_string_lossy().into_owned(),
             cpu_percent: process.cpu_usage(), memory_bytes: process.memory(),

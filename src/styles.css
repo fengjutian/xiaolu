@@ -5,14 +5,16 @@
 body { margin:0; min-width:980px; min-height:100vh; overflow:hidden; background:var(--app-bg); transition:background-color .25s ease; }
 body::before { content:""; position:fixed; inset:0; pointer-events:none; background:var(--ambient); }
 .shell { min-height:100vh; display:grid; grid-template-columns:238px 1fr; position:relative; }
-.side { height:100vh; padding:26px 18px 20px; border-right:1px solid var(--side-border); background:var(--side-bg); backdrop-filter:blur(24px); display:flex; flex-direction:column; transition:background-color .25s ease,border-color .25s ease; }
-.logo { padding:0 8px; }
+.side { height:100vh; padding:26px 18px 20px; border-right:1px solid var(--side-border); background:var(--side-bg); backdrop-filter:blur(24px); display:flex; flex-direction:column; overflow:hidden; transition:background-color .25s ease,border-color .25s ease; }
+.logo { padding:0 8px; flex:0 0 auto; }
+.side-nav { flex:1 1 auto; min-height:0; margin-top:26px; }
+.side-nav .mantine-ScrollArea-scrollbar { width:5px; }
+.side-nav .mantine-ScrollArea-thumb { background:color-mix(in srgb,var(--nav-color) 32%,transparent); }
 .brand-logo { width:44px; height:44px; display:block; object-fit:contain; border-radius:50%; box-shadow:0 8px 22px rgba(35,78,201,.22); }
 .side .mantine-NavLink-root { border-radius:12px; color:var(--nav-color); transition:.18s ease; }
 .side .mantine-NavLink-root:hover { background:var(--nav-hover-bg); color:var(--nav-hover-color); }
 .side .mantine-NavLink-root[data-active] { color:var(--nav-active-color); background:linear-gradient(100deg,rgba(76,110,245,.24),rgba(34,139,230,.1)); box-shadow:inset 2px 0 #748ffc; }
-.privacy { margin-top:auto; margin-bottom:18px; border:1px solid rgba(116,143,252,.18); background:rgba(76,110,245,.07); }
-.content { height:100vh; overflow-y:auto; padding:30px clamp(24px,4vw,54px) 48px; }
+.privacy { margin-top:14px; margin-bottom:18px; flex:0 0 auto; border:1px solid rgba(116,143,252,.18); background:rgba(76,110,245,.07); }.content { height:100vh; overflow-y:auto; padding:30px clamp(24px,4vw,54px) 48px; }
 .stat-card,.glass-card { border:1px solid var(--card-border); background:var(--card-bg); box-shadow:var(--card-shadow); transition:background .25s ease,border-color .25s ease,box-shadow .25s ease; }
 .stat-card { min-height:134px; transition:transform .2s ease,border-color .2s ease; }
 .stat-card:hover { transform:translateY(-2px); border-color:rgba(116,143,252,.28); }
