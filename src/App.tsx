@@ -93,6 +93,7 @@ import {
   getSensorHistory,
   listToolboxTools,
   notifySensorAlert,
+  openPathInExplorer,
   runToolAction,
   sendTestNotification,
   saveNotificationSettings,
@@ -3792,6 +3793,7 @@ function ToolboxPanel() {
   const [slim, setSlim] = useState<SlimScan | null>(null);
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
+  const [openPathError, setOpenPathError] = useState<string | null>(null);
   const [generic, setGeneric] = useState<{
     tool: ToolDescriptor;
     data: ToolResult;
@@ -3875,6 +3877,15 @@ function ToolboxPanel() {
     }
   };
 
+  const openScanPath = async (path: string) => {
+    setOpenPathError(null);
+    try {
+      await openPathInExplorer(path);
+    } catch (reason) {
+      setOpenPathError(reason instanceof Error ? reason.message : String(reason));
+    }
+  };
+
   if (!tools)
     return (
       <Center h={260}>
@@ -3909,7 +3920,11 @@ function ToolboxPanel() {
         </Box>
         <Badge variant="light">{available.length} 个</Badge>
       </Group>
-      <SimpleGrid cols={{ base: 1, md: 2, xl: 3 }}>
+      <SimpleGrid
+        cols={{ base: 1, sm: 2, md: 3, lg: 4, xl: 6 }}
+        spacing="sm"
+        verticalSpacing="sm"
+      >
         {available.map((tool) => (
           <Card key={tool.id} className="glass-card" radius="lg">
             <Group justify="space-between" align="flex-start">
@@ -3969,6 +3984,12 @@ function ToolboxPanel() {
       {scanError && (
         <Alert color="red" icon={<IconAlertCircle />}>
           {scanError}
+        </Alert>
+      )}
+
+      {openPathError && (
+        <Alert color="red" icon={<IconAlertCircle />}>
+          {openPathError}
         </Alert>
       )}
 
@@ -4180,6 +4201,7 @@ function ToolboxPanel() {
                 <Table.Th>类别</Table.Th>
                 <Table.Th>权限</Table.Th>
                 <Table.Th>说明</Table.Th>
+                <Table.Th w={112}>操作</Table.Th>
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
@@ -4212,6 +4234,16 @@ function ToolboxPanel() {
                     <Text size="xs" c="dimmed" maw={320}>
                       {item.note}
                     </Text>
+                  </Table.Td>
+                  <Table.Td>
+                    <Button
+                      size="compact-xs"
+                      variant="light"
+                      leftSection={<IconFolder size={14} />}
+                      onClick={() => void openScanPath(item.path)}
+                    >
+                      打开目录
+                    </Button>
                   </Table.Td>
                 </Table.Tr>
               ))}

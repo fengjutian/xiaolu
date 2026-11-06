@@ -925,3 +925,10 @@ export async function runToolAction(
 export function isDesktopRuntime(): boolean {
   return isTauri();
 }
+
+export async function openPathInExplorer(path: string): Promise<void> {
+  if (!isTauri()) {
+    throw new Error("打开目录仅在 Windows 桌面版中可用");
+  }
+  await invoke("open_path_in_explorer", { path });
+}
