@@ -261,10 +261,15 @@
 - 白名单 Appx 移除，执行前要求系统还原点。
 - 验收：逐项确认；移除清单可导出；不碰系统关键包。
 
-#### 17. adblock_master（广告拦截）L0 → L1
+#### 17. adblock_master（广告拦截）L1 已实现（0.2.0，待真机验证）
 
-- 只做 Hosts 备份写入与还原；不做驱动/WFP 过滤。
-- 验收：写入前备份原 Hosts；一键还原；规则来源可查。
+- 只做 Hosts 管理段写入与移除；不做驱动/WFP 过滤。
+- 实现：`apply_hosts` / `restore_hosts` 经 UAC + `lens_helper.exe`，只改 `# BEGIN/# END` 标记之间内容，首次写入前备份。
+- 验收：
+  - 写入前备份原 Hosts；✅
+  - 一键移除管理段；✅
+  - 规则来源可查；⚠️ 规则由用户输入，尚未内置来源/列表
+  - 界面输入框与按钮；✅
 
 #### 18. ai_cooling（AI 智能降温）数据源 T1 已完成；执行不开发（2026-11-06）
 
@@ -392,3 +397,4 @@
 | 2026-11-06 | v0.1.13 | clean_master：批量选择 + 1 GiB 基准 1.57s |
 | 2026-11-06 | v0.1.14 | software_pm 0.6.0 + lens_helper：UAC 启停计划任务（schtasks） |
 | 2026-11-06 | v0.1.15 | defrag 0.2.0 + lens_helper：UAC 执行分析/优化/TRIM |
+| 2026-11-06 | v0.1.16 | adblock_master 0.2.0 + lens_helper：Hosts 管理段写入/移除 |

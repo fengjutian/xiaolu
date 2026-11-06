@@ -9,7 +9,7 @@
 
 助手不是通用提权执行器：
 
-- 只接受白名单操作：`system_startup_set`（系统级启动项）、`service_set_start`（服务启动类型）、`task_set_enabled`（计划任务启停）、`defrag_volume`（磁盘分析/优化/TRIM）与 `sensor_read`（受限传感器，只读）；
+- 只接受白名单操作：`system_startup_set`（系统级启动项）、`service_set_start`（服务启动类型）、`task_set_enabled`（计划任务启停）、`defrag_volume`（磁盘分析/优化/TRIM）、`hosts_apply` / `hosts_restore`（Hosts 管理段）与 `sensor_read`（受限传感器，只读）；
 - 不执行任意命令；只调用固定系统工具：`sensor_read` 执行固定 PowerShell 只读查询，`task_set_enabled` 执行 `schtasks.exe` 固定参数，`defrag_volume` 执行 `defrag.exe` 固定参数；
 - 只在 `HKLM` 的 `Run` / `RunOnce` 与专用停用备份之间移动注册表值，或修改服务 `Start` / 任务启用状态；
 - 每次请求都需要用户逐次授权 UAC，不做常驻、不做服务。
@@ -95,6 +95,15 @@ software_pm.exe（普通权限）
 ```
 
 `drive` 只接受单个字母，`mode` 只接受 `analyze`（`/A`）、`optimize`（`/O`）、`trim`（`/L`）；执行 `defrag.exe <盘符>: <参数>`，不做其他命令拼接。
+
+Hosts 请求：
+
+```json
+{ "op": "hosts_apply", "domains": ["ads.example.com"] }
+{ "op": "hosts_restore" }
+```
+
+`hosts_apply` 逐条校验域名（长度、标签、字符集），最多 500 条；只替换 `# BEGIN SystemLens AdBlock` 与 `# END SystemLens AdBlock` 之间的内容，首次写入前备份到 `%LOCALAPPDATA%\SystemLens\adblock\hosts.backup`。
 
 ## 4. 校验与拒绝条件
 
