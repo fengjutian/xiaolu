@@ -3,7 +3,7 @@ use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command;
 use tool_protocol::{attach_token, column, digest_of, item, table, Request, ToolError};
-use winreg::enums::{HKEY_CURRENT_USER, KEY_READ};
+use winreg::enums::{HKEY_CURRENT_USER, KEY_READ, KEY_WRITE};
 use winreg::RegKey;
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -120,6 +120,21 @@ fn write_setting(setting: &Setting, value: i64) -> Result<(), ToolError> {
         SettingType::Text => key.set_value(setting.name, &value.to_string()),
     };
     result.map_err(|error| registry_error("写入设置", error))
+}
+
+/// 删除设置值，用于把“原本未设置”的项还原为未设置。
+fn delete_setting(setting: &Setting) -> Result<(), ToolError> {
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let key = match hkcu.open_subkey_with_flags(setting.path, KEY_WRITE) {
+        Ok(key) => key,
+        Err(error) if error.raw_os_error() == Some(2) => return Ok(()),
+        Err(error) => return Err(registry_error("打开设置注册表", error)),
+    };
+    match key.delete_value(setting.name) {
+        Ok(()) => Ok(()),
+        Err(error) if error.raw_os_error() == Some(2) => Ok(()),
+        Err(error) => Err(registry_error("删除设置", error)),
+    }
 }
 
 fn validate_setting_value(setting: &Setting, value: i64) -> Result<(), ToolError> {
@@ -562,36 +577,44 @@ fn apply_settings(request: &Request) -> Result<Value, ToolError> {
                 format!("{} 重复出现。", setting.label),
             ));
         }
-        let value = change
-            .get("value")
-            .and_then(Value::as_i64)
-            .ok_or_else(|| ToolError::new("INVALID_INPUT", "设置项缺少 value。"))?;
-        validate_setting_value(setting, value)?;
+        let value = match change.get("value") {
+            Some(Value::Null) => None,
+            Some(value) => Some(value.as_i64().ok_or_else(|| {
+                ToolError::new("INVALID_INPUT", "设置项的 value 必须是整数或 null。")
+            })?),
+            None => return Err(ToolError::new("INVALID_INPUT", "设置项缺少 value。")),
+        };
+        if let Some(value) = value {
+            validate_setting_value(setting, value)?;
+        }
 
         let before = read_setting(setting);
-        if before == Some(value) {
+        if before == value {
             skipped += 1;
             rows.push(json!({
                 "label": setting.label,
                 "before": display_setting(setting, before),
-                "after": display_setting(setting, Some(value)),
+                "after": display_setting(setting, value),
                 "status": "跳过",
                 "reason": "已是目标值",
             }));
             continue;
         }
-        match write_setting(setting, value) {
+        let result = match value {
+            Some(value) => write_setting(setting, value),
+            None => delete_setting(setting),
+        };
+        match result {
             Ok(()) => {
                 let after = read_setting(setting);
-                if after == Some(value) {
+                if after == value {
                     applied += 1;
-                    if let Some(before) = before {
-                        undo.push(json!({"id": setting.id, "value": before}));
-                    }
+                    // 原值为 null 时，撤销动作会删除该值，回到“未设置”。
+                    undo.push(json!({"id": setting.id, "value": before}));
                     rows.push(json!({
                         "label": setting.label,
                         "before": display_setting(setting, before),
-                        "after": display_setting(setting, Some(value)),
+                        "after": display_setting(setting, value),
                         "status": "已应用",
                         "reason": "",
                     }));

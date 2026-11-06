@@ -422,7 +422,7 @@ export interface ToolResult {
   powerSettings?: PowerSettingOption[];
   undoChanges?: { id: string; ac: number; dc: number }[];
   winoptSettings?: WinoptSetting[];
-  winoptUndo?: { id: string; value: number }[];
+  winoptUndo?: { id: string; value: number | null }[];
   startupItems?: StartupToolItem[];
   startupRegistryError?: string;
 }
