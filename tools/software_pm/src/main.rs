@@ -1,8 +1,9 @@
 use serde_json::{json, Value};
 use std::os::windows::process::CommandExt;
+use std::path::PathBuf;
 use std::process::Command;
 use tool_protocol::{attach_token, column, digest_of, item, table, Request, ToolError};
-use winreg::enums::{HKEY_CURRENT_USER, KEY_READ, KEY_WRITE};
+use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WRITE};
 use winreg::RegKey;
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -12,8 +13,7 @@ const MAX_TASKS: usize = 40;
 const MAX_NOTIFICATIONS: usize = 20;
 const ACTION_TOGGLE: &str = "toggle_startup";
 const RUN_SUBKEYS: [&str; 2] = ["Run", "RunOnce"];
-const BACKUP_PATH: &str = "Software\\SystemLens\\DisabledStartup";
-const MAX_STARTUP_ITEMS: usize = 200;
+const BACKUP_PATH: &str = "Software\\SystemLens\\DisabledStartup";const MAX_STARTUP_ITEMS: usize = 200;
 
 fn script() -> &'static str {
     r#"
@@ -187,21 +187,32 @@ fn read_startup_items() -> Result<Vec<StartupValue>, ToolError> {
     Ok(items)
 }
 
+fn digest_parts(scope: &str, items: &[StartupValue], parts: &mut Vec<String>) {
+    for entry in items {
+        parts.push(format!(
+            "{scope}|{}|{}|{}|{}",
+            entry.key, entry.name, entry.command, entry.enabled
+        ));
+    }
+}
+
 fn startup_digest(items: &[StartupValue]) -> String {
-    let parts = items
-        .iter()
-        .map(|entry| {
-            format!(
-                "{}|{}|{}|{}",
-                entry.key, entry.name, entry.command, entry.enabled
-            )
-        })
-        .collect::<Vec<_>>();
+    let mut parts = Vec::new();
+    digest_parts("HKCU", items, &mut parts);
     let refs = parts.iter().map(String::as_str).collect::<Vec<_>>();
     digest_of(&refs)
 }
 
-fn startup_items_json(items: &[StartupValue]) -> Value {
+/// 令牌同时绑定当前用户与系统级启动项，任一侧变化都会失效。
+fn full_digest(hkcu: &[StartupValue], machine: &[StartupValue]) -> String {
+    let mut parts = Vec::new();
+    digest_parts("HKCU", hkcu, &mut parts);
+    digest_parts("HKLM", machine, &mut parts);
+    let refs = parts.iter().map(String::as_str).collect::<Vec<_>>();
+    digest_of(&refs)
+}
+
+fn startup_items_json(items: &[StartupValue], hive: &str) -> Value {
     Value::Array(
         items
             .iter()
@@ -211,11 +222,52 @@ fn startup_items_json(items: &[StartupValue]) -> Value {
                     "name": entry.name,
                     "command": entry.command,
                     "enabled": entry.enabled,
-                    "location": format!("HKCU\\...\\{}", entry.key),
+                    "location": format!("{hive}\\...\\{}", entry.key),
                 })
             })
             .collect(),
     )
+}
+
+fn read_machine_startup_items() -> Vec<StartupValue> {
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let mut items = Vec::new();
+    for key in RUN_SUBKEYS {
+        let Ok(run) = hklm.open_subkey_with_flags(run_key_path(key), KEY_READ) else {
+            continue;
+        };
+        for (name, value) in run.enum_values().flatten() {
+            let command = value.to_string();
+            if command.trim().is_empty() {
+                continue;
+            }
+            items.push(StartupValue {
+                key: key.to_string(),
+                name,
+                command,
+                enabled: true,
+            });
+        }
+    }
+    if let Ok(backup) = hklm.open_subkey_with_flags(BACKUP_PATH, KEY_READ) {
+        for (value_name, value) in backup.enum_values().flatten() {
+            let Some((key, name)) = parse_backup_name(&value_name) else {
+                continue;
+            };
+            items.push(StartupValue {
+                key,
+                name,
+                command: value.to_string(),
+                enabled: false,
+            });
+        }
+    }
+    items.sort_by(|left, right| {
+        (left.key.as_str(), left.name.to_lowercase())
+            .cmp(&(right.key.as_str(), right.name.to_lowercase()))
+    });
+    items.truncate(MAX_STARTUP_ITEMS);
+    items
 }
 
 fn render(payload: &Value) -> Value {
@@ -397,9 +449,21 @@ fn scan() -> Result<Value, ToolError> {
     let mut data = render(&payload);
     match read_startup_items() {
         Ok(items) => {
-            let token = tool_protocol::issue_token(ACTION_TOGGLE, &startup_digest(&items))?;
+            let machine = read_machine_startup_items();
+            let token =
+                tool_protocol::issue_token(ACTION_TOGGLE, &full_digest(&items, &machine))?;
             if let Value::Object(map) = &mut data {
-                map.insert("startupItems".into(), startup_items_json(&items));
+                map.insert("startupItems".into(), startup_items_json(&items, "HKCU"));
+                map.insert(
+                    "systemStartupItems".into(),
+                    startup_items_json(&machine, "HKLM"),
+                );
+                if let Some(notes) = map.get_mut("notes").and_then(Value::as_array_mut) {
+                    notes.push(Value::String(
+                        "系统级启动项启停需要管理员授权（UAC），由独立 lens_helper.exe 执行。"
+                            .into(),
+                    ));
+                }
             }
             attach_token(&mut data, token);
         }
@@ -641,8 +705,8 @@ fn execute_changes(
         "action": action,
         "startedAt": started_at,
         "finishedAt": finished_at,
-        "before": startup_items_json(before),
-        "after": startup_items_json(&after),
+        "before": startup_items_json(before, "HKCU"),
+        "after": startup_items_json(&after, "HKCU"),
         "records": records
             .iter()
             .map(|record| json!({
@@ -705,7 +769,7 @@ fn execute_changes(
         ]),
     );
     if let Value::Object(map) = &mut data {
-        map.insert("startupItems".into(), startup_items_json(&after));
+        map.insert("startupItems".into(), startup_items_json(&after, "HKCU"));
     }
     if let Ok(token) = tool_protocol::issue_token(ACTION_TOGGLE, &startup_digest(&after)) {
         attach_token(&mut data, token);
@@ -722,7 +786,8 @@ fn toggle_startup(request: &Request) -> Result<Value, ToolError> {
     })?;
     let change = change_from_value(&request.parameters)?;
     let before = read_startup_items()?;
-    tool_protocol::verify_token(token, ACTION_TOGGLE, &startup_digest(&before))?;
+    let machine = read_machine_startup_items();
+    tool_protocol::verify_token(token, ACTION_TOGGLE, &full_digest(&before, &machine))?;
     execute_changes(&before, vec![change], ACTION_TOGGLE)
 }
 
@@ -735,7 +800,8 @@ fn toggle_startups(request: &Request) -> Result<Value, ToolError> {
     })?;
     let changes = parse_changes(request)?;
     let before = read_startup_items()?;
-    tool_protocol::verify_token(token, ACTION_TOGGLE, &startup_digest(&before))?;
+    let machine = read_machine_startup_items();
+    tool_protocol::verify_token(token, ACTION_TOGGLE, &full_digest(&before, &machine))?;
     execute_changes(&before, changes, "toggle_startups")
 }
 
@@ -747,7 +813,8 @@ fn restore_all(request: &Request) -> Result<Value, ToolError> {
         )
     })?;
     let before = read_startup_items()?;
-    tool_protocol::verify_token(token, ACTION_TOGGLE, &startup_digest(&before))?;
+    let machine = read_machine_startup_items();
+    tool_protocol::verify_token(token, ACTION_TOGGLE, &full_digest(&before, &machine))?;
     let changes = before
         .iter()
         .filter(|entry| !entry.enabled)
@@ -763,16 +830,216 @@ fn restore_all(request: &Request) -> Result<Value, ToolError> {
     execute_changes(&before, changes, "restore_all")
 }
 
+fn elevated_dir() -> PathBuf {
+    std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_default()
+        .join("SystemLens")
+        .join("elevated")
+}
+
+fn helper_path() -> Result<PathBuf, ToolError> {
+    if let Some(path) = std::env::var_os("SYSTEM_LENS_HELPER") {
+        let path = PathBuf::from(path);
+        if path.is_file() {
+            return Ok(path);
+        }
+    }
+    let exe = std::env::current_exe()
+        .map_err(|error| ToolError::new("INTERNAL", format!("无法定位工具路径：{error}")))?;
+    let dir = exe
+        .parent()
+        .ok_or_else(|| ToolError::new("INTERNAL", "无法定位工具目录。"))?;
+    let candidates = [
+        dir.join("lens_helper.exe"),
+        dir.join("..").join("lens_helper").join("lens_helper.exe"),
+    ];
+    candidates
+        .into_iter()
+        .find(|path| path.is_file())
+        .ok_or_else(|| {
+            ToolError::new(
+                "HELPER_MISSING",
+                "缺少提权助手 lens_helper.exe，请重新打包或安装。",
+            )
+        })
+}
+
+fn ps_quote(text: &str) -> String {
+    format!("'{}'", text.replace('\'', "''"))
+}
+
+/// 通过 UAC 启动独立助手；请求/结果只经由受限目录下的 JSON 文件交换。
+fn run_elevated(nonce: &str, key: &str, name: &str, enable: bool) -> Result<Value, ToolError> {
+    let dir = elevated_dir();
+    std::fs::create_dir_all(&dir)
+        .map_err(|error| ToolError::new("INTERNAL", format!("无法创建提权请求目录：{error}")))?;
+    let request_path = dir.join(format!("req-{nonce}.json"));
+    let result_path = dir.join(format!("res-{nonce}.json"));
+    let request = json!({
+        "version": 1,
+        "nonce": nonce,
+        "op": "system_startup_set",
+        "key": key,
+        "name": name,
+        "enable": enable,
+        "resultPath": result_path,
+    });
+    let serialized = serde_json::to_string(&request)
+        .map_err(|error| ToolError::new("INTERNAL", format!("无法序列化提权请求：{error}")))?;
+    std::fs::write(&request_path, serialized)
+        .map_err(|error| ToolError::new("INTERNAL", format!("无法写入提权请求：{error}")))?;
+
+    let helper = helper_path()?;
+    let script = format!(
+        "$ErrorActionPreference='Stop'; try {{ $p = Start-Process -FilePath {} -ArgumentList '--request',{} -Verb RunAs -PassThru -Wait -WindowStyle Hidden; exit $p.ExitCode }} catch {{ exit 1223 }}",
+        ps_quote(&helper.to_string_lossy()),
+        ps_quote(&request_path.to_string_lossy())
+    );
+    let status = Command::new("powershell.exe")
+        .creation_flags(CREATE_NO_WINDOW)
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-WindowStyle",
+            "Hidden",
+            "-Command",
+            &script,
+        ])
+        .status()
+        .map_err(|error| ToolError::new("INTERNAL", format!("无法启动提权助手：{error}")))?;
+
+    let result_text = std::fs::read_to_string(&result_path).ok();
+    let _ = std::fs::remove_file(&request_path);
+    let _ = std::fs::remove_file(&result_path);
+
+    if !status.success() {
+        if status.code() == Some(1223) {
+            return Err(ToolError::new(
+                "ELEVATION_CANCELLED",
+                "已取消管理员授权，系统级启动项未修改。",
+            ));
+        }
+        return Err(ToolError::new(
+            "ELEVATION_FAILED",
+            format!("提权助手执行失败（退出码 {:?}）。", status.code()),
+        ));
+    }
+    let text = result_text
+        .ok_or_else(|| ToolError::new("HELPER_FAILED", "提权助手没有返回结果。"))?;
+    let value: Value = serde_json::from_str(&text)
+        .map_err(|error| ToolError::new("HELPER_FAILED", format!("无法解析助手结果：{error}")))?;
+    if value.get("ok").and_then(Value::as_bool) != Some(true) {
+        let message = value
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or("提权助手返回失败。");
+        return Err(ToolError::new("HELPER_FAILED", message.to_string()));
+    }
+    Ok(value)
+}
+
+fn toggle_system_startup(request: &Request) -> Result<Value, ToolError> {
+    let token = request.confirmation.as_deref().ok_or_else(|| {
+        ToolError::new(
+            "CONFIRMATION_REQUIRED",
+            "启停系统级启动项需要确认令牌，请先预览。",
+        )
+    })?;
+    let change = change_from_value(&request.parameters)?;
+    let before = read_startup_items()?;
+    let machine_before = read_machine_startup_items();
+    tool_protocol::verify_token(
+        token,
+        ACTION_TOGGLE,
+        &full_digest(&before, &machine_before),
+    )?;
+    let entry = machine_before
+        .iter()
+        .find(|entry| entry.key == change.key && entry.name == change.name)
+        .cloned()
+        .ok_or_else(|| ToolError::new("CONFLICT", "系统级启动项不存在，可能已被移除。"))?;
+    if entry.enabled == change.enable {
+        return Err(ToolError::new("CONFLICT", "系统级启动项已是目标状态。"));
+    }
+
+    let nonce_source = format!("{}-{}", tool_protocol::now_ms(), std::process::id());
+    let nonce_full = tool_protocol::digest_of(&[&nonce_source]);
+    let nonce = &nonce_full[..32];
+    run_elevated(nonce, &change.key, &change.name, change.enable)?;
+
+    let machine_after = read_machine_startup_items();
+    let verified = machine_after.iter().any(|entry| {
+        entry.key == change.key && entry.name == change.name && entry.enabled == change.enable
+    });
+    if !verified {
+        return Err(ToolError::new(
+            "INTERNAL",
+            "提权后回读系统启动项状态不一致。",
+        ));
+    }
+    let after = read_startup_items()?;
+    let _ = tool_protocol::append_audit_log(json!({
+        "tool": "software_pm",
+        "action": "toggle_system_startup",
+        "key": change.key,
+        "name": change.name,
+        "enable": change.enable,
+        "result": "ok",
+        "at": tool_protocol::now_ms(),
+    }));
+
+    let mut data = table(
+        json!([
+            item("操作", if change.enable { "启用" } else { "停用" }),
+            item("启动项", change.name.clone()),
+            item("位置", format!("HKLM\\...\\{}", change.key)),
+        ]),
+        json!([
+            column("name", "启动项"),
+            column("status", "状态"),
+        ]),
+        json!([{
+            "name": change.name,
+            "status": if change.enable { "已启用（系统级）" } else { "已停用（系统级）" },
+        }]),
+        json!([
+            "系统级启动项已由独立提权助手处理，并已回读确认。",
+            "再次操作需要重新预览获取新令牌。",
+        ]),
+    );
+    if let Value::Object(map) = &mut data {
+        map.insert("startupItems".into(), startup_items_json(&after, "HKCU"));
+        map.insert(
+            "systemStartupItems".into(),
+            startup_items_json(&machine_after, "HKLM"),
+        );
+    }
+    if let Ok(new_token) =
+        tool_protocol::issue_token(ACTION_TOGGLE, &full_digest(&after, &machine_after))
+    {
+        attach_token(&mut data, new_token);
+    }
+    Ok(data)
+}
+
 fn main() {
     tool_protocol::serve_with_request(
         "software_pm",
         env!("CARGO_PKG_VERSION"),
-        &["preview", ACTION_TOGGLE, "toggle_startups", "restore_all"],
+        &[
+            "preview",
+            ACTION_TOGGLE,
+            "toggle_startups",
+            "restore_all",
+            "toggle_system_startup",
+        ],
         |request| match request.action.as_str() {
             "preview" => scan(),
             ACTION_TOGGLE => toggle_startup(request),
             "toggle_startups" => toggle_startups(request),
             "restore_all" => restore_all(request),
+            "toggle_system_startup" => toggle_system_startup(request),
             other => Err(ToolError::unsupported(other)),
         },
     );
@@ -962,5 +1229,35 @@ mod tests {
         }))
         .is_err());
         assert!(change_from_value(&json!({ "key": "Run", "name": "App" })).is_err());
+    }
+
+    #[test]
+    fn full_digest_binds_machine_items() {
+        let hkcu = vec![StartupValue {
+            key: "Run".into(),
+            name: "UserApp".into(),
+            command: "C:\\user.exe".into(),
+            enabled: true,
+        }];
+        let machine = vec![StartupValue {
+            key: "Run".into(),
+            name: "MachineApp".into(),
+            command: "C:\\machine.exe".into(),
+            enabled: true,
+        }];
+        assert_ne!(
+            full_digest(&hkcu, &machine),
+            full_digest(&hkcu, &Vec::new())
+        );
+        assert_eq!(
+            full_digest(&hkcu, &machine),
+            full_digest(&hkcu, &machine.clone())
+        );
+    }
+
+    #[test]
+    fn powershell_single_quotes_are_escaped() {
+        assert_eq!(ps_quote(r"C:\Program Files\x.exe"), r"'C:\Program Files\x.exe'");
+        assert_eq!(ps_quote("O'Brien"), "'O''Brien'");
     }
 }

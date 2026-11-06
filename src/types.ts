@@ -424,6 +424,7 @@ export interface ToolResult {
   winoptSettings?: WinoptSetting[];
   winoptUndo?: { id: string; value: number | null }[];
   startupItems?: StartupToolItem[];
+  systemStartupItems?: StartupToolItem[];
   startupRegistryError?: string;
 }
 

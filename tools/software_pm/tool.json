@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "id": "software_pm",
   "name": "软件权限管理",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "apiVersion": 1,
-  "description": "查看启动项/服务/计划任务/通知，当前用户启动项可批量启停与恢复",
+  "description": "查看启动项/服务/计划任务/通知，用户级与系统级启动项可启停与恢复",
   "category": "工具箱",
   "risk": "write",
   "entry": "software_pm.exe",
@@ -17,6 +17,8 @@
       "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce",
       "HKCU\\Software\\SystemLens\\DisabledStartup",
       "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run",
+      "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\RunOnce",
+      "HKLM\\SOFTWARE\\SystemLens\\DisabledStartup",
       "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Notifications\\Settings"
     ],
     "network": false,
@@ -26,7 +28,8 @@
     { "id": "preview", "label": "预览", "write": false },
     { "id": "toggle_startup", "label": "启用/停用启动项", "write": true, "requiresConfirmation": true },
     { "id": "toggle_startups", "label": "批量启停启动项", "write": true, "requiresConfirmation": true },
-    { "id": "restore_all", "label": "恢复全部停用项", "write": true, "requiresConfirmation": true }
+    { "id": "restore_all", "label": "恢复全部停用项", "write": true, "requiresConfirmation": true },
+    { "id": "toggle_system_startup", "label": "启停系统级启动项（需 UAC）", "write": true, "requiresConfirmation": true }
   ],
   "limits": { "timeoutMs": 120000, "maxOutputBytes": 4194304 },
   "ui": { "kind": "table" },

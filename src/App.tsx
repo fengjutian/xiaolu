@@ -4921,6 +4921,41 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
     }
   };
 
+  const toggleSystemStartup = async (
+    tool: ToolDescriptor,
+    item: NonNullable<ToolResult["systemStartupItems"]>[number],
+  ) => {
+    const token = generic?.data.confirmationToken;
+    if (!token) {
+      setApplyError("确认令牌缺失或已使用，请重新运行预览。");
+      return;
+    }
+    const actionLabel = item.enabled
+      ? `停用「${item.name}」`
+      : `启用「${item.name}」`;
+    if (
+      !window.confirm(
+        `确认${actionLabel}？这是系统级启动项，将弹出管理员授权（UAC）。`,
+      )
+    )
+      return;
+    setApplying(`${tool.id}:toggle_system_startup`);
+    setApplyError(null);
+    try {
+      await runToolAction(tool.id, "toggle_system_startup", token, {
+        key: item.key,
+        name: item.name,
+        enable: !item.enabled,
+      });
+      setGenericSuccess(`${actionLabel}完成，正在刷新…`);
+      await runGeneric(tool);
+    } catch (reason) {
+      setApplyError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setApplying(null);
+    }
+  };
+
   const scan = async () => {
     setScanning(true);
     setScanError(null);
@@ -5359,6 +5394,72 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                   <Alert color="orange" mt="sm" icon={<IconAlertCircle />}>
                     {generic.data.startupRegistryError}
                   </Alert>
+                )}
+                {(generic.data.systemStartupItems?.length ?? 0) > 0 && (
+                  <Box mt="lg">
+                    <Text size="sm" fw={700}>
+                      系统级启动项（HKLM）
+                    </Text>
+                    <Text size="xs" c="dimmed" mt={4}>
+                      启停需要管理员授权（UAC），由独立 lens_helper.exe 执行
+                    </Text>
+                    <ScrollArea type="auto" mt="xs">
+                      <Table miw={760} verticalSpacing="xs">
+                        <Table.Thead>
+                          <Table.Tr>
+                            <Table.Th>启动项</Table.Th>
+                            <Table.Th>状态</Table.Th>
+                            <Table.Th>命令</Table.Th>
+                            <Table.Th>操作</Table.Th>
+                          </Table.Tr>
+                        </Table.Thead>
+                        <Table.Tbody>
+                          {(generic.data.systemStartupItems ?? []).map((item) => (
+                            <Table.Tr key={`${item.key}::${item.name}`}>
+                              <Table.Td>
+                                <Text size="sm" fw={600}>
+                                  {item.name}
+                                </Text>
+                                <Text size="xs" c="dimmed">
+                                  {item.location}
+                                </Text>
+                              </Table.Td>
+                              <Table.Td>
+                                <Badge
+                                  size="xs"
+                                  variant="light"
+                                  color={item.enabled ? "teal" : "gray"}
+                                >
+                                  {item.enabled ? "已启用" : "已停用"}
+                                </Badge>
+                              </Table.Td>
+                              <Table.Td>
+                                <Text size="xs" c="dimmed" truncate maw={340}>
+                                  {item.command}
+                                </Text>
+                              </Table.Td>
+                              <Table.Td>
+                                <Button
+                                  size="xs"
+                                  variant="light"
+                                  color={item.enabled ? "orange" : "teal"}
+                                  loading={
+                                    applying ===
+                                    `${generic.tool.id}:toggle_system_startup`
+                                  }
+                                  onClick={() =>
+                                    void toggleSystemStartup(generic.tool, item)
+                                  }
+                                >
+                                  {item.enabled ? "停用" : "启用（还原）"}
+                                </Button>
+                              </Table.Td>
+                            </Table.Tr>
+                          ))}
+                        </Table.Tbody>
+                      </Table>
+                    </ScrollArea>
+                  </Box>
                 )}
               </Box>
             )}
