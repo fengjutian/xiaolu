@@ -1,0 +1,73 @@
+---
+import Layout from "../layouts/Layout.astro";
+import ProductPreview from "../components/ProductPreview";
+
+const features = [
+  { icon: "⌁", title: "实时状态", text: "持续查看 CPU、内存、磁盘与网络负载，用趋势而不是猜测了解电脑。" },
+  { icon: "◇", title: "硬件洞察", text: "集中呈现硬件配置、传感器温度、存储健康与驱动状态。" },
+  { icon: "◎", title: "问题诊断", text: "从系统事件、网络连接到蓝屏线索，把复杂信息整理成可读结论。" },
+  { icon: "↗", title: "性能测试", text: "CPU、内存、磁盘与 GPU 测试，结果保存在本机，方便前后对比。" },
+  { icon: "✦", title: "空间分析", text: "用清晰的目录与可视化视图定位大文件，清理前先确认。" },
+  { icon: "⌘", title: "实用工具箱", text: "把常用维护工具收进同一个入口，敏感操作始终要求明确确认。" },
+];
+
+const facts = ["本地优先", "不安装后台服务", "诊断报告自动脱敏"];
+---
+
+<Layout title="小鲁 · 系统透镜 — 看清你的电脑" description="面向 Windows 的本地系统信息、健康检查与性能诊断工具。">
+  <header class="site-header">
+    <a class="brand" href="#top" aria-label="小鲁首页"><span>鲁</span><strong>小鲁</strong><small>系统透镜</small></a>
+    <nav aria-label="主导航">
+      <a href="#features">功能</a><a href="#security">安全</a><a href="#download">下载</a>
+    </nav>
+    <a class="header-cta" href="#download">免费下载</a>
+  </header>
+
+  <main id="top">
+    <section class="hero section-shell">
+      <div class="hero-glow"></div>
+      <div class="eyebrow"><i></i> 为 Windows 11 设计</div>
+      <h1>电脑的状态，<br /><em>终于一目了然。</em></h1>
+      <p class="hero-copy">小鲁把分散、晦涩的系统信息整理成清晰的健康视图。无需成为专家，也能读懂性能、温度、存储和驱动状态。</p>
+      <div class="hero-actions">
+        <a class="button primary" href="#download">下载 Windows 版 <span>↓</span></a>
+        <a class="button secondary" href="#preview">查看产品演示 <span>↘</span></a>
+      </div>
+      <div class="trust-row">{facts.map((fact) => <span><i>✓</i>{fact}</span>)}</div>
+      <div id="preview" class="hero-preview"><ProductPreview client:visible /></div>
+    </section>
+
+    <section id="features" class="features section-shell">
+      <div class="section-label">核心能力 / CAPABILITIES</div>
+      <div class="section-heading"><h2>少一些术语，<br />多一些答案。</h2><p>从概览到细节，小鲁用一致的方式呈现电脑的关键状态，让每一次判断都有依据。</p></div>
+      <div class="feature-grid">
+        {features.map((feature, index) => <article class:list={["feature-card", index === 0 && "featured"]}>
+          <span class="feature-index">0{index + 1}</span><i>{feature.icon}</i><h3>{feature.title}</h3><p>{feature.text}</p>
+        </article>)}
+      </div>
+    </section>
+
+    <section class="insight section-shell">
+      <div class="insight-panel">
+        <div class="insight-copy"><div class="section-label">不止是数字</div><h2>发现变化，<br />也看懂原因。</h2><p>实时数据、历史趋势和健康评估放在同一个上下文里。温度升高、磁盘空间减少，或系统出现异常时，你知道下一步该看哪里。</p></div>
+        <div class="chart-card" aria-label="性能趋势示意图">
+          <div class="chart-head"><span>性能趋势</span><small><i></i> 实时</small></div>
+          <div class="chart-value">27.4% <span>CPU 使用率</span></div>
+          <svg viewBox="0 0 560 190" role="img" aria-label="CPU使用率趋势模拟图"><defs><linearGradient id="area" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#7585ff" stop-opacity=".35"/><stop offset="1" stop-color="#7585ff" stop-opacity="0"/></linearGradient></defs><path class="grid" d="M0 40H560M0 90H560M0 140H560"/><path class="area" d="M0 145 C45 130 58 90 95 112 S145 165 185 118 S245 62 285 94 S340 150 380 120 S430 62 470 82 S525 120 560 70 V190H0Z"/><path class="line" d="M0 145 C45 130 58 90 95 112 S145 165 185 118 S245 62 285 94 S340 150 380 120 S430 62 470 82 S525 120 560 70"/></svg>
+          <div class="chart-legend"><span>过去 60 分钟</span><span>现在</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="security" class="security section-shell">
+      <div class="shield" aria-hidden="true">◇<span>✓</span></div>
+      <div><div class="section-label">LOCAL-FIRST</div><h2>你的电脑数据，<br />留在你的电脑。</h2><p>小鲁优先使用 Windows 标准接口读取信息，不要求注册账户，也不安装额外的后台服务。导出的诊断报告会自动隐藏敏感信息。</p><div class="security-points"><span><i>01</i>默认本地运行</span><span><i>02</i>清理前明确预览</span><span><i>03</i>写操作需要确认</span></div></div>
+    </section>
+
+    <section id="download" class="download section-shell">
+      <div class="download-card"><div><div class="section-label">开始使用</div><h2>更了解电脑，<br />从现在开始。</h2><p>适用于 Windows 11 · 当前版本 0.36.0</p></div><div class="download-actions"><a class="button light" href="https://github.com/fengjutian/xiaolu/releases">前往 GitHub Releases <span>↗</span></a><small>安装包发布后将在此提供下载</small></div></div>
+    </section>
+  </main>
+
+  <footer class="site-footer section-shell"><a class="brand" href="#top"><span>鲁</span><strong>小鲁</strong></a><p>看清系统，安心使用。</p><div><a href="https://github.com/fengjutian/xiaolu">GitHub</a><span>© 2026 小鲁</span></div></footer>
+</Layout>
