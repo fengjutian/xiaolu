@@ -1,6 +1,6 @@
 use serde::Deserialize;
 use serde_json::Value;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ffi::c_void;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -146,25 +146,39 @@ fn state_dir(app: &AppHandle) -> Option<PathBuf> {
     Some(directory)
 }
 
-fn tools_dir(app: &AppHandle) -> PathBuf {
+fn tools_dirs(app: &AppHandle) -> Vec<PathBuf> {
     if let Some(path) = std::env::var_os("SYSTEM_LENS_TOOLS_DIR") {
-        return PathBuf::from(path);
+        return vec![PathBuf::from(path)];
     }
+    let mut candidates = Vec::new();
     if let Ok(directory) = app.path().app_local_data_dir() {
         let candidate = directory.join("tools");
         if candidate.is_dir() {
-            return candidate;
+            candidates.push(candidate);
         }
     }
     if let Ok(executable) = std::env::current_exe() {
         if let Some(parent) = executable.parent() {
             let candidate = parent.join("tools");
             if candidate.is_dir() {
-                return candidate;
+                candidates.push(candidate);
             }
         }
     }
-    PathBuf::from("tools-dist")
+    // 开发模式下 Tauri 的当前目录可能是仓库根目录，也可能是 src-tauri；
+    // 两种位置都纳入候选，避免本地安装目录存在时把开发工具包全部遮蔽。
+    candidates.push(PathBuf::from("tools-dist"));
+    #[cfg(debug_assertions)]
+    if let Some(repository_root) = Path::new(env!("CARGO_MANIFEST_DIR")).parent() {
+        candidates.push(repository_root.join("tools-dist"));
+    }
+
+    let mut unique = HashSet::new();
+    candidates
+        .into_iter()
+        .filter(|path| path.is_dir())
+        .filter(|path| unique.insert(path.clone()))
+        .collect()
 }
 
 fn load_manifest(directory: &Path, folder_name: &str) -> Option<Manifest> {
@@ -195,23 +209,32 @@ fn load_manifest(directory: &Path, folder_name: &str) -> Option<Manifest> {
 }
 
 fn discover(app: &AppHandle) -> Vec<(PathBuf, Manifest)> {
-    let root = tools_dir(app);
-    let mut found = Vec::new();
-    let Ok(entries) = std::fs::read_dir(&root) else {
-        return found;
-    };
-    for entry in entries.flatten() {
-        if !entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false) {
+    discover_in_roots(tools_dirs(app))
+}
+
+fn discover_in_roots(roots: impl IntoIterator<Item = PathBuf>) -> Vec<(PathBuf, Manifest)> {
+    let mut found = HashMap::<String, (PathBuf, Manifest)>::new();
+    for root in roots {
+        let Ok(entries) = std::fs::read_dir(&root) else {
             continue;
-        }
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if name.starts_with('_') || name.starts_with('.') {
-            continue;
-        }
-        if let Some(manifest) = load_manifest(&entry.path(), &name) {
-            found.push((entry.path(), manifest));
+        };
+        for entry in entries.flatten() {
+            if !entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false) {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with('_') || name.starts_with('.') {
+                continue;
+            }
+            if found.contains_key(&name) {
+                continue;
+            }
+            if let Some(manifest) = load_manifest(&entry.path(), &name) {
+                found.insert(name, (entry.path(), manifest));
+            }
         }
     }
+    let mut found = found.into_values().collect::<Vec<_>>();
     found.sort_by(|left, right| left.1.name.cmp(&right.1.name));
     found
 }
@@ -515,6 +538,54 @@ mod tests {
         assert_eq!(parsed.id, "demo");
         assert_eq!(parsed.limits.timeout_ms, 1000);
         std::fs::remove_dir_all(&temp).ok();
+    }
+
+    #[test]
+    fn merges_tool_roots_and_prefers_the_first_copy() {
+        let test_root = |name: &str| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("target")
+                .join(format!("{name}-{}", std::process::id()))
+        };
+        let first = test_root("toolbox-roots-first");
+        let second = test_root("toolbox-roots-second");
+        let write_tool = |root: &Path, id: &str, name: &str| {
+            let directory = root.join(id);
+            std::fs::create_dir_all(&directory).unwrap();
+            std::fs::write(directory.join(format!("{id}.exe")), b"test").unwrap();
+            let manifest = serde_json::json!({
+                "schemaVersion": 1,
+                "id": id,
+                "name": name,
+                "version": "1.0.0",
+                "apiVersion": 1,
+                "description": "test",
+                "category": "test",
+                "risk": "read_only",
+                "entry": format!("{id}.exe"),
+                "actions": [{"id": "preview", "write": false}]
+            });
+            std::fs::write(
+                directory.join("tool.json"),
+                serde_json::to_vec(&manifest).unwrap(),
+            )
+            .unwrap();
+        };
+        write_tool(&first, "shared", "本地版本");
+        write_tool(&second, "shared", "内置版本");
+        write_tool(&second, "bundled", "内置工具");
+
+        let found = discover_in_roots([first.clone(), second.clone()]);
+        assert_eq!(found.len(), 2);
+        assert!(found
+            .iter()
+            .any(|(_, manifest)| manifest.id == "shared" && manifest.name == "本地版本"));
+        assert!(found
+            .iter()
+            .any(|(_, manifest)| manifest.id == "bundled"));
+
+        std::fs::remove_dir_all(first).ok();
+        std::fs::remove_dir_all(second).ok();
     }
 
     #[test]

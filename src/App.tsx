@@ -56,6 +56,8 @@ import {
   IconTool,
   IconUsb,
   IconBluetooth,
+  IconChevronDown,
+  IconChevronUp,
   IconMoon,
   IconSun,
   IconWind,
@@ -63,6 +65,8 @@ import {
 import {
   Area,
   AreaChart,
+  Bar,
+  BarChart,
   CartesianGrid,
   Line,
   LineChart,
@@ -128,6 +132,7 @@ import type {
   NetworkDiagnosticReport,
   NvmeHealthReport,
   NotificationSettings,
+  ProcessInfo,
   ScheduledTaskInventory,
   SensorHistorySeries,
   SensorSettings,
@@ -320,6 +325,195 @@ function PerformanceChart({
         )}
       </AreaChart>
     </ResponsiveContainer>
+  );
+}
+
+function ProcessPanel({ processes }: { processes: ProcessInfo[] }) {
+  const [metric, setMetric] = useState<"cpu" | "memory">("cpu");
+  const [query, setQuery] = useState("");
+  const [sortBy, setSortBy] = useState<"cpu" | "memory" | "name">("cpu");
+
+  const chartData = useMemo(() => {
+    const grouped = new Map<
+      string,
+      { name: string; cpu: number; memory: number; instances: number }
+    >();
+    processes.forEach((process) => {
+      const key = process.name.toLocaleLowerCase();
+      const current = grouped.get(key) ?? {
+        name: process.name,
+        cpu: 0,
+        memory: 0,
+        instances: 0,
+      };
+      current.cpu += process.cpuPercent;
+      current.memory += process.memoryBytes;
+      current.instances += 1;
+      grouped.set(key, current);
+    });
+    return [...grouped.values()]
+      .sort((a, b) => b[metric] - a[metric])
+      .slice(0, 8)
+      .map((item) => ({
+        ...item,
+        value: metric === "cpu" ? item.cpu : item.memory / 1024 ** 2,
+      }));
+  }, [metric, processes]);
+
+  const visibleProcesses = useMemo(() => {
+    const needle = query.trim().toLocaleLowerCase();
+    return processes
+      .filter((process) => process.name.toLocaleLowerCase().includes(needle))
+      .sort((a, b) => {
+        if (sortBy === "name") return a.name.localeCompare(b.name);
+        if (sortBy === "memory") return b.memoryBytes - a.memoryBytes;
+        return b.cpuPercent - a.cpuPercent;
+      });
+  }, [processes, query, sortBy]);
+
+  const activeProcesses = processes.filter(
+    (process) => process.cpuPercent > 0,
+  ).length;
+  const sampledMemory = processes.reduce(
+    (total, process) => total + process.memoryBytes,
+    0,
+  );
+
+  return (
+    <Stack gap="md">
+      <SimpleGrid cols={{ base: 1, sm: 3 }}>
+        <Card className="glass-card" radius="lg">
+          <Text size="xs" c="dimmed">已采集进程</Text>
+          <Title order={3} mt={4}>{processes.length}</Title>
+        </Card>
+        <Card className="glass-card" radius="lg">
+          <Text size="xs" c="dimmed">CPU 活跃进程</Text>
+          <Title order={3} mt={4}>{activeProcesses}</Title>
+        </Card>
+        <Card className="glass-card" radius="lg">
+          <Text size="xs" c="dimmed">采集进程内存合计</Text>
+          <Title order={3} mt={4}>{bytes(sampledMemory)}</Title>
+        </Card>
+      </SimpleGrid>
+
+      <Card className="glass-card" radius="lg">
+        <Group justify="space-between" mb="md">
+          <Box>
+            <Text fw={700}>资源占用排行</Text>
+            <Text size="xs" c="dimmed">
+              同名进程合并统计 · 每 2 秒刷新
+            </Text>
+          </Box>
+          <SegmentedControl
+            size="xs"
+            value={metric}
+            onChange={(value) => setMetric(value as "cpu" | "memory")}
+            data={[
+              { label: "CPU", value: "cpu" },
+              { label: "内存", value: "memory" },
+            ]}
+          />
+        </Group>
+        <ResponsiveContainer width="100%" height={300}>
+          <BarChart
+            data={chartData}
+            layout="vertical"
+            margin={{ top: 0, right: 34, bottom: 0, left: 24 }}
+          >
+            <CartesianGrid stroke="#293042" strokeDasharray="4 4" horizontal={false} />
+            <XAxis
+              type="number"
+              axisLine={false}
+              tickLine={false}
+              tick={{ fill: "#7d879b", fontSize: 11 }}
+              tickFormatter={(value) =>
+                metric === "cpu" ? `${value}%` : `${value} MB`
+              }
+            />
+            <YAxis
+              type="category"
+              dataKey="name"
+              width={150}
+              axisLine={false}
+              tickLine={false}
+              tick={{ fill: "#7d879b", fontSize: 12 }}
+            />
+            <ChartTooltip
+              cursor={{ fill: "rgba(116, 143, 252, 0.08)" }}
+              contentStyle={{
+                background: "#171b25",
+                border: "1px solid #30384b",
+                borderRadius: 12,
+              }}
+              formatter={(value) => [
+                metric === "cpu"
+                  ? `${Number(value).toFixed(1)}%`
+                  : bytes(Number(value) * 1024 ** 2),
+                metric === "cpu" ? "CPU" : "内存",
+              ]}
+            />
+            <Bar dataKey="value" fill="#4c6ef5" radius={[0, 6, 6, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      </Card>
+
+      <Card className="glass-card" radius="lg" p={0}>
+        <Group p="md" justify="space-between" align="flex-end">
+          <Box>
+            <Text fw={700}>进程明细</Text>
+            <Text size="xs" c="dimmed">
+              显示 {visibleProcesses.length} / {processes.length} 个进程
+            </Text>
+          </Box>
+          <Group gap="sm">
+            <TextInput
+              size="xs"
+              value={query}
+              onChange={(event) => setQuery(event.currentTarget.value)}
+              placeholder="搜索进程"
+              leftSection={<IconSearch size={15} />}
+              w={220}
+            />
+            <Select
+              size="xs"
+              value={sortBy}
+              onChange={(value) =>
+                setSortBy((value as "cpu" | "memory" | "name") ?? "cpu")
+              }
+              allowDeselect={false}
+              w={140}
+              data={[
+                { value: "cpu", label: "按 CPU 排序" },
+                { value: "memory", label: "按内存排序" },
+                { value: "name", label: "按名称排序" },
+              ]}
+            />
+          </Group>
+        </Group>
+        <ScrollArea h={430}>
+          <Table stickyHeader highlightOnHover verticalSpacing="sm">
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>进程</Table.Th>
+                <Table.Th>PID</Table.Th>
+                <Table.Th>CPU</Table.Th>
+                <Table.Th>内存</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {visibleProcesses.map((process) => (
+                <Table.Tr key={process.pid}>
+                  <Table.Td><Text fw={600}>{process.name}</Text></Table.Td>
+                  <Table.Td>{process.pid}</Table.Td>
+                  <Table.Td>{process.cpuPercent.toFixed(1)}%</Table.Td>
+                  <Table.Td>{bytes(process.memoryBytes)}</Table.Td>
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+        </ScrollArea>
+      </Card>
+    </Stack>
   );
 }
 
@@ -641,18 +835,18 @@ function SensorsPanel({ data }: { data: SensorSnapshot | null }) {
         </Alert>
       ))}
 
-      <Card className="glass-card" radius="lg">
-        <Group justify="space-between" align="flex-end" wrap="wrap">
-          <Box>
-            <Text fw={800}>温度历史</Text>
+      <Card className="glass-card history-card" radius="lg">
+        <Group className="history-toolbar" justify="space-between" align="flex-start" wrap="wrap">
+          <Box className="history-heading">
+            <Text fw={800} size="lg">温度历史</Text>
             <Text size="xs" c="dimmed">
               样本保存在本机 SQLite，按范围自动降采样
             </Text>
           </Box>
-          <Group gap="sm">
+          <Group className="history-controls" gap="sm">
             <Select
+              className="history-sensor-select"
               size="xs"
-              w={280}
               placeholder="选择温度传感器"
               data={temperatures.map((value) => ({
                 value: value.id,
@@ -688,48 +882,48 @@ function SensorsPanel({ data }: { data: SensorSnapshot | null }) {
         )}
         {temperatures.length > 0 && (
           <>
-            <Group gap="xl" mt="md">
-              <Box>
+            <div className="history-metrics">
+              <Box className="history-metric history-metric-low">
                 <Text size="xs" c="dimmed">
                   最低
                 </Text>
-                <Text fw={700}>
+                <Text fw={800} size="lg">
                   {history?.min == null ? "—" : `${history.min.toFixed(1)} °C`}
                 </Text>
               </Box>
-              <Box>
+              <Box className="history-metric history-metric-average">
                 <Text size="xs" c="dimmed">
                   平均
                 </Text>
-                <Text fw={700}>
+                <Text fw={800} size="lg">
                   {history?.avg == null ? "—" : `${history.avg.toFixed(1)} °C`}
                 </Text>
               </Box>
-              <Box>
+              <Box className="history-metric history-metric-high">
                 <Text size="xs" c="dimmed">
                   最高
                 </Text>
-                <Text fw={700}>
+                <Text fw={800} size="lg">
                   {history?.max == null ? "—" : `${history.max.toFixed(1)} °C`}
                 </Text>
               </Box>
-              <Box>
+              <Box className="history-metric">
                 <Text size="xs" c="dimmed">
                   样本
                 </Text>
-                <Text fw={700}>{history?.sampleCount ?? 0}</Text>
+                <Text fw={800} size="lg">{history?.sampleCount ?? 0}</Text>
               </Box>
-              {loadingHistory && <Loader size="xs" />}
-            </Group>
+              {loadingHistory && <Loader className="history-loader" size="xs" />}
+            </div>
             {chartData.length === 0 ? (
               <Alert color="gray" mt="md">
                 这个传感器还没有历史样本；桌面应用运行一段时间后会自动累积。
               </Alert>
             ) : (
-              <Box mt="md">
-                <ResponsiveContainer width="100%" height={230}>
-                  <LineChart data={chartData} margin={{ left: -14, right: 8, top: 8 }}>
-                    <CartesianGrid stroke="#293042" strokeDasharray="4 4" />
+              <Box className="history-chart">
+                <ResponsiveContainer width="100%" height={250}>
+                  <LineChart data={chartData} margin={{ left: -10, right: 10, top: 12, bottom: 2 }}>
+                    <CartesianGrid stroke="var(--chart-grid)" strokeDasharray="4 5" vertical={false} />
                     <XAxis
                       dataKey="time"
                       tick={{ fill: "#7d879b", fontSize: 11 }}
@@ -746,9 +940,10 @@ function SensorsPanel({ data }: { data: SensorSnapshot | null }) {
                     />
                     <ChartTooltip
                       contentStyle={{
-                        background: "#171b25",
-                        border: "1px solid #30384b",
+                        background: "var(--chart-tooltip-bg)",
+                        border: "1px solid var(--chart-tooltip-border)",
                         borderRadius: 12,
+                        boxShadow: "0 12px 30px rgba(15, 23, 42, .18)",
                       }}
                     />
                     <Line type="monotone" dataKey="avg" name="平均" stroke="#ff922b" strokeWidth={2} dot={false} />
@@ -1827,6 +2022,9 @@ function StoragePanel() {
   const [loadingDirectory, setLoadingDirectory] = useState(false);
   const [directoryError, setDirectoryError] = useState<string | null>(null);
   const [drives, setDrives] = useState<StorageDrive[]>([]);
+  const [expandedCategories, setExpandedCategories] = useState<
+    Record<string, boolean>
+  >({});
   useEffect(() => {
     void getStorageDrives()
       .then(setDrives)
@@ -2054,8 +2252,10 @@ function StoragePanel() {
             </Box>
             <Badge variant="light">{bytes(result.totalBytes)}</Badge>
           </Group>
-          <Stack gap="sm">
-            {result.categories.map((category) => {
+          <SimpleGrid cols={{ base: 1, xl: 2 }} spacing="sm" verticalSpacing="sm">
+            {result.categories
+              .slice(0, expandedCategories[result.kind] ? undefined : 8)
+              .map((category) => {
               const percent = result.totalBytes
                 ? (category.totalBytes / result.totalBytes) * 100
                 : 0;
@@ -2073,7 +2273,32 @@ function StoragePanel() {
                 </Box>
               );
             })}
-          </Stack>
+          </SimpleGrid>
+          {result.categories.length > 8 && (
+            <Button
+              fullWidth
+              mt="md"
+              size="xs"
+              variant="subtle"
+              leftSection={
+                expandedCategories[result.kind] ? (
+                  <IconChevronUp size={16} />
+                ) : (
+                  <IconChevronDown size={16} />
+                )
+              }
+              onClick={() =>
+                setExpandedCategories((current) => ({
+                  ...current,
+                  [result.kind]: !current[result.kind],
+                }))
+              }
+            >
+              {expandedCategories[result.kind]
+                ? "收起"
+                : `查看全部 ${result.categories.length} 种文件类型`}
+            </Button>
+          )}
         </Card>
       ))}
 
@@ -3624,7 +3849,6 @@ function ToolboxPanel() {
 
   const available = tools.filter((tool) => tool.status !== "planned");
   const planned = tools.filter((tool) => tool.status === "planned");
-  const runnable = available.filter((tool) => tool.status === "available").length;
   const usedBytes = slim
     ? Math.max(0, slim.driveTotalBytes - slim.driveFreeBytes)
     : 0;
@@ -3632,8 +3856,8 @@ function ToolboxPanel() {
   return (
     <Stack gap="md">
       <Alert color="blue" icon={<IconShieldCheck />}>
-        工具箱按“只读预览 → 逐项确认 → 可回滚执行”推进。当前有 {runnable}{" "}
-        个可运行工具；只读工具仅预览，写操作会先预览、二次确认并写入本地操作日志。
+        已接入 {available.length} 个工具。只读工具直接生成预览；涉及写操作时会先展示影响范围，
+        经确认后执行并写入本地操作日志。
       </Alert>
       {error && (
         <Alert color="red" icon={<IconAlertCircle />}>
@@ -3641,7 +3865,15 @@ function ToolboxPanel() {
         </Alert>
       )}
 
-      <Title order={3}>可用工具</Title>
+      <Group justify="space-between" align="flex-end">
+        <Box>
+          <Title order={3}>已接入工具</Title>
+          <Text size="xs" c="dimmed" mt={3}>
+            这里只展示当前版本能够实际运行或生成预览的功能
+          </Text>
+        </Box>
+        <Badge variant="light">{available.length} 个</Badge>
+      </Group>
       <SimpleGrid cols={{ base: 1, md: 2, xl: 3 }}>
         {available.map((tool) => (
           <Card key={tool.id} className="glass-card" radius="lg">
@@ -3956,12 +4188,20 @@ function ToolboxPanel() {
         </Card>
       )}
 
-      <Title order={3} mt="md">
-        规划中（{planned.length}）
-      </Title>
+      <Group justify="space-between" align="flex-end" mt="md">
+        <Box>
+          <Title order={3}>规划中</Title>
+          <Text size="xs" c="dimmed" mt={3}>
+            已登记但当前版本尚不可运行的工具
+          </Text>
+        </Box>
+        <Badge variant="light" color="gray">
+          {planned.length} 个
+        </Badge>
+      </Group>
       <Card className="glass-card" radius="lg" p={0}>
-        <ScrollArea h={360}>
-          <Table highlightOnHover verticalSpacing="xs">
+        <ScrollArea h={320}>
+          <Table stickyHeader highlightOnHover verticalSpacing="xs">
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>工具</Table.Th>
@@ -3974,12 +4214,8 @@ function ToolboxPanel() {
               {planned.map((tool) => (
                 <Table.Tr key={tool.id}>
                   <Table.Td>
-                    <Text size="sm" fw={600}>
-                      {tool.name}
-                    </Text>
-                    <Text size="xs" c="dimmed">
-                      {tool.id}
-                    </Text>
+                    <Text size="sm" fw={600}>{tool.name}</Text>
+                    <Text size="xs" c="dimmed">{tool.id}</Text>
                   </Table.Td>
                   <Table.Td>{tool.category}</Table.Td>
                   <Table.Td>
@@ -3998,6 +4234,7 @@ function ToolboxPanel() {
           </Table>
         </ScrollArea>
       </Card>
+
     </Stack>
   );
 }
@@ -4488,34 +4725,7 @@ export default function App() {
         {tab === "network" && <NetworkPanel data={networkDiagnostics} />}
         {tab === "software" && <SoftwarePanel data={software} />}
         {tab === "storage" && <StoragePanel />}
-        {tab === "processes" && (
-          <Card className="glass-card" radius="lg" p={0}>
-            <ScrollArea h="calc(100vh - 180px)">
-              <Table stickyHeader highlightOnHover verticalSpacing="sm">
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th>进程</Table.Th>
-                    <Table.Th>PID</Table.Th>
-                    <Table.Th>CPU</Table.Th>
-                    <Table.Th>内存</Table.Th>
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {snapshot.processes.map((p) => (
-                    <Table.Tr key={p.pid}>
-                      <Table.Td>
-                        <Text fw={600}>{p.name}</Text>
-                      </Table.Td>
-                      <Table.Td>{p.pid}</Table.Td>
-                      <Table.Td>{p.cpuPercent.toFixed(1)}%</Table.Td>
-                      <Table.Td>{bytes(p.memoryBytes)}</Table.Td>
-                    </Table.Tr>
-                  ))}
-                </Table.Tbody>
-              </Table>
-            </ScrollArea>
-          </Card>
-        )}
+        {tab === "processes" && <ProcessPanel processes={snapshot.processes} />}
         {tab === "startup" && (
           <Stack>
             <Alert color="blue" icon={<IconPlayerPause />}>
