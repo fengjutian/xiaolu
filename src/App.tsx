@@ -3314,6 +3314,7 @@ const benchmarkKinds: Array<{
 ];
 
 function BenchmarkPanel() {
+  const [benchmarkTab, setBenchmarkTab] = useState<string | null>("cpu");
   const [running, setRunning] = useState<BenchmarkResult["kind"] | null>(null);
   const [results, setResults] = useState<Record<string, BenchmarkResult>>({});
   const [benchmarkHistory, setBenchmarkHistory] = useState<BenchmarkRecord[]>(
@@ -3378,6 +3379,11 @@ function BenchmarkPanel() {
         ),
       )
     : null;
+  const visibleBenchmarkKinds = benchmarkKinds.filter((item) =>
+    benchmarkTab === "cpu"
+      ? item.kind === "cpu-single" || item.kind === "cpu-multi"
+      : item.kind === benchmarkTab,
+  );
   return (
     <Stack gap="md">
       <Alert color="blue" icon={<IconGauge />}>
@@ -3385,6 +3391,18 @@ function BenchmarkPanel() {
         负载。综合分采用加权几何平均：单核 20%、多核 30%、内存 15%、磁盘
         15%、GPU 20%。
       </Alert>
+      <Tabs value={benchmarkTab} onChange={setBenchmarkTab} variant="pills">
+        <Tabs.List>
+          <Tabs.Tab value="cpu" leftSection={<IconCpu size={16} />}>
+            CPU
+          </Tabs.Tab>
+          <Tabs.Tab value="memory">内存</Tabs.Tab>
+          <Tabs.Tab value="disk">磁盘</Tabs.Tab>
+          <Tabs.Tab value="gpu">GPU</Tabs.Tab>
+          <Tabs.Tab value="history">历史记录</Tabs.Tab>
+        </Tabs.List>
+      </Tabs>
+      {benchmarkTab === "disk" && (
       <Group justify="space-between" align="flex-end" wrap="wrap">
         <Group align="flex-end">
           <Box>
@@ -3426,6 +3444,24 @@ function BenchmarkPanel() {
           </Button>
         )}
       </Group>
+      )}
+      {benchmarkTab !== "disk" && running && (
+        <Group justify="flex-end">
+          <Button
+            size="xs"
+            color="red"
+            variant="light"
+            loading={cancelling}
+            onClick={() => {
+              setCancelling(true);
+              cancelGpuBenchmark();
+              void cancelBenchmark().finally(() => setCancelling(false));
+            }}
+          >
+            取消测试
+          </Button>
+        </Group>
+      )}
       {failure && (
         <Alert color="red" icon={<IconAlertCircle />}>
           {failure}
@@ -3444,8 +3480,9 @@ function BenchmarkPanel() {
           </Text>
         </Card>
       )}
-      <SimpleGrid cols={{ base: 1, md: 2 }}>
-        {benchmarkKinds.map((item) => {
+      {benchmarkTab !== "history" && (
+      <SimpleGrid cols={{ base: 1, md: benchmarkTab === "cpu" ? 2 : 1 }}>
+        {visibleBenchmarkKinds.map((item) => {
           const result = results[item.kind];
           return (
             <Card key={item.kind} className="glass-card" radius="lg">
@@ -3505,6 +3542,9 @@ function BenchmarkPanel() {
           );
         })}
       </SimpleGrid>
+      )}
+      {benchmarkTab === "history" && (
+      <>
       <Title order={3} mt="md">
         本机历史记录
       </Title>
@@ -3576,6 +3616,8 @@ function BenchmarkPanel() {
             </Table.Tbody>
           </Table>
         </Card>
+      )}
+      </>
       )}
     </Stack>
   );
@@ -4794,16 +4836,26 @@ export default function App() {
                   </Text>
                 </Box>
                 <Badge color="gray">
-                  运行 {duration(snapshot.uptimeSeconds)}
+                  {snapshot.disks.length} 个分区
                 </Badge>
               </Group>
               {snapshot.disks.map((d) => {
                 const used = d.totalBytes - d.availableBytes;
+                const mountPoint = d.mountPoint.replace(/[\\/]$/, "");
+                const volumeName = d.name.trim();
+                const nameIsMountPoint =
+                  volumeName.replace(/[\\/]$/, "").toLocaleLowerCase() ===
+                  mountPoint.toLocaleLowerCase();
+                const diskLabel = volumeName && !nameIsMountPoint
+                  ? `${volumeName} (${mountPoint || "无盘符"})`
+                  : mountPoint
+                    ? `本地磁盘 (${mountPoint})`
+                    : `${volumeName || "未命名卷"} (无盘符)`;
                 return (
                   <Box key={d.mountPoint} mb="md">
                     <Group justify="space-between">
                       <Text size="sm" fw={600}>
-                        {d.name || d.mountPoint} · {d.fileSystem}
+                        {diskLabel} · {d.fileSystem || "未知文件系统"}
                       </Text>
                       <Text size="xs" c="dimmed">
                         {bytes(used)} / {bytes(d.totalBytes)}
