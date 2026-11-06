@@ -175,6 +175,7 @@ import type {
   SystemHistorySeries,
   SystemSnapshot,
   PowerSettingOption,
+  WinoptSetting,
   ToolActionDescriptor,
   ToolDescriptor,
   ToolResult,
@@ -4760,6 +4761,14 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
     }));
   };
 
+  const [winoptDraft, setWinoptDraft] = useState<Record<string, number>>({});
+
+  const updateWinoptValue = (id: string, value: number | string) => {
+    const parsed = typeof value === "number" ? value : Number.parseInt(value, 10);
+    if (!Number.isFinite(parsed)) return;
+    setWinoptDraft((current) => ({ ...current, [id]: parsed }));
+  };
+
   useEffect(() => {
     void listToolboxTools()
       .then(setTools)
@@ -4797,6 +4806,9 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
             ]),
           ),
         );
+      }
+      if (tool.id === "winopt_assistant") {
+        setWinoptDraft({});
       }
     } catch (reason) {
       setGenericError(reason instanceof Error ? reason.message : String(reason));
@@ -4836,6 +4848,9 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
             ]),
           ),
         );
+      }
+      if (data.winoptSettings) {
+        setWinoptDraft({});
       }
       setGenericSuccess(`${action.label}执行完成`);
       setSelection([]);
@@ -4958,6 +4973,15 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
     }
     return [{ id: setting.id, ac: draft.ac, dc: draft.dc }];
   });
+  const winoptSettings: WinoptSetting[] = generic?.data.winoptSettings ?? [];
+  const winoptChanges = winoptSettings.flatMap((setting) => {
+    const draft = winoptDraft[setting.id];
+    if (draft == null || setting.current === draft) {
+      return [] as { id: string; value: number }[];
+    }
+    return [{ id: setting.id, value: draft }];
+  });
+  const winoptUndo = generic?.data.winoptUndo ?? [];
 
   return (
     <Stack gap="md">
@@ -5145,6 +5169,7 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                 generic.tool.id !== "software_pm" &&
                 generic.tool.id !== "omni_zip" &&
                 generic.tool.id !== "master_pdf" &&
+                generic.tool.id !== "winopt_assistant" &&
                 (generic.tool.actions ?? [])
                   .filter((action) => action.write)
                   .map((action) => (
@@ -5335,6 +5360,126 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                     {generic.data.startupRegistryError}
                   </Alert>
                 )}
+              </Box>
+            )}
+          {generic.tool.id === "winopt_assistant" &&
+            winoptSettings.length > 0 && (
+              <Box mt="md">
+                <Text size="sm" fw={700}>
+                  可应用的用户级设置
+                </Text>
+                <Text size="xs" c="dimmed" mt={4}>
+                  仅写入 HKCU；写入后立即回读，可单项应用或一键撤销
+                </Text>
+                <ScrollArea type="auto" mt="xs">
+                  <Table miw={760} verticalSpacing="xs">
+                    <Table.Thead>
+                      <Table.Tr>
+                        <Table.Th>设置项</Table.Th>
+                        <Table.Th>当前</Table.Th>
+                        <Table.Th>修改为</Table.Th>
+                        <Table.Th>范围</Table.Th>
+                      </Table.Tr>
+                    </Table.Thead>
+                    <Table.Tbody>
+                      {winoptSettings.map((setting) => {
+                        const currentLabel =
+                          setting.current == null
+                            ? "未设置"
+                            : setting.options.find(
+                                (option) => option.value === setting.current,
+                              )?.label ?? String(setting.current);
+                        const value =
+                          winoptDraft[setting.id] ??
+                          setting.current ??
+                          setting.min;
+                        return (
+                          <Table.Tr key={setting.id}>
+                            <Table.Td>
+                              <Text size="sm" fw={600}>
+                                {setting.label}
+                              </Text>
+                            </Table.Td>
+                            <Table.Td>
+                              <Badge size="xs" variant="light">
+                                {currentLabel}
+                              </Badge>
+                            </Table.Td>
+                            <Table.Td>
+                              <Select
+                                size="xs"
+                                w={170}
+                                data={setting.options.map((option) => ({
+                                  value: String(option.value),
+                                  label: option.label,
+                                }))}
+                                value={String(value)}
+                                allowDeselect={false}
+                                onChange={(next) =>
+                                  next != null &&
+                                  updateWinoptValue(setting.id, next)
+                                }
+                              />
+                            </Table.Td>
+                            <Table.Td>
+                              <Text size="xs" c="dimmed">
+                                HKCU · 可还原
+                              </Text>
+                            </Table.Td>
+                          </Table.Tr>
+                        );
+                      })}
+                    </Table.Tbody>
+                  </Table>
+                </ScrollArea>
+                <Group mt="sm" align="center">
+                  <Button
+                    size="xs"
+                    color="orange"
+                    variant="light"
+                    disabled={winoptChanges.length === 0}
+                    loading={applying === `${generic.tool.id}:apply_settings`}
+                    onClick={() =>
+                      void runApply(
+                        generic.tool,
+                        {
+                          id: "apply_settings",
+                          label: "应用所选设置",
+                          write: true,
+                        },
+                        { changes: winoptChanges },
+                      )
+                    }
+                  >
+                    应用所选设置
+                  </Button>
+                  {winoptUndo.length > 0 && (
+                    <Button
+                      size="xs"
+                      color="red"
+                      variant="light"
+                      loading={applying === `${generic.tool.id}:apply_settings`}
+                      onClick={() =>
+                        void runApply(
+                          generic.tool,
+                          {
+                            id: "apply_settings",
+                            label: "撤销本次修改",
+                            write: true,
+                          },
+                          { changes: winoptUndo },
+                        )
+                      }
+                    >
+                      撤销本次修改
+                    </Button>
+                  )}
+                  <Text size="xs" c="dimmed">
+                    {winoptChanges.length > 0
+                      ? `将修改 ${winoptChanges.length} 项；原值写入本地快照`
+                      : "修改选项后可应用"}
+                  </Text>
+                </Group>
               </Box>
             )}
           {generic.tool.id === "pc_optimizer" && powerSettings.length > 0 && (

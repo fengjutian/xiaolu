@@ -2,11 +2,11 @@
   "schemaVersion": 1,
   "id": "winopt_assistant",
   "name": "Windows 优化助手",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "apiVersion": 1,
-  "description": "只读检查视觉效果、存储感知、休眠、快速启动与诊断数据等设置",
+  "description": "检查系统设置，5 项用户级设置可直接应用与还原",
   "category": "优化",
-  "risk": "read_only",
+  "risk": "write",
   "entry": "winopt_assistant.exe",
   "arguments": ["--stdio"],
   "permissions": {
@@ -25,10 +25,13 @@
     "network": false,
     "elevation": "none"
   },
-  "actions": [{ "id": "preview", "label": "体检", "write": false }],
+  "actions": [
+    { "id": "preview", "label": "体检", "write": false },
+    { "id": "apply_settings", "label": "应用所选设置", "write": true, "requiresConfirmation": true }
+  ],
   "limits": { "timeoutMs": 30000, "maxOutputBytes": 262144 },
   "ui": { "kind": "table" },
-  "rollback": "none",
+  "rollback": "custom",
   "hash": "",
   "signature": null
 }

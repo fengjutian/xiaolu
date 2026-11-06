@@ -402,6 +402,16 @@ export interface StartupToolItem {
   location: string;
 }
 
+export interface WinoptSetting {
+  id: string;
+  label: string;
+  current: number | null;
+  min: number;
+  max: number;
+  options: { value: number; label: string }[];
+  requiresAdmin?: boolean;
+}
+
 export interface ToolResult {
   summary?: { label: string; value: string }[];
   columns?: { key: string; label: string }[];
@@ -411,6 +421,8 @@ export interface ToolResult {
   confirmationTokenExpiresAt?: number;
   powerSettings?: PowerSettingOption[];
   undoChanges?: { id: string; ac: number; dc: number }[];
+  winoptSettings?: WinoptSetting[];
+  winoptUndo?: { id: string; value: number }[];
   startupItems?: StartupToolItem[];
   startupRegistryError?: string;
 }
