@@ -54,6 +54,7 @@ import {
   IconRocket,
   IconSearch,
   IconServer,
+  IconSettings,
   IconShieldCheck,
   IconSpeakerphone,
   IconTemperature,
@@ -88,6 +89,10 @@ import {
   getDriverInventory,
   getDiagnosticReport,
   getDeviceDetails,
+  getAppSettings,
+  saveAppSettings,
+  getAppPaths,
+  clearSystemHistory,
   getEyeCareSettings,
   saveEyeCareSettings,
   setEyeCareFilter,
@@ -136,6 +141,8 @@ import type {
   DirectoryListing,
   DuplicateScan,
   EventLogResult,
+  AppSettings,
+  AppPaths,
   EyeCareSettings,
   HardwareDetails,
   HealthLevel,
@@ -181,6 +188,7 @@ type Tab =
   | "processes"
   | "startup"
   | "tasks"
+  | "settings"
   | "toolbox"
   | "report";
 type Sample = {
@@ -208,6 +216,7 @@ const nav = [
   ["processes", "运行进程", IconActivity],
   ["startup", "启动项管理", IconRocket],
   ["tasks", "计划任务", IconCalendarTime],
+  ["settings", "设置", IconSettings],
   ["toolbox", "工具箱", IconPackage],
   ["report", "诊断报告", IconShieldCheck],
 ] as const;
@@ -3929,6 +3938,178 @@ const slimCategoryLabel = (category: string) =>
 const slimCategoryColor = (category: string) =>
   category === "safe" ? "teal" : category === "caution" ? "orange" : "gray";
 
+function SettingsPanel({
+  settings,
+  onSaved,
+  onNavigate,
+}: {
+  settings: AppSettings | null;
+  onSaved: (settings: AppSettings) => void;
+  onNavigate: (tab: Tab) => void;
+}) {
+  const [draft, setDraft] = useState<AppSettings | null>(settings);
+  const [paths, setPaths] = useState<AppPaths | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => setDraft(settings), [settings]);
+  useEffect(() => {
+    void getAppPaths()
+      .then(setPaths)
+      .catch(() => undefined);
+  }, []);
+
+  if (!draft)
+    return (
+      <Center h={260}>
+        <Loader />
+      </Center>
+    );
+
+  const saveSettings = async () => {
+    setSaving(true);
+    setFailed(false);
+    try {
+      const saved = await saveAppSettings(draft);
+      setDraft(saved);
+      onSaved(saved);
+      setStatus("设置已保存，刷新间隔立即生效。");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+      setFailed(true);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const clearHistory = async () => {
+    if (!window.confirm("确认清空全部指标历史？该操作不可撤销。")) return;
+    try {
+      await clearSystemHistory();
+      setStatus("指标历史已清空。");
+      setFailed(false);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+      setFailed(true);
+    }
+  };
+
+  return (
+    <Stack gap="md">
+      <Alert color="blue" icon={<IconSettings />}>
+        设置保存在本机配置目录，不会上传；采样与历史只影响本应用。
+      </Alert>
+
+      <Card className="glass-card" radius="lg">
+        <Text fw={800}>刷新与历史</Text>
+        <Text size="xs" c="dimmed">
+          刷新间隔影响概览页轮询；历史保留只影响指标数据库，不影响温度传感器历史。
+        </Text>
+        <Group mt="md" align="flex-end" wrap="wrap">
+          <Select
+            size="xs"
+            w={180}
+            label="概览刷新间隔"
+            allowDeselect={false}
+            value={String(draft.snapshotIntervalSeconds)}
+            onChange={(value) =>
+              value &&
+              setDraft({ ...draft, snapshotIntervalSeconds: Number(value) })
+            }
+            data={[
+              { value: "1", label: "1 秒" },
+              { value: "2", label: "2 秒" },
+              { value: "5", label: "5 秒" },
+              { value: "10", label: "10 秒" },
+            ]}
+          />
+          <NumberInput
+            size="xs"
+            label="指标历史保留（天）"
+            min={1}
+            max={30}
+            w={180}
+            value={draft.metricsRetentionDays}
+            onChange={(value) => {
+              const parsed =
+                typeof value === "number" ? value : Number.parseFloat(value);
+              if (Number.isFinite(parsed)) {
+                setDraft({ ...draft, metricsRetentionDays: Math.round(parsed) });
+              }
+            }}
+          />
+          <Button loading={saving} onClick={() => void saveSettings()}>
+            保存设置
+          </Button>
+        </Group>
+        {status && (
+          <Text size="sm" mt="sm" c={failed ? "red" : "teal"}>
+            {status}
+          </Text>
+        )}
+      </Card>
+
+      <Card className="glass-card" radius="lg">
+        <Text fw={800}>数据目录</Text>
+        <Text size="xs" c="dimmed">
+          指标数据库、工具操作日志与设置文件的本地位置
+        </Text>
+        <Stack gap="xs" mt="md">
+          {[
+            ["数据目录", paths?.dataDir],
+            ["配置目录", paths?.configDir],
+          ].map(([label, path]) => (
+            <Group key={label} justify="space-between" wrap="nowrap">
+              <Box className="startup-command">
+                <Text size="sm" fw={600}>
+                  {label}
+                </Text>
+                <Text size="xs" c="dimmed" truncate>
+                  {path ?? "加载中…"}
+                </Text>
+              </Box>
+              <Button
+                size="xs"
+                variant="light"
+                disabled={!path}
+                onClick={() => path && void openPathInExplorer(path)}
+              >
+                打开
+              </Button>
+            </Group>
+          ))}
+        </Stack>
+      </Card>
+
+      <Card className="glass-card" radius="lg">
+        <Text fw={800}>功能入口</Text>
+        <Group mt="md">
+          <Button size="xs" variant="light" onClick={() => onNavigate("sensors")}>
+            通知与温度阈值
+          </Button>
+          <Button size="xs" variant="light" onClick={() => onNavigate("eye-care")}>
+            护眼模式
+          </Button>
+          <Button size="xs" variant="light" onClick={() => onNavigate("toolbox")}>
+            工具箱
+          </Button>
+        </Group>
+      </Card>
+
+      <Card className="glass-card" radius="lg">
+        <Text fw={800}>维护</Text>
+        <Text size="xs" c="dimmed">
+          仅清空概览指标历史；温度传感器历史与工具审计日志不受影响。
+        </Text>
+        <Button size="xs" color="red" variant="light" mt="md" onClick={() => void clearHistory()}>
+          清空指标历史
+        </Button>
+      </Card>
+    </Stack>
+  );
+}
+
 function EyeCarePanel({
   settings,
   onSaved,
@@ -4950,6 +5131,14 @@ const MemoProcessPanel = memo(ProcessPanel);
 export default function App() {
   const { colorScheme, setColorScheme } = useMantineColorScheme();
   const [tab, setTab] = useState<Tab>("overview");
+  const [appSettings, setAppSettings] = useState<AppSettings | null>(null);
+
+  useEffect(() => {
+    void getAppSettings()
+      .then(setAppSettings)
+      .catch(() => undefined);
+  }, []);
+
   const [eyeCare, setEyeCare] = useState<EyeCareSettings | null>(null);
   const [eyeBreak, setEyeBreak] = useState(false);
 
@@ -5052,11 +5241,11 @@ export default function App() {
     let timer: number | undefined;
     const poll = async () => {
       await refresh();
-      if (active) timer = window.setTimeout(() => void poll(), 2000);
+      if (active) timer = window.setTimeout(() => void poll(), Math.max(1, appSettings?.snapshotIntervalSeconds ?? 2) * 1000);
     };
     void poll();
     return () => { active = false; if (timer) window.clearTimeout(timer); };
-  }, [refresh, tab]);
+  }, [refresh, tab, appSettings?.snapshotIntervalSeconds]);
   useEffect(() => {
     if (tab !== "processes") return;
     let active = true;
@@ -5286,7 +5475,7 @@ export default function App() {
           </Text>
         </Paper>
         <Text size="xs" c="dimmed">
-          v0.40.0 · 18 个工具 · 护眼模式
+          v0.41.0 · 18 个工具 · 设置页
         </Text>
       </aside>
       <main className="content">
@@ -5511,6 +5700,7 @@ export default function App() {
         {tab === "devices" && <MemoDevicePanel data={deviceDetails} />}
         {tab === "sensors" && <SensorsPanel data={sensors} />}
         {tab === "eye-care" && <EyeCarePanel settings={eyeCare} onSaved={setEyeCare} />}
+        {tab === "settings" && <SettingsPanel settings={appSettings} onSaved={setAppSettings} onNavigate={setTab} />}
         {tab === "drivers" && <MemoDriversPanel data={drivers} />}
         {tab === "diagnostics" && <MemoDiagnosticsPanel data={diagnostics} />}
         {tab === "network" && <MemoNetworkPanel data={networkDiagnostics} />}
