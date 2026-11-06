@@ -2,6 +2,7 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AiAnswer,
+  AiCapabilityReport,
   AiPayloadPreview,
   AiSessionRecord,
   AiSettings,
@@ -19,6 +20,7 @@ export const DEFAULT_AI_SETTINGS: AiSettings = {
   model: "deepseek-chat",
   maxOutputTokens: 1200,
   timeoutSeconds: 60,
+  nativeTools: false,
 };
 
 export async function getAiSettings(): Promise<AiSettingsView> {
@@ -114,6 +116,13 @@ export async function getAiToolAudit(limit = 50): Promise<AiToolAuditEntry[]> {
 export async function clearAiToolAudit(): Promise<void> {
   if (!isTauri()) return;
   await invoke("clear_ai_tool_audit");
+}
+
+export async function probeAiCapabilities(): Promise<AiCapabilityReport> {
+  if (!isTauri()) {
+    throw new Error("模型能力探测需要桌面运行时。");
+  }
+  return invoke<AiCapabilityReport>("probe_ai_capabilities");
 }
 
 export async function listenAiStream(

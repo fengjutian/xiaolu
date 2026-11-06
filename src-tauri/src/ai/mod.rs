@@ -17,19 +17,23 @@ mod tools;
 mod evaluation;
 
 pub use model::{
-    AiAnswer, AiPayloadPreview, AiSettings, AiSettingsView, AiStreamEvent, AiToolAuditEntry,
-    AiTurn, DiagnosticSnapshot,
+    AiAnswer, AiCapabilityReport, AiPayloadPreview, AiSettings, AiSettingsView, AiStreamEvent,
+    AiToolAuditEntry, AiTurn, DiagnosticSnapshot,
 };
 pub use store::AiSessionRecord;
 
 use self::answer::{enforce_local_priority, parse_answer, validate, ValidatedAnswer};
-use self::model::{AiUsage, ChatMessage, ProviderRequest, AI_PROMPT_VERSION};
+use self::model::{
+    AiToolRun, AiUsage, ChatMessage, ProviderRequest, ToolCall, AI_PROMPT_VERSION,
+};
 use self::provider::{provider_for, AiProvider, CancelHandle, StreamEvent, CANCELLED};
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager};
 
 const MAX_CACHED_SNAPSHOTS: usize = 5;
+const MAX_TOOL_ROUNDS: usize = 2;
+const MAX_TOOL_CHECKS: usize = 6;
 const STREAM_EVENT: &str = "ai-stream";
 
 #[derive(Default)]
@@ -252,6 +256,12 @@ struct ModelTurn {
     model: String,
 }
 
+fn validate_text(text: &str, snapshot: &DiagnosticSnapshot) -> Result<ValidatedAnswer, String> {
+    let mut validated = validate(parse_answer(text)?, &snapshot.facts)?;
+    enforce_local_priority(&snapshot.local_findings, &mut validated);
+    Ok(validated)
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn call_and_validate(
     app: &AppHandle,
@@ -286,6 +296,7 @@ async fn call_and_validate(
                 content: format!(
                     "上一次输出无法解析或未通过证据校验（{last_error}）。请只返回一个符合约定的 JSON 对象，并确保 evidenceRefs 只使用诊断数据中存在的 id。"
                 ),
+                ..Default::default()
             });
         }
 
@@ -307,6 +318,7 @@ async fn call_and_validate(
                     messages: attempt_messages,
                     max_tokens: settings.max_output_tokens,
                     timeout_seconds: settings.timeout_seconds,
+                    tools: None,
                 },
                 api_key.to_string(),
                 cancel.clone(),
@@ -315,9 +327,8 @@ async fn call_and_validate(
             .await?;
         merge_usage(usage, response.usage.clone());
 
-        match parse_answer(&response.text).and_then(|raw| validate(raw, &snapshot.facts)) {
-            Ok(mut validated) => {
-                enforce_local_priority(&snapshot.local_findings, &mut validated);
+        match validate_text(&response.text, snapshot) {
+            Ok(validated) => {
                 return Ok(ModelTurn {
                     validated,
                     model: response.model,
@@ -329,6 +340,104 @@ async fn call_and_validate(
     Err(format!(
         "模型连续两次输出都无法通过校验：{last_error}"
     ))
+}
+
+/// Native tool-calling phase: at most two rounds and six checks. The final JSON
+/// answer is always produced in a separate call with tools disabled, so a model
+/// cannot keep calling tools indefinitely.
+#[allow(clippy::too_many_arguments)]
+async fn collect_native_checks(
+    app: &AppHandle,
+    provider: &dyn AiProvider,
+    settings: &AiSettings,
+    api_key: &str,
+    cancel: Arc<CancelHandle>,
+    request_id: &str,
+    snapshot: &DiagnosticSnapshot,
+    question: Option<&str>,
+    history: &[AiTurn],
+    usage: &mut Option<AiUsage>,
+) -> Result<Vec<AiToolRun>, String> {
+    let (mut messages, _, _, _) = prompt::build_messages(snapshot, question, history);
+    let mut checks = Vec::new();
+    let mut rounds = 0;
+    while rounds < MAX_TOOL_ROUNDS && checks.len() < MAX_TOOL_CHECKS {
+        if cancel.is_cancelled() {
+            return Err(CANCELLED.to_string());
+        }
+        emit_stream(
+            app,
+            request_id,
+            "status",
+            String::new(),
+            0,
+            format!("正在规划只读检查（第 {} 轮）…", rounds + 1),
+        );
+        let event_app = app.clone();
+        let event_request = request_id.to_string();
+        let emit = move |event: StreamEvent| match event {
+            StreamEvent::Status(message) => {
+                emit_stream(&event_app, &event_request, "status", String::new(), 0, message);
+            }
+            StreamEvent::Delta { text, char_count } => {
+                emit_stream(&event_app, &event_request, "delta", text, char_count, String::new());
+            }
+        };
+        let response = provider
+            .complete(
+                ProviderRequest {
+                    model: settings.model.clone(),
+                    messages: messages.clone(),
+                    max_tokens: settings.max_output_tokens,
+                    timeout_seconds: settings.timeout_seconds,
+                    tools: Some(tools::openai_tools()),
+                },
+                api_key.to_string(),
+                cancel.clone(),
+                Box::new(emit),
+            )
+            .await?;
+        merge_usage(usage, response.usage.clone());
+        if response.tool_calls.is_empty() {
+            break;
+        }
+        let remaining = MAX_TOOL_CHECKS.saturating_sub(checks.len());
+        let calls: Vec<ToolCall> = response
+            .tool_calls
+            .into_iter()
+            .take(remaining.min(3))
+            .collect();
+        messages.push(ChatMessage {
+            role: "assistant".to_string(),
+            content: response.text.clone(),
+            tool_calls: Some(calls.clone()),
+            ..Default::default()
+        });
+        for call in &calls {
+            let check = tools::check_from_tool_call(call);
+            let runs = tools::execute_checks(app, request_id, &[check], cancel.clone()).await?;
+            let run = match runs.into_iter().next() {
+                Some(run) => run,
+                None => continue,
+            };
+            let content = serde_json::to_string(&serde_json::json!({
+                "toolId": run.tool_id,
+                "ok": run.ok,
+                "summary": run.summary,
+                "error": run.error,
+            }))
+            .unwrap_or_else(|_| "{\"ok\":false}".to_string());
+            messages.push(ChatMessage {
+                role: "tool".to_string(),
+                content,
+                tool_call_id: Some(call.id.clone()),
+                ..Default::default()
+            });
+            checks.push(run);
+        }
+        rounds += 1;
+    }
+    Ok(checks)
 }
 
 async fn run_model_analysis(
@@ -343,65 +452,74 @@ async fn run_model_analysis(
 ) -> Result<AiAnswer, String> {
     let provider = provider_for(&settings)?;
     let mut usage: Option<AiUsage> = None;
-    let (messages, _, _, _) = prompt::build_messages(&snapshot, question.as_deref(), &history);
-    let first = call_and_validate(
-        &app,
-        provider.as_ref(),
-        &settings,
-        &api_key,
-        cancel.clone(),
-        &request_id,
-        messages,
-        &snapshot,
-        &mut usage,
-    )
-    .await?;
-
-    let mut checks = Vec::new();
-    let turn = if first.validated.requested_checks.is_empty() {
-        first
-    } else {
-        checks = tools::execute_checks(
-            &app,
-            &request_id,
-            &first.validated.requested_checks,
-            cancel.clone(),
-        )
-        .await?;
-        let (messages, _, _, _) = prompt::build_messages_with_results(
-            &snapshot,
-            question.as_deref(),
-            &history,
-            &checks,
-        );
-        let mut second = call_and_validate(
+    let mut checks = if settings.native_tools {
+        collect_native_checks(
             &app,
             provider.as_ref(),
             &settings,
             &api_key,
             cancel.clone(),
             &request_id,
-            messages,
+            &snapshot,
+            question.as_deref(),
+            &history,
+            &mut usage,
+        )
+        .await?
+    } else {
+        Vec::new()
+    };
+
+    let mut messages = if checks.is_empty() {
+        prompt::build_messages(&snapshot, question.as_deref(), &history).0
+    } else {
+        prompt::build_messages_with_results(&snapshot, question.as_deref(), &history, &checks).0
+    };
+
+    let mut legacy_rounds = 0;
+    let mut turn = loop {
+        let mut turn = call_and_validate(
+            &app,
+            provider.as_ref(),
+            &settings,
+            &api_key,
+            cancel.clone(),
+            &request_id,
+            messages.clone(),
             &snapshot,
             &mut usage,
         )
         .await?;
-        if !second.validated.requested_checks.is_empty() {
-            second
-                .validated
-                .limitations
-                .push("每轮最多执行一组只读检查，后续检查请求已忽略。".to_string());
+
+        let requested = std::mem::take(&mut turn.validated.requested_checks);
+        if requested.is_empty() {
+            break turn;
         }
-        for run in checks.iter().filter(|run| !run.ok) {
-            second
-                .validated
+        if legacy_rounds >= MAX_TOOL_ROUNDS || checks.len() + requested.len() > MAX_TOOL_CHECKS {
+            turn.validated
                 .limitations
-                .push(format!("只读检查“{}”未完成，相关结论请谨慎对待。", run.label));
+                .push("已达到只读检查上限，后续检查请求已忽略。".to_string());
+            turn.validated.limitations.dedup();
+            turn.validated.limitations.truncate(8);
+            break turn;
         }
-        second.validated.limitations.dedup();
-        second.validated.limitations.truncate(8);
-        second
+
+        let remaining = MAX_TOOL_CHECKS.saturating_sub(checks.len());
+        let requested: Vec<_> = requested.into_iter().take(remaining).collect();
+        let runs = tools::execute_checks(&app, &request_id, &requested, cancel.clone()).await?;
+        checks.extend(runs);
+        messages =
+            prompt::build_messages_with_results(&snapshot, question.as_deref(), &history, &checks).0;
+        legacy_rounds += 1;
     };
+
+    for run in checks.iter().filter(|run| !run.ok) {
+        turn.validated
+            .limitations
+            .push(format!("只读检查“{}”未完成，相关结论请谨慎对待。", run.label));
+    }
+    turn.validated.limitations.dedup();
+    turn.validated.limitations.truncate(8);
 
     Ok(AiAnswer {
         request_id,
@@ -504,6 +622,156 @@ pub async fn clear_ai_tool_audit(app: AppHandle) -> Result<(), String> {
     tools::clear_audit(&app)
 }
 
+fn is_json_object_text(text: &str) -> bool {
+    let trimmed = text.trim();
+    let unfenced = trimmed
+        .strip_prefix("```json")
+        .or_else(|| trimmed.strip_prefix("```"))
+        .unwrap_or(trimmed)
+        .trim()
+        .trim_end_matches("```")
+        .trim();
+    serde_json::from_str::<serde_json::Value>(unfenced)
+        .map(|value| value.is_object())
+        .unwrap_or(false)
+}
+
+async fn probe_request(
+    provider: &dyn AiProvider,
+    settings: &AiSettings,
+    api_key: &str,
+    messages: Vec<ChatMessage>,
+    tools: Option<serde_json::Value>,
+) -> Result<self::model::ProviderResponse, String> {
+    let cancel = Arc::new(CancelHandle::new());
+    provider
+        .complete(
+            ProviderRequest {
+                model: settings.model.clone(),
+                messages,
+                max_tokens: 64,
+                timeout_seconds: settings.timeout_seconds.min(30),
+                tools,
+            },
+            api_key.to_string(),
+            cancel,
+            Box::new(|_| {}),
+        )
+        .await
+}
+
+#[tauri::command]
+pub async fn probe_ai_capabilities(app: AppHandle) -> Result<AiCapabilityReport, String> {
+    let settings = settings::load_settings(&app);
+    settings::validate_base_url(&settings.base_url)?;
+    let api_key = settings::load_api_key(&app)?
+        .ok_or_else(|| "尚未保存 API 密钥，请先配置模型服务。".to_string())?;
+    let provider = provider_for(&settings)?;
+    let started = std::time::Instant::now();
+    let mut model = settings.model.clone();
+    let mut reachable = false;
+    let mut notes = Vec::new();
+
+    let native_messages = vec![
+        ChatMessage {
+            role: "system".to_string(),
+            content: "你是模型能力探测助手。".to_string(),
+            ..Default::default()
+        },
+        ChatMessage {
+            role: "user".to_string(),
+            content: "请调用 probe_ai_ping 工具，参数为 {\"ok\": true}。不要输出普通文本。"
+                .to_string(),
+            ..Default::default()
+        },
+    ];
+    let native_tools = serde_json::json!([{
+        "type": "function",
+        "function": {
+            "name": "probe_ai_ping",
+            "description": "能力探测：原样返回 ok。",
+            "parameters": {
+                "type": "object",
+                "properties": { "ok": { "type": "boolean" } },
+                "required": ["ok"],
+                "additionalProperties": false
+            }
+        }
+    }]);
+    let native_tools_supported =
+        match probe_request(provider.as_ref(), &settings, &api_key, native_messages, Some(native_tools))
+            .await
+        {
+            Ok(response) => {
+                reachable = true;
+                if !response.model.is_empty() {
+                    model = response.model;
+                }
+                response
+                    .tool_calls
+                    .iter()
+                    .any(|call| call.name == "probe_ai_ping")
+            }
+            Err(error) => {
+                notes.push(format!("原生工具调用未通过：{}", error.chars().take(180).collect::<String>()));
+                false
+            }
+        };
+
+    let structured_messages = vec![
+        ChatMessage {
+            role: "system".to_string(),
+            content: "你是模型能力探测助手。".to_string(),
+            ..Default::default()
+        },
+        ChatMessage {
+            role: "user".to_string(),
+            content: "只输出一个 JSON 对象：{\"ok\":true}。不要输出 Markdown 或额外文字。"
+                .to_string(),
+            ..Default::default()
+        },
+    ];
+    let structured_output =
+        match probe_request(provider.as_ref(), &settings, &api_key, structured_messages, None).await {
+            Ok(response) => {
+                reachable = true;
+                if !response.model.is_empty() {
+                    model = response.model;
+                }
+                is_json_object_text(&response.text)
+            }
+            Err(error) => {
+                notes.push(format!(
+                    "结构化输出未通过：{}",
+                    error.chars().take(180).collect::<String>()
+                ));
+                false
+            }
+        };
+
+    if !reachable {
+        return Err(format!(
+            "模型服务不可达：{}",
+            if notes.is_empty() {
+                "未获得有效响应".to_string()
+            } else {
+                notes.join("；")
+            }
+        ));
+    }
+    if !native_tools_supported {
+        notes.push("原生 tool_calls 不可用或未返回工具调用，将使用受控 requestedChecks 计划协议。".to_string());
+    }
+    Ok(AiCapabilityReport {
+        reachable,
+        structured_output,
+        native_tools: native_tools_supported,
+        model,
+        latency_ms: started.elapsed().as_millis() as u64,
+        note: notes.join(" "),
+    })
+}
+
 #[tauri::command]
 pub async fn cancel_ai_request(app: AppHandle, request_id: String) -> Result<(), String> {
     validate_request_id(&request_id)?;
@@ -521,5 +789,13 @@ mod tests {
         assert!(validate_request_id("bad id").is_err());
         assert!(validate_request_id("../etc").is_err());
         assert!(validate_request_id("short").is_err());
+    }
+
+    #[test]
+    fn detects_structured_probe_output() {
+        assert!(is_json_object_text("{\"ok\":true}"));
+        assert!(is_json_object_text("```json\n{\"ok\":true}\n```"));
+        assert!(!is_json_object_text("OK"));
+        assert!(!is_json_object_text("[1,2,3]"));
     }
 }

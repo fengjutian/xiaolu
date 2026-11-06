@@ -253,6 +253,7 @@ mod tests {
             model: "  ".into(),
             max_output_tokens: 999_999,
             timeout_seconds: 1,
+            ..AiSettings::default()
         }
         .sanitize();
         assert_eq!(settings.provider, "openai-compatible");

@@ -437,6 +437,19 @@ export interface ServiceItem {
   path: string;
 }
 
+export interface ProcessItem {
+  name: string;
+  pid: number;
+  startTime: number;
+  cpu: string;
+  memory: string;
+  priority: string;
+  priorityLabel: string;
+  canEnd: boolean;
+  endToken: string;
+  priorityToken: string;
+}
+
 export interface ToolResult {
   summary?: { label: string; value: string }[];
   columns?: { key: string; label: string }[];
@@ -454,6 +467,7 @@ export interface ToolResult {
   duplicateFileGroups?: DuplicateToolGroup[];
   privacySettings?: PrivacySetting[];
   privacyUndo?: { id: string; value: string }[];
+  processItems?: ProcessItem[];
   journalPath?: string;
   journalDir?: string;
   startupRegistryError?: string;
@@ -881,6 +895,16 @@ export interface AiSettings {
   model: string;
   maxOutputTokens: number;
   timeoutSeconds: number;
+  nativeTools: boolean;
+}
+
+export interface AiCapabilityReport {
+  reachable: boolean;
+  structuredOutput: boolean;
+  nativeTools: boolean;
+  model: string;
+  latencyMs: number;
+  note: string;
 }
 
 export interface AiSettingsView {

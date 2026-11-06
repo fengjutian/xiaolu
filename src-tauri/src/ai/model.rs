@@ -128,7 +128,7 @@ pub struct DiagnosticSnapshot {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct AiSettings {
     pub enabled: bool,
     pub provider: String,
@@ -136,6 +136,7 @@ pub struct AiSettings {
     pub model: String,
     pub max_output_tokens: u32,
     pub timeout_seconds: u32,
+    pub native_tools: bool,
 }
 
 impl Default for AiSettings {
@@ -147,6 +148,7 @@ impl Default for AiSettings {
             model: "deepseek-chat".to_string(),
             max_output_tokens: 1200,
             timeout_seconds: 60,
+            native_tools: false,
         }
     }
 }
@@ -174,6 +176,7 @@ impl AiSettings {
             },
             max_output_tokens: self.max_output_tokens.clamp(128, 4096),
             timeout_seconds: self.timeout_seconds.clamp(10, 180),
+            native_tools: self.native_tools,
         }
     }
 }
@@ -246,6 +249,17 @@ pub struct AiToolAuditEntry {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AiCapabilityReport {
+    pub reachable: bool,
+    pub structured_output: bool,
+    pub native_tools: bool,
+    pub model: String,
+    pub latency_ms: u64,
+    pub note: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AiAnswer {
@@ -284,11 +298,23 @@ pub struct AiStreamEvent {
     pub message: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ToolCall {
+    pub id: String,
+    pub name: String,
+    pub arguments: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
 pub struct ChatMessage {
     pub role: String,
     pub content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCall>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -297,6 +323,7 @@ pub struct ProviderRequest {
     pub messages: Vec<ChatMessage>,
     pub max_tokens: u32,
     pub timeout_seconds: u32,
+    pub tools: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone)]
@@ -304,4 +331,5 @@ pub struct ProviderResponse {
     pub text: String,
     pub model: String,
     pub usage: Option<AiUsage>,
+    pub tool_calls: Vec<ToolCall>,
 }

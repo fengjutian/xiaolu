@@ -4,9 +4,12 @@
 //! Ollama's OpenAI endpoint, ...). Additional providers implement the same
 //! `AiProvider` trait without changing the analysis pipeline.
 
-use super::model::{AiSettings, AiUsage, ProviderRequest, ProviderResponse};
+use super::model::{
+    AiSettings, AiUsage, ChatMessage, ProviderRequest, ProviderResponse, ToolCall,
+};
 use futures_util::StreamExt;
 use serde_json::{json, Value};
+use std::collections::BTreeMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -82,11 +85,51 @@ pub struct OpenAiCompatible {
 }
 
 #[derive(Default)]
-pub(crate) struct SseChunk {
+struct SseChunk {
     done: bool,
     content: String,
     model: Option<String>,
     usage: Option<AiUsage>,
+    tool_calls: Vec<ToolCallChunk>,
+}
+
+#[derive(Default)]
+struct ToolCallChunk {
+    index: usize,
+    id: Option<String>,
+    name: Option<String>,
+    arguments: String,
+}
+
+fn parse_message_tool_calls(message: &Value) -> Vec<ToolCall> {
+    message
+        .get("tool_calls")
+        .and_then(Value::as_array)
+        .map(|calls| {
+            calls
+                .iter()
+                .map(|call| ToolCall {
+                    id: call
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    name: call
+                        .get("function")
+                        .and_then(|function| function.get("name"))
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    arguments: call
+                        .get("function")
+                        .and_then(|function| function.get("arguments"))
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn parse_usage(value: &Value) -> Option<AiUsage> {
@@ -99,7 +142,7 @@ fn parse_usage(value: &Value) -> Option<AiUsage> {
 }
 
 /// Parses a single `data:` payload from an SSE chat completion stream.
-pub(crate) fn parse_sse_data(data: &str) -> SseChunk {
+fn parse_sse_data(data: &str) -> SseChunk {
     let trimmed = data.trim();
     if trimmed.is_empty() {
         return SseChunk::default();
@@ -113,15 +156,50 @@ pub(crate) fn parse_sse_data(data: &str) -> SseChunk {
     let Ok(value) = serde_json::from_str::<Value>(trimmed) else {
         return SseChunk::default();
     };
-    let content = value
+    let choice = value
         .get("choices")
         .and_then(Value::as_array)
-        .and_then(|choices| choices.first())
+        .and_then(|choices| choices.first());
+    let content = choice
         .and_then(|choice| choice.get("delta"))
         .and_then(|delta| delta.get("content"))
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string();
+    let tool_calls = choice
+        .and_then(|choice| choice.get("delta"))
+        .and_then(|delta| delta.get("tool_calls"))
+        .and_then(Value::as_array)
+        .map(|calls| {
+            calls
+                .iter()
+                .enumerate()
+                .map(|(position, call)| {
+                    let function = call.get("function");
+                    ToolCallChunk {
+                        index: call
+                            .get("index")
+                            .and_then(Value::as_u64)
+                            .map(|index| index as usize)
+                            .unwrap_or(position),
+                        id: call
+                            .get("id")
+                            .and_then(Value::as_str)
+                            .map(str::to_string),
+                        name: function
+                            .and_then(|function| function.get("name"))
+                            .and_then(Value::as_str)
+                            .map(str::to_string),
+                        arguments: function
+                            .and_then(|function| function.get("arguments"))
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_string(),
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     SseChunk {
         done: false,
         content,
@@ -130,7 +208,36 @@ pub(crate) fn parse_sse_data(data: &str) -> SseChunk {
             .and_then(Value::as_str)
             .map(str::to_string),
         usage: parse_usage(&value),
+        tool_calls,
     }
+}
+
+fn message_value(message: &ChatMessage) -> Value {
+    let mut value = json!({
+        "role": message.role,
+        "content": message.content,
+    });
+    if let Some(tool_calls) = &message.tool_calls {
+        value["tool_calls"] = Value::Array(
+            tool_calls
+                .iter()
+                .map(|call| {
+                    json!({
+                        "id": call.id,
+                        "type": "function",
+                        "function": {
+                            "name": call.name,
+                            "arguments": call.arguments,
+                        }
+                    })
+                })
+                .collect(),
+        );
+    }
+    if let Some(tool_call_id) = &message.tool_call_id {
+        value["tool_call_id"] = Value::String(tool_call_id.clone());
+    }
+    value
 }
 
 fn classify_error(error: reqwest::Error) -> String {
@@ -160,20 +267,23 @@ impl AiProvider for OpenAiCompatible {
             let timeout = Duration::from_secs(u64::from(request.timeout_seconds.max(10)));
             let client = reqwest::Client::builder()
                 .timeout(timeout)
-                .user_agent("SystemLens/0.54 (local diagnostic assistant)")
+                .user_agent("SystemLens/0.55 (local diagnostic assistant)")
                 .build()
                 .map_err(|error| format!("无法初始化网络客户端：{error}"))?;
-            let body = json!({
+            let messages: Vec<Value> = request.messages.iter().map(message_value).collect();
+            let mut body = json!({
                 "model": request.model,
-                "messages": request.messages.iter().map(|message| json!({
-                    "role": message.role,
-                    "content": message.content,
-                })).collect::<Vec<_>>(),
+                "messages": messages,
                 "max_tokens": request.max_tokens,
                 "temperature": 0.2,
                 "stream": true,
-                "response_format": { "type": "json_object" },
             });
+            if let Some(tools) = &request.tools {
+                body["tools"] = tools.clone();
+                body["tool_choice"] = Value::String("auto".to_string());
+            } else {
+                body["response_format"] = json!({ "type": "json_object" });
+            }
 
             on_event(StreamEvent::Status("正在连接模型服务…".to_string()));
             let send = client
@@ -218,22 +328,26 @@ impl AiProvider for OpenAiCompatible {
                 };
                 let value: Value = serde_json::from_str(&text)
                     .map_err(|error| format!("无法解析模型响应：{error}"))?;
-                let content = value
+                let message = value
                     .get("choices")
                     .and_then(Value::as_array)
                     .and_then(|choices| choices.first())
-                    .and_then(|choice| choice.get("message"))
+                    .and_then(|choice| choice.get("message"));
+                let content = message
                     .and_then(|message| message.get("content"))
                     .and_then(Value::as_str)
                     .unwrap_or_default()
                     .to_string();
-                if content.trim().is_empty() {
+                let tool_calls = message.map(parse_message_tool_calls).unwrap_or_default();
+                if content.trim().is_empty() && tool_calls.is_empty() {
                     return Err("模型服务返回了空响应。".to_string());
                 }
-                on_event(StreamEvent::Delta {
-                    text: content.clone(),
-                    char_count: content.chars().count(),
-                });
+                if !content.is_empty() {
+                    on_event(StreamEvent::Delta {
+                        text: content.clone(),
+                        char_count: content.chars().count(),
+                    });
+                }
                 return Ok(ProviderResponse {
                     text: content,
                     model: value
@@ -242,6 +356,7 @@ impl AiProvider for OpenAiCompatible {
                         .unwrap_or(&server_model)
                         .to_string(),
                     usage: parse_usage(&value),
+                    tool_calls,
                 });
             }
 
@@ -252,6 +367,7 @@ impl AiProvider for OpenAiCompatible {
             let mut usage: Option<AiUsage> = None;
             let mut model = server_model;
             let mut finished = false;
+            let mut tool_calls: BTreeMap<usize, ToolCall> = BTreeMap::new();
 
             while !finished {
                 let next = tokio::select! {
@@ -276,6 +392,16 @@ impl AiProvider for OpenAiCompatible {
                     if let Some(next_usage) = parsed.usage {
                         usage = Some(next_usage);
                     }
+                    for call in parsed.tool_calls {
+                        let entry = tool_calls.entry(call.index).or_default();
+                        if let Some(id) = call.id.filter(|id| !id.is_empty()) {
+                            entry.id = id;
+                        }
+                        if let Some(name) = call.name.filter(|name| !name.is_empty()) {
+                            entry.name = name;
+                        }
+                        entry.arguments.push_str(&call.arguments);
+                    }
                     if parsed.done {
                         finished = true;
                         break;
@@ -290,13 +416,15 @@ impl AiProvider for OpenAiCompatible {
                 }
             }
 
-            if full.trim().is_empty() {
+            let tool_calls: Vec<ToolCall> = tool_calls.into_values().collect();
+            if full.trim().is_empty() && tool_calls.is_empty() {
                 return Err("模型服务返回了空响应。".to_string());
             }
             Ok(ProviderResponse {
                 text: full,
                 model,
                 usage,
+                tool_calls,
             })
         })
     }
@@ -321,6 +449,48 @@ mod tests {
     fn detects_done_and_ignores_malformed_data() {
         assert!(parse_sse_data("[DONE]").done);
         assert_eq!(parse_sse_data("{not-json}").content, "");
+    }
+
+    #[test]
+    fn parses_tool_call_deltas() {
+        let first = parse_sse_data(
+            r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"event_log_recent","arguments":"{\"hours\":24}"}}]}}]}"#,
+        );
+        assert_eq!(first.tool_calls.len(), 1);
+        assert_eq!(first.tool_calls[0].id.as_deref(), Some("call_1"));
+        assert_eq!(first.tool_calls[0].name.as_deref(), Some("event_log_recent"));
+        assert_eq!(first.tool_calls[0].arguments, "{\"hours\":24}");
+
+        let second = parse_sse_data(
+            r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":":24}"}}]}}]}"#,
+        );
+        assert_eq!(second.tool_calls[0].arguments, ":24}");
+        assert!(second.tool_calls[0].id.is_none());
+    }
+
+    #[test]
+    fn serialises_assistant_tool_calls_and_tool_results() {
+        let message = ChatMessage {
+            role: "assistant".into(),
+            content: String::new(),
+            tool_calls: Some(vec![ToolCall {
+                id: "call_1".into(),
+                name: "event_log_recent".into(),
+                arguments: "{}".into(),
+            }]),
+            tool_call_id: None,
+        };
+        let value = message_value(&message);
+        assert_eq!(value["tool_calls"][0]["function"]["name"], "event_log_recent");
+        assert_eq!(value["tool_calls"][0]["type"], "function");
+
+        let result = message_value(&ChatMessage {
+            role: "tool".into(),
+            content: "{\"ok\":true}".into(),
+            tool_calls: None,
+            tool_call_id: Some("call_1".into()),
+        });
+        assert_eq!(result["tool_call_id"], "call_1");
     }
 
     #[test]

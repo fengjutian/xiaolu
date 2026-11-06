@@ -2,11 +2,11 @@
   "schemaVersion": 1,
   "id": "proc_opt",
   "name": "电脑智能防卡顿",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "apiVersion": 1,
-  "description": "只读列出内存/CPU 占用较高的进程并给出提示",
+  "description": "列出高占用进程，可逐项调整优先级或结束进程（系统关键进程受保护）",
   "category": "optimize",
-  "risk": "read_only",
+  "risk": "system",
   "entry": "proc_opt.exe",
   "arguments": ["--stdio"],
   "permissions": {
@@ -16,7 +16,11 @@
     "network": false,
     "elevation": "none"
   },
-  "actions": [{ "id": "preview", "label": "预览", "write": false }],
+  "actions": [
+    { "id": "preview", "label": "预览", "write": false },
+    { "id": "set_priority", "label": "调整进程优先级", "write": true, "requiresConfirmation": true },
+    { "id": "end_process", "label": "结束进程", "write": true, "requiresConfirmation": true }
+  ],
   "limits": { "timeoutMs": 60000, "maxOutputBytes": 1048576 },
   "ui": { "kind": "table" },
   "rollback": "none",

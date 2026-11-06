@@ -179,6 +179,7 @@ import type {
   PowerSettingOption,
   WinoptSetting,
   PrivacySetting,
+  ProcessItem,
   ToolActionDescriptor,
   ToolDescriptor,
   ToolResult,
@@ -4767,6 +4768,7 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
   const [winoptDraft, setWinoptDraft] = useState<Record<string, number>>({});
   const [dupKeep, setDupKeep] = useState<Record<string, string>>({});
   const [privacyDraft, setPrivacyDraft] = useState<Record<string, string>>({});
+  const [procPriority, setProcPriority] = useState<Record<string, string>>({});
 
   const updatePrivacyValue = (id: string, value: string | null) => {
     if (value == null) return;
@@ -4832,6 +4834,14 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
       }
       if (tool.id === "privacy_protection") {
         setPrivacyDraft({});
+      }
+      if (tool.id === "proc_opt") {
+        const items = (data as ToolResult).processItems ?? [];
+        setProcPriority(
+          Object.fromEntries(
+            items.map((item) => [String(item.pid), item.priority]),
+          ),
+        );
       }
     } catch (reason) {
       setGenericError(reason instanceof Error ? reason.message : String(reason));
@@ -5009,6 +5019,67 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
         expectCurrent: item.start,
       });
       setGenericSuccess(`「${item.display}」已改为${label}，正在刷新…`);
+      await runGeneric(tool);
+    } catch (reason) {
+      setApplyError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setApplying(null);
+    }
+  };
+
+  const endProcess = async (
+    tool: ToolDescriptor,
+    item: ProcessItem,
+  ) => {
+    if (!item.canEnd) return;
+    if (
+      !window.confirm(
+        `确认结束「${item.name}」（PID ${item.pid}）？未保存的数据会丢失。`,
+      )
+    )
+      return;
+    setApplying(`${tool.id}:end_process`);
+    setApplyError(null);
+    try {
+      await runToolAction(tool.id, "end_process", item.endToken, {
+        pid: item.pid,
+        name: item.name,
+        startTime: item.startTime,
+      });
+      setGenericSuccess(`已结束 ${item.name}，正在刷新…`);
+      await runGeneric(tool);
+    } catch (reason) {
+      setApplyError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setApplying(null);
+    }
+  };
+
+  const applyProcessPriority = async (
+    tool: ToolDescriptor,
+    item: ProcessItem,
+  ) => {
+    const priority = procPriority[String(item.pid)] ?? item.priority;
+    if (priority === item.priority) {
+      setApplyError("优先级没有变化。");
+      return;
+    }
+    if (
+      !window.confirm(
+        `确认把「${item.name}」（PID ${item.pid}）的优先级改为 ${priority}？`,
+      )
+    )
+      return;
+    setApplying(`${tool.id}:set_priority`);
+    setApplyError(null);
+    try {
+      await runToolAction(tool.id, "set_priority", item.priorityToken, {
+        pid: item.pid,
+        name: item.name,
+        startTime: item.startTime,
+        priority,
+      });
+      setGenericSuccess(`已调整 ${item.name} 的优先级，正在刷新…`);
       await runGeneric(tool);
     } catch (reason) {
       setApplyError(reason instanceof Error ? reason.message : String(reason));
@@ -5293,6 +5364,7 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                 generic.tool.id !== "winopt_assistant" &&
                 generic.tool.id !== "DuplicateFileClean" &&
                 generic.tool.id !== "privacy_protection" &&
+                generic.tool.id !== "proc_opt" &&
                 (generic.tool.actions ?? [])
                   .filter((action) => action.write)
                   .map((action) => (
@@ -5723,6 +5795,113 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                     </ScrollArea>
                   </Box>
                 )}
+              </Box>
+            )}
+          {generic.tool.id === "proc_opt" &&
+            (generic.data.processItems?.length ?? 0) > 0 && (
+              <Box mt="md">
+                <Text size="sm" fw={700}>
+                  进程操作
+                </Text>
+                <Text size="xs" c="dimmed" mt={4}>
+                  优先级只影响本次运行；结束进程不可撤销，系统关键进程已禁用
+                </Text>
+                <ScrollArea type="auto" mt="xs">
+                  <Table miw={900} verticalSpacing="xs">
+                    <Table.Thead>
+                      <Table.Tr>
+                        <Table.Th>进程</Table.Th>
+                        <Table.Th>PID</Table.Th>
+                        <Table.Th>CPU</Table.Th>
+                        <Table.Th>内存</Table.Th>
+                        <Table.Th>优先级</Table.Th>
+                        <Table.Th>操作</Table.Th>
+                      </Table.Tr>
+                    </Table.Thead>
+                    <Table.Tbody>
+                      {(generic.data.processItems ?? []).map((item) => {
+                        const priority =
+                          procPriority[String(item.pid)] ?? item.priority;
+                        return (
+                          <Table.Tr key={`${item.pid}:${item.startTime}`}>
+                            <Table.Td>
+                              <Text size="sm" fw={600}>
+                                {item.name}
+                              </Text>
+                            </Table.Td>
+                            <Table.Td>
+                              <Text size="xs" c="dimmed">
+                                {item.pid}
+                              </Text>
+                            </Table.Td>
+                            <Table.Td>{item.cpu}</Table.Td>
+                            <Table.Td>{item.memory}</Table.Td>
+                            <Table.Td>
+                              <Select
+                                size="xs"
+                                w={120}
+                                disabled={!item.canEnd}
+                                data={[
+                                  { value: "idle", label: "空闲" },
+                                  { value: "below_normal", label: "低于正常" },
+                                  { value: "normal", label: "正常" },
+                                  { value: "above_normal", label: "高于正常" },
+                                  { value: "high", label: "高" },
+                                ]}
+                                value={priority}
+                                allowDeselect={false}
+                                onChange={(next) => {
+                                  if (next == null) return;
+                                  setProcPriority((current) => ({
+                                    ...current,
+                                    [String(item.pid)]: next,
+                                  }));
+                                }}
+                              />
+                            </Table.Td>
+                            <Table.Td>
+                              <Group gap={4} wrap="nowrap">
+                                <Button
+                                  size="xs"
+                                  variant="light"
+                                  disabled={
+                                    !item.canEnd || priority === item.priority
+                                  }
+                                  loading={
+                                    applying ===
+                                    `${generic.tool.id}:set_priority`
+                                  }
+                                  onClick={() =>
+                                    void applyProcessPriority(
+                                      generic.tool,
+                                      item,
+                                    )
+                                  }
+                                >
+                                  应用优先级
+                                </Button>
+                                <Button
+                                  size="xs"
+                                  color="red"
+                                  variant="light"
+                                  disabled={!item.canEnd}
+                                  loading={
+                                    applying === `${generic.tool.id}:end_process`
+                                  }
+                                  onClick={() =>
+                                    void endProcess(generic.tool, item)
+                                  }
+                                >
+                                  结束进程
+                                </Button>
+                              </Group>
+                            </Table.Td>
+                          </Table.Tr>
+                        );
+                      })}
+                    </Table.Tbody>
+                  </Table>
+                </ScrollArea>
               </Box>
             )}
           {generic.tool.id === "privacy_protection" &&
@@ -6780,7 +6959,7 @@ export default function App() {
           </Text>
         </Paper>
         <Text size="xs" c="dimmed">
-          v0.54.0 · 25 个工具 · AI 解读
+          v0.55.0 · 25 个工具 · AI 解读
         </Text>
       </aside>
       <main className="content">

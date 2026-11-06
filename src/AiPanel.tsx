@@ -40,6 +40,11 @@ import {
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { isDesktopRuntime } from "./api";
 import {
+  buildAiReportJson,
+  buildAiReportMarkdown,
+  downloadAiReport,
+} from "./aiReport";
+import {
   DEFAULT_AI_SETTINGS,
   aiAnalyze,
   buildAiSnapshot,
@@ -54,10 +59,12 @@ import {
   listenAiStream,
   newAiRequestId,
   previewAiPayload,
+  probeAiCapabilities,
   saveAiSettings,
 } from "./aiApi";
 import type {
   AiAnswer,
+  AiCapabilityReport,
   AiConfidence,
   AiFinding,
   AiPayloadPreview,
@@ -265,6 +272,8 @@ export default function AiPanel() {
   const [sessionsBusy, setSessionsBusy] = useState(false);
   const [audits, setAudits] = useState<AiToolAuditEntry[]>([]);
   const [auditBusy, setAuditBusy] = useState(false);
+  const [capability, setCapability] = useState<AiCapabilityReport | null>(null);
+  const [probing, setProbing] = useState(false);
 
   const refreshAudits = useCallback(async () => {
     try {
@@ -439,8 +448,22 @@ export default function AiPanel() {
     }
   };
 
-  const clearKey = async () => {
-    if (!window.confirm("确定要清除已保存的 API 密钥吗？")) return;
+  const probe = async () => {
+    setProbing(true);
+    setSettingsMessage(null);
+    try {
+      setCapability(await probeAiCapabilities());
+    } catch (reason) {
+      setSettingsMessage({
+        text: reason instanceof Error ? reason.message : String(reason),
+        error: true,
+      });
+    } finally {
+      setProbing(false);
+    }
+  };
+
+  const clearKey = async () => {    if (!window.confirm("确定要清除已保存的 API 密钥吗？")) return;
     setClearingKey(true);
     setSettingsMessage(null);
     try {
@@ -457,8 +480,38 @@ export default function AiPanel() {
     }
   };
 
-  const openPreview = async () => {
-    if (!snapshot) return;
+  const exportAiReport = (format: "md" | "json") => {
+    const records =
+      sessions.length > 0
+        ? sessions.filter(
+            (record) =>
+              !snapshot || record.answer.snapshotId === snapshot.snapshotId,
+          )
+        : entries.map((entry, index) => ({
+            id: `local-${index}`,
+            savedAtUnixMs: entry.answer.generatedAtUnixMs,
+            question: entry.question,
+            answer: entry.answer,
+          }));
+    const source = records.length > 0 ? records : sessions;
+    if (source.length === 0) return;
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    if (format === "md") {
+      downloadAiReport(
+        `system-lens-ai-${stamp}.md`,
+        buildAiReportMarkdown(source, snapshot),
+        "text/markdown",
+      );
+    } else {
+      downloadAiReport(
+        `system-lens-ai-${stamp}.json`,
+        buildAiReportJson(source, snapshot),
+        "application/json",
+      );
+    }
+  };
+
+  const openPreview = async () => {    if (!snapshot) return;
     setPreviewOpen(true);
     setPreviewLoading(true);
     setPreviewError(null);
@@ -834,6 +887,25 @@ export default function AiPanel() {
               </Group>
             </Card>
 
+            <Group justify="flex-end" gap="xs">
+              <Button
+                size="xs"
+                variant="light"
+                disabled={entries.length === 0 && sessions.length === 0}
+                onClick={() => exportAiReport("md")}
+              >
+                导出 AI 报告（Markdown）
+              </Button>
+              <Button
+                size="xs"
+                variant="light"
+                disabled={entries.length === 0 && sessions.length === 0}
+                onClick={() => exportAiReport("json")}
+              >
+                导出 AI 报告（JSON）
+              </Button>
+            </Group>
+
             <Card className="glass-card" radius="lg">
               <Group justify="space-between" align="flex-start">
                 <Box>
@@ -1036,6 +1108,59 @@ export default function AiPanel() {
                   disabled={!desktop}
                 />
               </SimpleGrid>
+
+              <Switch
+                mt="md"
+                checked={form.nativeTools}
+                onChange={(event) =>
+                  setForm({ ...form, nativeTools: event.currentTarget.checked })
+                }
+                label="原生工具调用（tool_calls）"
+                description="模型支持时最多执行 2 轮、6 项只读检查；关闭时使用受控 requestedChecks JSON 计划协议。建议先检测模型能力。"
+                disabled={!desktop}
+              />
+
+              <Group mt="md">
+                <Button
+                  variant="light"
+                  loading={probing}
+                  onClick={() => void probe()}
+                  disabled={!desktop}
+                >
+                  检测模型能力
+                </Button>
+                {capability && (
+                  <Group gap="xs">
+                    <Badge color={capability.reachable ? "teal" : "red"} variant="light">
+                      {capability.reachable ? "服务可达" : "服务不可达"}
+                    </Badge>
+                    <Badge color={capability.structuredOutput ? "teal" : "orange"} variant="light">
+                      结构化输出 {capability.structuredOutput ? "可用" : "未验证"}
+                    </Badge>
+                    <Badge color={capability.nativeTools ? "teal" : "gray"} variant="light">
+                      原生工具 {capability.nativeTools ? "可用" : "不可用"}
+                    </Badge>
+                    <Badge variant="outline">{capability.latencyMs} ms</Badge>
+                  </Group>
+                )}
+              </Group>
+
+              {capability && (
+                <Alert
+                  color={capability.nativeTools ? "teal" : "gray"}
+                  variant="light"
+                  mt="sm"
+                >
+                  <Text size="xs">
+                    模型：{capability.model || form.model}
+                    {capability.note ? ` · ${capability.note}` : ""}
+                  </Text>
+                  <Text size="xs" c="dimmed" mt={4}>
+                    检测只发送最小能力探测请求，不包含本机诊断数据。若原生工具不可用，请保持关闭并使用
+                    requestedChecks 协议。
+                  </Text>
+                </Alert>
+              )}
 
               <Group mt="md">
                 <Button loading={saving} onClick={() => void save()} disabled={!desktop}>

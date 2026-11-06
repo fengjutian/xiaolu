@@ -5,7 +5,7 @@
 //! size and writes a metadata-only audit line. There is no path, command line,
 //! script, registry or write capability in this gateway.
 
-use super::model::{AiRequestedCheck, AiToolAuditEntry, AiToolRun};
+use super::model::{AiRequestedCheck, AiToolAuditEntry, AiToolRun, ToolCall};
 use super::provider::{CancelHandle, CANCELLED};
 use super::redact::redact_payload;
 use crate::{diagnostics, drivers, event_log, network_diagnostics, scheduled_tasks, sensors, system};
@@ -83,6 +83,78 @@ pub fn catalog_prompt() -> String {
         lines.push(format!("- {}（只读）：{}", spec.id, spec.description));
     }
     lines.join("\n")
+}
+
+/// OpenAI function names cannot contain dots, so the catalogue exposes a
+/// stable underscore alias while the host keeps the dotted tool id.
+pub fn function_name(tool_id: &str) -> String {
+    tool_id
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || character == '_' || character == '-' {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+pub fn tool_id_from_function_name(name: &str) -> Option<&'static str> {
+    TOOL_SPECS
+        .iter()
+        .find(|spec| function_name(spec.id) == name)
+        .map(|spec| spec.id)
+}
+
+fn parameters_schema(tool_id: &str) -> Value {
+    match tool_id {
+        "event_log.recent" => json!({
+            "type": "object",
+            "properties": {
+                "logName": { "type": "string", "enum": ["System", "Application"] },
+                "level": { "type": "string", "enum": ["critical", "error", "warning", "all"] },
+                "hours": { "type": "integer", "minimum": 1, "maximum": 168 }
+            },
+            "additionalProperties": false
+        }),
+        _ => json!({
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false
+        }),
+    }
+}
+
+pub fn openai_tools() -> Value {
+    Value::Array(
+        TOOL_SPECS
+            .iter()
+            .map(|spec| {
+                json!({
+                    "type": "function",
+                    "function": {
+                        "name": function_name(spec.id),
+                        "description": spec.description,
+                        "parameters": parameters_schema(spec.id),
+                    }
+                })
+            })
+            .collect(),
+    )
+}
+
+pub fn check_from_tool_call(call: &ToolCall) -> AiRequestedCheck {
+    let tool_id = tool_id_from_function_name(&call.name)
+        .map(str::to_string)
+        .unwrap_or_else(|| call.name.clone());
+    let parameters = serde_json::from_str::<Value>(&call.arguments)
+        .unwrap_or_else(|_| json!({ "__invalidArguments": call.arguments }));
+    AiRequestedCheck {
+        tool_id,
+        reason: "模型原生工具调用".to_string(),
+        parameters,
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -730,6 +802,45 @@ mod tests {
 
         let huge = cap_summary(json!({ "blob": "x".repeat(MAX_RESULT_BYTES + 100) }));
         assert_eq!(huge["truncated"], true);
+    }
+
+    #[test]
+    fn native_tool_schema_maps_every_tool() {
+        let schema = openai_tools();
+        let functions = schema.as_array().unwrap();
+        assert_eq!(functions.len(), TOOL_SPECS.len());
+        let mut names = HashSet::new();
+        for spec in TOOL_SPECS {
+            let name = function_name(spec.id);
+            assert!(name.chars().all(|character| character != '.'));
+            assert!(names.insert(name.clone()));
+            assert_eq!(tool_id_from_function_name(&name), Some(spec.id));
+        }
+        let event = functions
+            .iter()
+            .find(|item| item["function"]["name"] == "event_log_recent")
+            .unwrap();
+        assert_eq!(event["function"]["parameters"]["additionalProperties"], false);
+        assert!(event["function"]["parameters"]["properties"]["hours"].is_object());
+    }
+
+    #[test]
+    fn native_tool_call_is_converted_and_validated() {
+        let check = check_from_tool_call(&ToolCall {
+            id: "call_1".into(),
+            name: "event_log_recent".into(),
+            arguments: r#"{"logName":"Application","level":"warning","hours":48}"#.into(),
+        });
+        assert_eq!(check.tool_id, "event_log.recent");
+        assert_eq!(check.parameters["hours"], 48);
+
+        let invalid = check_from_tool_call(&ToolCall {
+            id: "call_2".into(),
+            name: "event_log_recent".into(),
+            arguments: "{not-json".into(),
+        });
+        assert_eq!(invalid.tool_id, "event_log.recent");
+        assert!(invalid.parameters.get("__invalidArguments").is_some());
     }
 
     #[test]

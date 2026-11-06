@@ -173,10 +173,12 @@ fn build_messages_inner(
             ChatMessage {
                 role: "system".to_string(),
                 content: system_prompt(),
+                ..Default::default()
             },
             ChatMessage {
                 role: "user".to_string(),
                 content: user,
+                ..Default::default()
             },
         ],
         redacted,
