@@ -40,7 +40,10 @@ Get-ChildItem -Path $toolsRoot -Directory | Where-Object { $_.Name -notlike "_*"
     Write-Host "  -> $destination"
 }
 
-# lens_helper 不是工具箱协议工具，单独构建并放到 software_pm 同目录。
+# lens_helper is not a toolbox-protocol tool, so it is built separately.
+# It is placed once at <dist>/lens_helper/lens_helper.exe: every tool that needs
+# elevation resolves it via <tool dir>/../lens_helper/lens_helper.exe, so one copy
+# is enough and the package stays small.
 $helperRoot = Join-Path $toolsRoot "lens_helper"
 $helperProject = Join-Path $helperRoot "Cargo.toml"
 if (Test-Path $helperProject) {
@@ -50,42 +53,12 @@ if (Test-Path $helperProject) {
     $targetDir = if ($Configuration -eq "release") { "release" } else { "debug" }
     $helperBinary = Join-Path $helperRoot "target/$targetDir/lens_helper.exe"
     if (-not (Test-Path $helperBinary)) { throw "Missing binary: $helperBinary" }
-    $softwarePmDir = Join-Path $outRoot "software_pm"
-    if (-not (Test-Path $softwarePmDir)) {
-        New-Item -ItemType Directory -Force -Path $softwarePmDir | Out-Null
-    }
-    Copy-Item $helperBinary (Join-Path $softwarePmDir "lens_helper.exe") -Force
-    $aiCoolingDir = Join-Path $outRoot "ai_cooling"
-    if (-not (Test-Path $aiCoolingDir)) {
-        New-Item -ItemType Directory -Force -Path $aiCoolingDir | Out-Null
-    }
-    Copy-Item $helperBinary (Join-Path $aiCoolingDir "lens_helper.exe") -Force
-    $defragDir = Join-Path $outRoot "defrag"
-    if (-not (Test-Path $defragDir)) {
-        New-Item -ItemType Directory -Force -Path $defragDir | Out-Null
-    }
-    Copy-Item $helperBinary (Join-Path $defragDir "lens_helper.exe") -Force
-    $adblockDir = Join-Path $outRoot "adblock_master"
-    if (-not (Test-Path $adblockDir)) {
-        New-Item -ItemType Directory -Force -Path $adblockDir | Out-Null
-    }
-    Copy-Item $helperBinary (Join-Path $adblockDir "lens_helper.exe") -Force
-    $bsodDir = Join-Path $outRoot "bsod_repair"
-    if (-not (Test-Path $bsodDir)) {
-        New-Item -ItemType Directory -Force -Path $bsodDir | Out-Null
-    }
-    Copy-Item $helperBinary (Join-Path $bsodDir "lens_helper.exe") -Force
-    $winoptDir = Join-Path $outRoot "winopt_assistant"
-    if (-not (Test-Path $winoptDir)) {
-        New-Item -ItemType Directory -Force -Path $winoptDir | Out-Null
-    }
-    Copy-Item $helperBinary (Join-Path $winoptDir "lens_helper.exe") -Force
-    $expandDir = Join-Path $outRoot "c_expand"
-    if (-not (Test-Path $expandDir)) {
-        New-Item -ItemType Directory -Force -Path $expandDir | Out-Null
-    }
-    Copy-Item $helperBinary (Join-Path $expandDir "lens_helper.exe") -Force
-    Write-Host "  -> lens_helper.exe (software_pm, ai_cooling, defrag, adblock_master, bsod_repair, winopt_assistant, c_expand)"
+    $helperDir = Join-Path $outRoot "lens_helper"
+    New-Item -ItemType Directory -Force -Path $helperDir | Out-Null
+    Copy-Item $helperBinary $helperDir -Force
+    Write-Host "  -> $helperDir\lens_helper.exe"
 }
 
 Write-Host "Tool packaging complete: $outRoot"
+
+& (Join-Path $PSScriptRoot "verify-dist.ps1") -Output $Output
