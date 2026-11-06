@@ -182,6 +182,7 @@ import type {
   ProcessItem,
   AppxItem,
   RuntimeItem,
+  ExpandItem,
   ScheduledTaskItem,
   ToolActionDescriptor,
   ToolDescriptor,
@@ -4316,6 +4317,7 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
   const [privacyDraft, setPrivacyDraft] = useState<Record<string, string>>({});
   const [procPriority, setProcPriority] = useState<Record<string, string>>({});
   const [adblockDomains, setAdblockDomains] = useState("");
+  const [expandAck, setExpandAck] = useState<Record<string, boolean>>({});
   const [dumpDraft, setDumpDraft] = useState("");
 
   const updatePrivacyValue = (id: string, value: string | null) => {
@@ -4389,6 +4391,12 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
       }
       if (tool.id === "bsod_repair") {
         setDumpDraft((data as ToolResult).dumpMode?.mode ?? "");
+      }
+      if (tool.id === "c_expand") {
+        const items = (data as ToolResult).expandItems ?? [];
+        setExpandAck(
+          Object.fromEntries(items.map((item) => [item.drive, false])),
+        );
       }
       if (tool.id === "proc_opt") {
         const items = (data as ToolResult).processItems ?? [];

@@ -1,8 +1,9 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::os::windows::process::CommandExt;
+use std::path::PathBuf;
 use std::process::Command;
-use tool_protocol::{column, human_bytes, item, table, ToolError};
+use tool_protocol::{attach_token, column, digest_of, human_bytes, item, table, Request, ToolError};
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
@@ -120,6 +121,93 @@ fn build_rows(volumes: &[VolumeInfo]) -> Vec<Value> {
         .collect()
 }
 
+fn elevated_dir() -> PathBuf {
+    std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_default()
+        .join("SystemLens")
+        .join("elevated")
+}
+
+fn helper_path() -> Result<PathBuf, ToolError> {
+    if let Some(path) = std::env::var_os("SYSTEM_LENS_HELPER") {
+        let path = PathBuf::from(path);
+        if path.is_file() {
+            return Ok(path);
+        }
+    }
+    let exe = std::env::current_exe()
+        .map_err(|error| ToolError::new("INTERNAL", format!("无法定位工具路径：{error}")))?;
+    let dir = exe.parent().ok_or_else(|| ToolError::new("INTERNAL", "无法定位工具目录。"))?;
+    let candidates = [
+        dir.join("lens_helper.exe"),
+        dir.join("..").join("lens_helper").join("lens_helper.exe"),
+    ];
+    candidates.into_iter().find(|path| path.is_file()).ok_or_else(|| {
+        ToolError::new("HELPER_MISSING", "缺少提权助手 lens_helper.exe。")
+    })
+}
+
+fn ps_quote(text: &str) -> String {
+    format!("'{}'", text.replace('\'', "''"))
+}
+
+fn run_elevated(mut payload: Value) -> Result<Value, ToolError> {
+    let dir = elevated_dir();
+    std::fs::create_dir_all(&dir)
+        .map_err(|error| ToolError::new("INTERNAL", format!("无法创建提权请求目录：{error}")))?;
+    let nonce_source = format!("{}-{}", tool_protocol::now_ms(), std::process::id());
+    let nonce_full = tool_protocol::digest_of(&[&nonce_source]);
+    let nonce = &nonce_full[..32];
+    let request_path = dir.join(format!("req-{nonce}.json"));
+    let result_path = dir.join(format!("res-{nonce}.json"));
+    if let Value::Object(map) = &mut payload {
+        map.insert("version".into(), json!(1));
+        map.insert("nonce".into(), json!(nonce));
+        map.insert("resultPath".into(), json!(result_path));
+    }
+    let serialized = serde_json::to_string(&payload)
+        .map_err(|error| ToolError::new("INTERNAL", format!("无法序列化提权请求：{error}")))?;
+    std::fs::write(&request_path, serialized)
+        .map_err(|error| ToolError::new("INTERNAL", format!("无法写入提权请求：{error}")))?;
+    let helper = helper_path()?;
+    let script = format!(
+        "$ErrorActionPreference='Stop'; try {{ $p = Start-Process -FilePath {} -ArgumentList ('--request',('\"' + {} + '\"')) -Verb RunAs -PassThru -Wait -WindowStyle Hidden; exit $p.ExitCode }} catch {{ exit 1223 }}",
+        ps_quote(&helper.to_string_lossy()),
+        ps_quote(&request_path.to_string_lossy())
+    );
+    let status = Command::new("powershell.exe")
+        .creation_flags(CREATE_NO_WINDOW)
+        .args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", &script])
+        .status()
+        .map_err(|error| ToolError::new("INTERNAL", format!("无法启动提权助手：{error}")))?;
+    let result_text = std::fs::read_to_string(&result_path).ok();
+    let _ = std::fs::remove_file(&request_path);
+    let _ = std::fs::remove_file(&result_path);
+    if !status.success() {
+        if status.code() == Some(1223) {
+            return Err(ToolError::new("ELEVATION_CANCELLED", "已取消管理员授权，未调整分区。"));
+        }
+        return Err(ToolError::new("ELEVATION_FAILED", format!("提权助手执行失败（退出码 {:?}）。", status.code())));
+    }
+    let text = result_text.ok_or_else(|| ToolError::new("HELPER_FAILED", "提权助手没有返回结果。"))?;
+    let value: Value = serde_json::from_str(&text)
+        .map_err(|error| ToolError::new("HELPER_FAILED", format!("无法解析助手结果：{error}")))?;
+    if value.get("ok").and_then(Value::as_bool) != Some(true) {
+        let message = value.get("error").and_then(Value::as_str).unwrap_or("提权助手返回失败。");
+        return Err(ToolError::new("HELPER_FAILED", message.to_string()));
+    }
+    Ok(value)
+}
+
+fn volume_digest(volumes: &[VolumeInfo]) -> String {
+    let parts = volumes
+        .iter()
+        .map(|volume| format!("{}|{}|{}", volume.drive, volume.size, volume.gap_bytes))
+        .collect::<Vec<_>>();
+    tool_protocol::digest_of(&parts.iter().map(String::as_str).collect::<Vec<_>>())
+}
+
 fn scan() -> Result<Value, ToolError> {
     let volumes = collect()?;
     let rows = build_rows(&volumes);
@@ -130,7 +218,7 @@ fn scan() -> Result<Value, ToolError> {
     let system = volumes.iter().filter(|volume| volume.boot).count();
     let total_free: u64 = volumes.iter().map(|volume| volume.free).sum();
 
-    Ok(table(
+    let mut data = table(
         json!([
             item("卷数量", volumes.len().to_string()),
             item("可评估扩展", extendable.to_string()),
@@ -150,20 +238,146 @@ fn scan() -> Result<Value, ToolError> {
         ]),
         Value::Array(rows),
         json!([
-            "只读分析：只读取磁盘/分区/卷信息，不调整分区、不格式化、不移动数据。",
-            "Windows 磁盘管理只能向“同一磁盘、紧邻右侧”的未分配空间扩展；跨盘或左侧空间需第三方工具。",
-            "实际扩容前必须备份重要数据、确认电源稳定，并保留恢复介质；系统卷操作风险更高。",
-            "本工具不提供实际扩盘，也不下载分区软件。",
+            "分析部分只读；扩容只支持 NTFS 卷向右扩展相邻未分配空间。",
+            "执行前必须备份重要数据、确认电源稳定并保留恢复介质；系统卷风险更高。",
+            "不移动数据、不跨盘、不缩小、不新建或删除分区。",
+        ]),
+    );
+    if let Value::Object(map) = &mut data {
+        map.insert(
+            "expandItems".into(),
+            Value::Array(
+                volumes
+                    .iter()
+                    .filter(|volume| feasible(volume).0 == "可评估扩展")
+                    .map(|volume| {
+                        json!({
+                            "drive": volume.drive,
+                            "label": if volume.label.is_empty() { "未命名".to_string() } else { volume.label.clone() },
+                            "filesystem": volume.filesystem,
+                            "sizeBytes": volume.size,
+                            "size": human_bytes(volume.size),
+                            "gapBytes": volume.gap_bytes,
+                            "gap": human_bytes(volume.gap_bytes),
+                            "maxBytes": volume.size.saturating_add(volume.gap_bytes),
+                        })
+                    })
+                    .collect(),
+            ),
+        );
+    }
+    if let Ok(token) =
+        tool_protocol::issue_token("expand_volume", &volume_digest(&volumes))
+    {
+        attach_token(&mut data, token);
+    }
+    Ok(data)
+}
+
+fn expand_volume(request: &Request) -> Result<Value, ToolError> {
+    let token = request.confirmation.as_deref().ok_or_else(|| {
+        ToolError::new(
+            "CONFIRMATION_REQUIRED",
+            "扩容需要确认令牌，请先分析并确认备份。",
+        )
+    })?;
+    let drive = request
+        .parameters
+        .get("drive")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ToolError::new("INVALID_INPUT", "缺少参数 drive。"))?;
+    if drive.len() != 1 || !drive.chars().next().unwrap().is_ascii_alphabetic() {
+        return Err(ToolError::new("INVALID_INPUT", "drive 必须是单个盘符字母。"));
+    }
+    let target = request
+        .parameters
+        .get("targetBytes")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| ToolError::new("INVALID_INPUT", "缺少参数 targetBytes。"))?;
+
+    let volumes = collect()?;
+    tool_protocol::verify_token(token, "expand_volume", &volume_digest(&volumes))?;
+    let volume = volumes
+        .iter()
+        .find(|volume| volume.drive.eq_ignore_ascii_case(drive))
+        .ok_or_else(|| ToolError::new("CONFLICT", "卷不存在。"))?;
+    if !volume.filesystem.eq_ignore_ascii_case("NTFS") {
+        return Err(ToolError::new("CONFLICT", "只支持 NTFS 卷扩容。"));
+    }
+    if feasible(volume).0 != "可评估扩展" {
+        return Err(ToolError::new(
+            "CONFLICT",
+            "该卷当前不满足扩容条件（右侧无足够相邻未分配空间）。",
+        ));
+    }
+    if target <= volume.size {
+        return Err(ToolError::new("INVALID_INPUT", "目标容量必须大于当前容量。"));
+    }
+    if target > volume.size.saturating_add(volume.gap_bytes) {
+        return Err(ToolError::new(
+            "INVALID_INPUT",
+            "目标容量超过右侧相邻未分配空间。",
+        ));
+    }
+
+    run_elevated(json!({
+        "op": "expand_volume",
+        "drive": volume.drive,
+        "targetBytes": target,
+    }))?;
+
+    let after = collect()?;
+    let updated = after
+        .iter()
+        .find(|item| item.drive.eq_ignore_ascii_case(drive))
+        .ok_or_else(|| ToolError::new("INTERNAL", "扩容后无法读取该卷。"))?;
+    if updated.size < target {
+        return Err(ToolError::new(
+            "INTERNAL",
+            "扩容后容量未达到目标，请检查磁盘管理。",
+        ));
+    }
+    let _ = tool_protocol::append_audit_log(json!({
+        "tool": "c_expand",
+        "action": "expand_volume",
+        "drive": volume.drive,
+        "before": volume.size,
+        "after": updated.size,
+        "at": tool_protocol::now_ms(),
+    }));
+
+    Ok(table(
+        json!([
+            item("卷", format!("{}:", volume.drive)),
+            item("原容量", human_bytes(volume.size)),
+            item("新容量", human_bytes(updated.size)),
+        ]),
+        json!([
+            column("item", "项目"),
+            column("value", "结果"),
+        ]),
+        json!([{
+            "item": format!("{}:", volume.drive),
+            "value": format!("{} → {}", human_bytes(volume.size), human_bytes(updated.size)),
+        }]),
+        json!([
+            "扩容已完成，并已重新读取卷容量确认。",
+            "如出现文件系统异常，请立即停止写入并运行 chkdsk。",
+            "该操作不移动数据；失败时可能部分完成，请以磁盘管理状态为准。",
         ]),
     ))
 }
 
 fn main() {
-    tool_protocol::serve(
+    tool_protocol::serve_with_request(
         "c_expand",
         env!("CARGO_PKG_VERSION"),
-        &["preview"],
-        |_| scan(),
+        &["preview", "expand_volume"],
+        |request| match request.action.as_str() {
+            "preview" => scan(),
+            "expand_volume" => expand_volume(request),
+            other => Err(ToolError::unsupported(other)),
+        },
     );
 }
 

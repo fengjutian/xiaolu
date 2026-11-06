@@ -437,6 +437,17 @@ export interface ServiceItem {
   path: string;
 }
 
+export interface ExpandItem {
+  drive: string;
+  label: string;
+  filesystem: string;
+  sizeBytes: number;
+  size: string;
+  gapBytes: number;
+  gap: string;
+  maxBytes: number;
+}
+
 export interface RuntimeItem {
   id: string;
   label: string;
@@ -518,6 +529,7 @@ export interface ToolResult {
   dumpMode?: DumpMode;
   appxItems?: AppxItem[];
   runtimeItems?: RuntimeItem[];
+  expandItems?: ExpandItem[];
   journalPath?: string;
   journalDir?: string;
   startupRegistryError?: string;

@@ -17,6 +17,7 @@ const OP_HOSTS_APPLY: &str = "hosts_apply";
 const OP_HOSTS_RESTORE: &str = "hosts_restore";
 const OP_CRASH_DUMP: &str = "crash_dump_set";
 const OP_WINOPT: &str = "winopt_set";
+const OP_EXPAND: &str = "expand_volume";
 const HOSTS_BEGIN: &str = "# BEGIN SystemLens AdBlock";
 const HOSTS_END: &str = "# END SystemLens AdBlock";
 const SERVICE_PATH: &str = "SYSTEM\\CurrentControlSet\\Services";
@@ -336,6 +337,7 @@ fn run(request: &Value) -> Result<Outcome, String> {
         OP_HOSTS_RESTORE => run_hosts_restore(),
         OP_CRASH_DUMP => run_crash_dump(request),
         OP_WINOPT => run_winopt(request),
+        OP_EXPAND => run_expand(request),
         _ => Err(format!("不支持的操作：{op}")),
     }
 }
@@ -731,6 +733,51 @@ fn run_crash_dump(request: &Value) -> Result<Outcome, String> {
             "before": before,
             "after": after,
         })),
+    })
+}
+
+fn run_expand(request: &Value) -> Result<Outcome, String> {
+    let drive = request.get("drive").and_then(Value::as_str).unwrap_or_default();
+    if !valid_drive(drive) {
+        return Err("盘符必须是单个字母。".into());
+    }
+    let target = request.get("targetBytes").and_then(Value::as_u64).ok_or_else(|| "缺少 targetBytes。".to_string())?;
+    if target < 1024 * 1024 * 1024 {
+        return Err("目标容量过小。".into());
+    }
+    let script = format!(
+        "$ErrorActionPreference='Stop'; $d='{drive}'; $target=[uint64]{target}; \
+$vol=Get-Volume -DriveLetter $d -ErrorAction Stop; \
+if($vol.FileSystem -ne 'NTFS'){{ throw '只支持 NTFS 卷' }}; \
+$part=Get-Partition -DriveLetter $d -ErrorAction Stop; \
+$disk=Get-Disk -Number $part.DiskNumber -ErrorAction Stop; \
+$end=[uint64]$part.Offset + [uint64]$part.Size; \
+$next=Get-Partition -DiskNumber $part.DiskNumber | Where-Object {{ [uint64]$_.Offset -gt $end }} | Sort-Object Offset | Select-Object -First 1; \
+$maxEnd=if($next){{[uint64]$next.Offset}}else{{[uint64]$disk.Size}}; \
+$maxSize=$maxEnd - [uint64]$part.Offset; \
+if($target -le [uint64]$vol.Size){{ throw '目标容量必须大于当前容量' }}; \
+if($target -gt $maxSize){{ throw '目标超过右侧相邻未分配空间' }}; \
+try {{ $bl=Get-BitLockerVolume -MountPoint ($d+':') -ErrorAction Stop; if($bl.ProtectionStatus -eq 'On'){{ throw 'BitLocker 已启用，拒绝扩容' }} }} catch {{ if($_.Exception.Message -like '*BitLocker*'){{ throw }} }}; \
+Resize-Partition -DriveLetter $d -Size $target -ErrorAction Stop; \
+$after=(Get-Volume -DriveLetter $d).Size; \
+if([uint64]$after -lt $target){{ throw '扩容后容量未达到目标' }}; \
+@{{before=[uint64]$vol.Size; after=[uint64]$after}} | ConvertTo-Json -Compress"
+    );
+    let output = Command::new("powershell.exe")
+        .creation_flags(CREATE_NO_WINDOW)
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .output()
+        .map_err(|error| format!("无法启动扩容命令：{error}"))?;
+    if !output.status.success() {
+        let text = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(format!("扩容失败：{text}"));
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let text = text.trim().trim_start_matches('\u{feff}');
+    let value: Value = serde_json::from_str(text).map_err(|error| format!("无法解析扩容结果：{error}"))?;
+    Ok(Outcome {
+        message: "分区扩容完成".into(),
+        data: Some(value),
     })
 }
 
