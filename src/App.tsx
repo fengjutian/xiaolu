@@ -3472,7 +3472,7 @@ const benchmarkKinds: Array<{
 ];
 
 function BenchmarkPanel() {
-  const [benchmarkTab, setBenchmarkTab] = useState<string | null>("cpu");
+  const [benchmarkTab, setBenchmarkTab] = useState<string | null>("tests");
   const [running, setRunning] = useState<BenchmarkResult["kind"] | null>(null);
   const [results, setResults] = useState<Record<string, BenchmarkResult>>({});
   const [benchmarkHistory, setBenchmarkHistory] = useState<BenchmarkRecord[]>(
@@ -3537,11 +3537,7 @@ function BenchmarkPanel() {
         ),
       )
     : null;
-  const visibleBenchmarkKinds = benchmarkKinds.filter((item) =>
-    benchmarkTab === "cpu"
-      ? item.kind === "cpu-single" || item.kind === "cpu-multi"
-      : item.kind === benchmarkTab,
-  );
+  const visibleBenchmarkKinds = benchmarkKinds;
   return (
     <Stack gap="md">
       <Alert color="blue" icon={<IconGauge />}>
@@ -3549,18 +3545,15 @@ function BenchmarkPanel() {
         负载。综合分采用加权几何平均：单核 20%、多核 30%、内存 15%、磁盘
         15%、GPU 20%。
       </Alert>
-      <Tabs value={benchmarkTab} onChange={setBenchmarkTab} variant="pills">
-        <Tabs.List>
-          <Tabs.Tab value="cpu" leftSection={<IconCpu size={16} />}>
-            CPU
+      <Tabs value={benchmarkTab} onChange={setBenchmarkTab} keepMounted={false}>
+        <Tabs.List className="module-tabs-list">
+          <Tabs.Tab value="tests" leftSection={<IconCpu size={16} />}>
+            性能测试
           </Tabs.Tab>
-          <Tabs.Tab value="memory">内存</Tabs.Tab>
-          <Tabs.Tab value="disk">磁盘</Tabs.Tab>
-          <Tabs.Tab value="gpu">GPU</Tabs.Tab>
           <Tabs.Tab value="history">历史记录</Tabs.Tab>
         </Tabs.List>
       </Tabs>
-      {benchmarkTab === "disk" && (
+      {benchmarkTab === "tests" && (
       <Group justify="space-between" align="flex-end" wrap="wrap">
         <Group align="flex-end">
           <Box>
@@ -3603,23 +3596,6 @@ function BenchmarkPanel() {
         )}
       </Group>
       )}
-      {benchmarkTab !== "disk" && running && (
-        <Group justify="flex-end">
-          <Button
-            size="xs"
-            color="red"
-            variant="light"
-            loading={cancelling}
-            onClick={() => {
-              setCancelling(true);
-              cancelGpuBenchmark();
-              void cancelBenchmark().finally(() => setCancelling(false));
-            }}
-          >
-            取消测试
-          </Button>
-        </Group>
-      )}
       {failure && (
         <Alert color="red" icon={<IconAlertCircle />}>
           {failure}
@@ -3639,7 +3615,7 @@ function BenchmarkPanel() {
         </Card>
       )}
       {benchmarkTab !== "history" && (
-      <SimpleGrid cols={{ base: 1, md: benchmarkTab === "cpu" ? 2 : 1 }}>
+      <SimpleGrid cols={{ base: 1, md: 2 }}>
         {visibleBenchmarkKinds.map((item) => {
           const result = results[item.kind];
           return (
