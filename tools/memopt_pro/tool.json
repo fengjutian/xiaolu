@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "memopt_pro",
+  "name": "内存优化 Pro",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "description": "只读诊断物理内存、提交量、缓存与进程内存排行",
+  "category": "optimize",
+  "risk": "read_only",
+  "entry": "memopt_pro.exe",
+  "arguments": ["--stdio"],
+  "permissions": {
+    "readPaths": [],
+    "writePaths": [],
+    "registry": [],
+    "network": false,
+    "elevation": "none"
+  },
+  "actions": [{ "id": "preview", "label": "预览", "write": false }],
+  "limits": { "timeoutMs": 60000, "maxOutputBytes": 1048576 },
+  "ui": { "kind": "table" },
+  "rollback": "none",
+  "hash": "",
+  "signature": null
+}

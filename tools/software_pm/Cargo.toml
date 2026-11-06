@@ -1,0 +1,18 @@
+[package]
+name = "software-pm-tool"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "software_pm"
+path = "src/main.rs"
+
+[dependencies]
+serde_json = "1"
+tool-protocol = { path = "../shared" }
+
+[profile.release]
+panic = "abort"
+strip = true
+lto = true
+opt-level = "s"
