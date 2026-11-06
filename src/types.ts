@@ -437,6 +437,14 @@ export interface ServiceItem {
   path: string;
 }
 
+export interface AppxItem {
+  name: string;
+  fullName: string;
+  version: string;
+  type: string;
+  removable: boolean;
+}
+
 export interface DumpMode {
   value: number | null;
   mode: string;
@@ -499,6 +507,7 @@ export interface ToolResult {
   hostsManagedDomains?: number;
   hostsPath?: string;
   dumpMode?: DumpMode;
+  appxItems?: AppxItem[];
   journalPath?: string;
   journalDir?: string;
   startupRegistryError?: string;

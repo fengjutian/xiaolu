@@ -2,11 +2,11 @@
   "schemaVersion": 1,
   "id": "sys_clean",
   "name": "Windows 系统瘦身",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "apiVersion": 1,
-  "description": "只读列出已安装应用包与系统内置候选",
+  "description": "列出应用包；白名单内置应用可移除（当前用户，可重装）",
   "category": "cleanup",
-  "risk": "read_only",
+  "risk": "write",
   "entry": "sys_clean.exe",
   "arguments": ["--stdio"],
   "permissions": {
@@ -16,8 +16,11 @@
     "network": false,
     "elevation": "none"
   },
-  "actions": [{ "id": "preview", "label": "预览", "write": false }],
-  "limits": { "timeoutMs": 120000, "maxOutputBytes": 2097152 },
+  "actions": [
+    { "id": "preview", "label": "预览", "write": false },
+    { "id": "remove_appx", "label": "移除白名单应用", "write": true, "requiresConfirmation": true }
+  ],
+  "limits": { "timeoutMs": 180000, "maxOutputBytes": 2097152 },
   "ui": { "kind": "table" },
   "rollback": "none",
   "hash": "",

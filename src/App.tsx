@@ -180,6 +180,7 @@ import type {
   WinoptSetting,
   PrivacySetting,
   ProcessItem,
+  AppxItem,
   ScheduledTaskItem,
   ToolActionDescriptor,
   ToolDescriptor,
@@ -227,12 +228,13 @@ type Sample = {
   diskWrite: number;
 };
 
+// 应用内页面（护眼模式 / 快捷启动 / 桌面助手）不单独占用侧栏入口，
+// 统一从「工具箱」里对应的工具卡片进入，避免同一页面出现两个导航项。
 const nav = [
   ["overview", "性能概览", IconGauge],
   ["benchmark", "性能跑分", IconActivity],
   ["sensors", "温度与健康", IconTemperature],
   ["ai", "AI 解读", IconSparkles],
-  ["eye-care", "护眼模式", IconEye],
   ["drivers", "驱动检测", IconTool],
   ["diagnostics", "系统诊断", IconHeartbeat],
   ["network", "网络诊断", IconNetwork],
@@ -4673,6 +4675,33 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
     }
   };
 
+  const removeAppx = async (tool: ToolDescriptor, item: AppxItem) => {
+    const token = generic?.data.confirmationToken;
+    if (!token) {
+      setApplyError("确认令牌缺失或已使用，请重新预览。");
+      return;
+    }
+    if (
+      !window.confirm(
+        `确认移除「${item.name}」？只影响当前用户，之后可从 Microsoft Store 重装。`,
+      )
+    )
+      return;
+    setApplying(`${tool.id}:remove_appx`);
+    setApplyError(null);
+    try {
+      await runToolAction(tool.id, "remove_appx", token, {
+        fullName: item.fullName,
+      });
+      setGenericSuccess(`已移除 ${item.name}，正在刷新…`);
+      await runGeneric(tool);
+    } catch (reason) {
+      setApplyError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setApplying(null);
+    }
+  };
+
   const readElevatedSensors = async (tool: ToolDescriptor) => {
     setApplying(`${tool.id}:read_elevated`);
     setApplyError(null);
@@ -5076,6 +5105,7 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                 generic.tool.id !== "defrag" &&
                 generic.tool.id !== "adblock_master" &&
                 generic.tool.id !== "bsod_repair" &&
+                generic.tool.id !== "sys_clean" &&
                 (generic.tool.actions ?? [])
                   .filter((action) => action.write)
                   .map((action) => (
@@ -5624,6 +5654,60 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                     </ScrollArea>
                   </Box>
                 )}
+              </Box>
+            )}
+          {generic.tool.id === "sys_clean" &&
+            (generic.data.appxItems ?? []).some((item) => item.removable) && (
+              <Box mt="md">
+                <Text size="sm" fw={700}>
+                  白名单可移除应用
+                </Text>
+                <Text size="xs" c="dimmed" mt={4}>
+                  仅影响当前用户，移除后可从 Microsoft Store 重装
+                </Text>
+                <ScrollArea type="auto" mt="xs">
+                  <Table miw={760} verticalSpacing="xs">
+                    <Table.Thead>
+                      <Table.Tr>
+                        <Table.Th>应用</Table.Th>
+                        <Table.Th>版本</Table.Th>
+                        <Table.Th>操作</Table.Th>
+                      </Table.Tr>
+                    </Table.Thead>
+                    <Table.Tbody>
+                      {(generic.data.appxItems ?? [])
+                        .filter((item) => item.removable)
+                        .map((item) => (
+                          <Table.Tr key={item.fullName}>
+                            <Table.Td>
+                              <Text size="sm" fw={600}>
+                                {item.name}
+                              </Text>
+                              <Text size="xs" c="dimmed">
+                                {item.fullName}
+                              </Text>
+                            </Table.Td>
+                            <Table.Td>{item.version}</Table.Td>
+                            <Table.Td>
+                              <Button
+                                size="xs"
+                                color="red"
+                                variant="light"
+                                loading={
+                                  applying === `${generic.tool.id}:remove_appx`
+                                }
+                                onClick={() =>
+                                  void removeAppx(generic.tool, item)
+                                }
+                              >
+                                移除
+                              </Button>
+                            </Table.Td>
+                          </Table.Tr>
+                        ))}
+                    </Table.Tbody>
+                  </Table>
+                </ScrollArea>
               </Box>
             )}
           {generic.tool.id === "bsod_repair" && generic.data.dumpMode && (
