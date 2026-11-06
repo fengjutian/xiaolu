@@ -16,3 +16,6 @@ panic = "abort"
 strip = true
 lto = true
 opt-level = "s"
+
+[target."cfg(windows)".dependencies]
+winreg = "0.55"

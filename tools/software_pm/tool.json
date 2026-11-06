@@ -2,28 +2,33 @@
   "schemaVersion": 1,
   "id": "software_pm",
   "name": "软件权限管理",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "apiVersion": 1,
-  "description": "只读查看启动项、自动服务、计划任务、通知与防火墙规则",
+  "description": "查看启动项/服务/计划任务/通知，并可启停当前用户启动项",
   "category": "工具箱",
-  "risk": "read_only",
+  "risk": "write",
   "entry": "software_pm.exe",
   "arguments": ["--stdio"],
   "permissions": {
     "readPaths": [],
     "writePaths": [],
     "registry": [
+      "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+      "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce",
+      "HKCU\\Software\\SystemLens\\DisabledStartup",
       "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run",
-      "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run",
       "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Notifications\\Settings"
     ],
     "network": false,
     "elevation": "none"
   },
-  "actions": [{ "id": "preview", "label": "预览", "write": false }],
+  "actions": [
+    { "id": "preview", "label": "预览", "write": false },
+    { "id": "toggle_startup", "label": "启用/停用启动项", "write": true, "requiresConfirmation": true }
+  ],
   "limits": { "timeoutMs": 120000, "maxOutputBytes": 4194304 },
   "ui": { "kind": "table" },
-  "rollback": "none",
+  "rollback": "custom",
   "hash": "",
   "signature": null
 }

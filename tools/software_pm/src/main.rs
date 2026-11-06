@@ -1,13 +1,19 @@
 use serde_json::{json, Value};
 use std::os::windows::process::CommandExt;
 use std::process::Command;
-use tool_protocol::{column, item, table, ToolError};
+use tool_protocol::{attach_token, column, digest_of, item, table, Request, ToolError};
+use winreg::enums::{HKEY_CURRENT_USER, KEY_READ, KEY_WRITE};
+use winreg::RegKey;
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const MAX_STARTUP: usize = 40;
 const MAX_SERVICES: usize = 60;
 const MAX_TASKS: usize = 40;
 const MAX_NOTIFICATIONS: usize = 20;
+const ACTION_TOGGLE: &str = "toggle_startup";
+const RUN_SUBKEYS: [&str; 2] = ["Run", "RunOnce"];
+const BACKUP_PATH: &str = "Software\\SystemLens\\DisabledStartup";
+const MAX_STARTUP_ITEMS: usize = 200;
 
 fn script() -> &'static str {
     r#"
@@ -96,6 +102,120 @@ fn startup_location(location: &str) -> &str {
     } else {
         location
     }
+}
+
+#[derive(Clone)]
+struct StartupValue {
+    key: String,
+    name: String,
+    command: String,
+    enabled: bool,
+}
+
+fn run_key_path(key: &str) -> String {
+    format!("Software\\Microsoft\\Windows\\CurrentVersion\\{key}")
+}
+
+fn backup_value_name(key: &str, name: &str) -> String {
+    format!("{key}::{name}")
+}
+
+fn parse_backup_name(value: &str) -> Option<(String, String)> {
+    let (key, name) = value.split_once("::")?;
+    if key.is_empty() || name.is_empty() || !RUN_SUBKEYS.contains(&key) {
+        return None;
+    }
+    Some((key.to_string(), name.to_string()))
+}
+
+fn validate_startup_name(name: &str) -> Result<(), ToolError> {
+    if name.trim().is_empty() || name.chars().count() > 256 || name.contains("::") {
+        return Err(ToolError::new(
+            "INVALID_INPUT",
+            "启动项名称无效：不能为空、不能超过 256 字符、不能包含“::”。",
+        ));
+    }
+    Ok(())
+}
+
+fn registry_error(context: &str, error: std::io::Error) -> ToolError {
+    if error.raw_os_error() == Some(5) {
+        ToolError::new("PERMISSION_DENIED", format!("{context}：拒绝访问。"))
+    } else {
+        ToolError::new("INTERNAL", format!("{context}：{error}"))
+    }
+}
+
+fn read_startup_items() -> Result<Vec<StartupValue>, ToolError> {
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let mut items = Vec::new();
+    for key in RUN_SUBKEYS {
+        let Ok(run) = hkcu.open_subkey_with_flags(run_key_path(key), KEY_READ) else {
+            continue;
+        };
+        for (name, value) in run.enum_values().flatten() {
+            let command = value.to_string();
+            if command.trim().is_empty() {
+                continue;
+            }
+            items.push(StartupValue {
+                key: key.to_string(),
+                name,
+                command,
+                enabled: true,
+            });
+        }
+    }
+    if let Ok(backup) = hkcu.open_subkey_with_flags(BACKUP_PATH, KEY_READ) {
+        for (value_name, value) in backup.enum_values().flatten() {
+            let Some((key, name)) = parse_backup_name(&value_name) else {
+                continue;
+            };
+            items.push(StartupValue {
+                key,
+                name,
+                command: value.to_string(),
+                enabled: false,
+            });
+        }
+    }
+    items.sort_by(|left, right| {
+        (left.key.as_str(), left.name.to_lowercase())
+            .cmp(&(right.key.as_str(), right.name.to_lowercase()))
+    });
+    items.truncate(MAX_STARTUP_ITEMS);
+    Ok(items)
+}
+
+fn startup_digest(items: &[StartupValue]) -> String {
+    let parts = items
+        .iter()
+        .map(|entry| {
+            format!(
+                "{}|{}|{}|{}",
+                entry.key, entry.name, entry.command, entry.enabled
+            )
+        })
+        .collect::<Vec<_>>();
+    let refs = parts.iter().map(String::as_str).collect::<Vec<_>>();
+    digest_of(&refs)
+}
+
+fn startup_items_json(items: &[StartupValue]) -> Value {
+    Value::Array(
+        items
+            .iter()
+            .map(|entry| {
+                json!({
+                    "key": entry.key,
+                    "name": entry.name,
+                    "command": entry.command,
+                    "enabled": entry.enabled,
+                    "location": format!("HKCU\\...\\{}", entry.key),
+                })
+            })
+            .collect(),
+    )
 }
 
 fn render(payload: &Value) -> Value {
@@ -274,18 +394,195 @@ fn scan() -> Result<Value, ToolError> {
         .ok_or_else(|| ToolError::new("INTERNAL", "软件权限检查没有返回 JSON"))?;
     let payload: Value = serde_json::from_str(json_line)
         .map_err(|error| ToolError::new("INTERNAL", format!("无法解析软件权限检查：{error}")))?;
-    Ok(render(&payload))
+    let mut data = render(&payload);
+    match read_startup_items() {
+        Ok(items) => {
+            let token = tool_protocol::issue_token(ACTION_TOGGLE, &startup_digest(&items))?;
+            if let Value::Object(map) = &mut data {
+                map.insert("startupItems".into(), startup_items_json(&items));
+            }
+            attach_token(&mut data, token);
+        }
+        Err(error) => {
+            if let Value::Object(map) = &mut data {
+                map.insert(
+                    "startupRegistryError".into(),
+                    Value::String(error.message.clone()),
+                );
+                if let Some(notes) = map.get_mut("notes").and_then(Value::as_array_mut) {
+                    notes.push(Value::String(format!(
+                        "无法读取当前用户启动项，启停功能暂不可用：{}",
+                        error.message
+                    )));
+                }
+            }
+        }
+    }
+    Ok(data)
+}
+
+fn toggle_startup(request: &Request) -> Result<Value, ToolError> {
+    let token = request.confirmation.as_deref().ok_or_else(|| {
+        ToolError::new(
+            "CONFIRMATION_REQUIRED",
+            "启停启动项需要确认令牌，请先预览并选择。",
+        )
+    })?;
+    let key = request
+        .parameters
+        .get("key")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ToolError::new("INVALID_INPUT", "缺少参数 key。"))?;
+    let name = request
+        .parameters
+        .get("name")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ToolError::new("INVALID_INPUT", "缺少参数 name。"))?;
+    let enable = request
+        .parameters
+        .get("enable")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| ToolError::new("INVALID_INPUT", "缺少参数 enable。"))?;
+    if !RUN_SUBKEYS.contains(&key) {
+        return Err(ToolError::new(
+            "INVALID_INPUT",
+            "仅支持当前用户 Run / RunOnce 启动项。",
+        ));
+    }
+    validate_startup_name(name)?;
+
+    let before = read_startup_items()?;
+    tool_protocol::verify_token(token, ACTION_TOGGLE, &startup_digest(&before))?;
+    let entry = before
+        .iter()
+        .find(|item| item.key == key && item.name == name && item.enabled != enable)
+        .cloned()
+        .ok_or_else(|| {
+            ToolError::new("CONFLICT", "启动项状态已变化，请重新预览后再操作。")
+        })?;
+
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    if enable {
+        let backup = hkcu
+            .open_subkey_with_flags(BACKUP_PATH, KEY_READ | KEY_WRITE)
+            .map_err(|error| registry_error("读取停用备份", error))?;
+        let (run, _) = hkcu
+            .create_subkey(run_key_path(key))
+            .map_err(|error| registry_error("打开启动项注册表", error))?;
+        run.set_value(name, &entry.command)
+            .map_err(|error| registry_error("恢复启动项", error))?;
+        if let Err(error) = backup.delete_value(backup_value_name(key, name)) {
+            let _ = run.delete_value(name);
+            return Err(registry_error("清理停用备份", error));
+        }
+    } else {
+        let run = hkcu
+            .open_subkey_with_flags(run_key_path(key), KEY_READ | KEY_WRITE)
+            .map_err(|error| registry_error("打开启动项注册表", error))?;
+        let (backup, _) = hkcu
+            .create_subkey(BACKUP_PATH)
+            .map_err(|error| registry_error("创建停用备份", error))?;
+        backup
+            .set_value(backup_value_name(key, name), &entry.command)
+            .map_err(|error| registry_error("写入停用备份", error))?;
+        if let Err(error) = run.delete_value(name) {
+            let _ = backup.delete_value(backup_value_name(key, name));
+            return Err(registry_error("停用启动项", error));
+        }
+    }
+
+    let after = read_startup_items()?;
+    let applied = after
+        .iter()
+        .any(|item| item.key == key && item.name == name && item.enabled == enable);
+    if !applied {
+        return Err(ToolError::new(
+            "INTERNAL",
+            "写入后校验失败：启动项状态未生效。",
+        ));
+    }
+
+    let _ = tool_protocol::append_audit_log(json!({
+        "tool": "software_pm",
+        "action": ACTION_TOGGLE,
+        "key": key,
+        "name": name,
+        "enable": enable,
+        "result": "ok",
+        "at": tool_protocol::now_ms(),
+    }));
+
+    Ok(table(
+        json!([
+            item("操作", if enable { "启用" } else { "停用" }),
+            item("启动项", name),
+            item("位置", format!("HKCU\\...\\{key}")),
+        ]),
+        json!([
+            column("name", "启动项"),
+            column("status", "状态"),
+        ]),
+        json!([{
+            "name": name,
+            "status": if enable { "已启用" } else { "已停用（可从备份还原）" },
+        }]),
+        json!([
+            if enable {
+                "启动项已从停用备份恢复到注册表，下次登录/触发时生效。"
+            } else {
+                "启动项已从注册表移除并保存到 HKCU\\Software\\SystemLens\\DisabledStartup，可随时恢复。"
+            },
+            "只处理当前用户 Run / RunOnce；系统级启动项保持只读。",
+            "操作已写入本地审计日志；再次操作需要重新预览获取新令牌。",
+        ]),
+    ))
 }
 
 fn main() {
-    tool_protocol::serve("software_pm", env!("CARGO_PKG_VERSION"), &["preview"], |_| {
-        scan()
-    });
+    tool_protocol::serve_with_request(
+        "software_pm",
+        env!("CARGO_PKG_VERSION"),
+        &["preview", ACTION_TOGGLE],
+        |request| match request.action.as_str() {
+            "preview" => scan(),
+            ACTION_TOGGLE => toggle_startup(request),
+            other => Err(ToolError::unsupported(other)),
+        },
+    );
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn backup_names_roundtrip_and_reject_unsupported_keys() {
+        let name = backup_value_name("Run", "OneDrive");
+        assert_eq!(
+            parse_backup_name(&name),
+            Some(("Run".to_string(), "OneDrive".to_string()))
+        );
+        assert!(parse_backup_name("Services::Spooler").is_none());
+        assert!(parse_backup_name("Run::").is_none());
+        assert!(validate_startup_name("OneDrive").is_ok());
+        assert!(validate_startup_name("").is_err());
+        assert!(validate_startup_name("a::b").is_err());
+    }
+
+    #[test]
+    fn startup_digest_changes_with_enabled_state_and_order() {
+        let entry = |name: &str, enabled: bool| StartupValue {
+            key: "Run".into(),
+            name: name.into(),
+            command: "C:\\app.exe".into(),
+            enabled,
+        };
+        let enabled = vec![entry("A", true), entry("B", true)];
+        let disabled = vec![entry("A", false), entry("B", true)];
+        let reordered = vec![entry("B", true), entry("A", true)];
+        assert_eq!(startup_digest(&enabled), startup_digest(&reordered));
+        assert_ne!(startup_digest(&enabled), startup_digest(&disabled));
+    }
 
     fn fixture() -> Value {
         json!({

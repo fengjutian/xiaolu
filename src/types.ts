@@ -343,6 +343,14 @@ export interface PowerSettingOption {
   note: string;
 }
 
+export interface StartupToolItem {
+  key: string;
+  name: string;
+  command: string;
+  enabled: boolean;
+  location: string;
+}
+
 export interface ToolResult {
   summary?: { label: string; value: string }[];
   columns?: { key: string; label: string }[];
@@ -351,6 +359,8 @@ export interface ToolResult {
   confirmationToken?: string;
   confirmationTokenExpiresAt?: number;
   powerSettings?: PowerSettingOption[];
+  startupItems?: StartupToolItem[];
+  startupRegistryError?: string;
 }
 
 export interface SlimItem {

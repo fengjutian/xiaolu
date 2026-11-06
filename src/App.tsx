@@ -4034,6 +4034,41 @@ function ToolboxPanel() {
     }
   };
 
+  const toggleToolStartup = async (
+    tool: ToolDescriptor,
+    item: NonNullable<ToolResult["startupItems"]>[number],
+  ) => {
+    const token = generic?.data.confirmationToken;
+    if (!token) {
+      setApplyError("确认令牌缺失或已使用，请重新运行预览。");
+      return;
+    }
+    const actionLabel = item.enabled
+      ? `停用「${item.name}」`
+      : `启用「${item.name}」`;
+    if (
+      !window.confirm(
+        `确认${actionLabel}？只影响当前用户启动项，下次登录/触发时生效。`,
+      )
+    )
+      return;
+    setApplying(`${tool.id}:toggle_startup`);
+    setApplyError(null);
+    try {
+      await runToolAction(tool.id, "toggle_startup", token, {
+        key: item.key,
+        name: item.name,
+        enable: !item.enabled,
+      });
+      setGenericSuccess(`${actionLabel}完成，正在刷新预览…`);
+      await runGeneric(tool);
+    } catch (reason) {
+      setApplyError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setApplying(null);
+    }
+  };
+
   const scan = async () => {
     setScanning(true);
     setScanError(null);
@@ -4245,6 +4280,7 @@ function ToolboxPanel() {
             <Group gap="xs" mt="md">
               {generic.tool.id !== "pc_optimizer" &&
                 generic.tool.id !== "clean_master" &&
+                generic.tool.id !== "software_pm" &&
                 (generic.tool.actions ?? [])
                   .filter((action) => action.write)
                   .map((action) => (
@@ -4349,6 +4385,78 @@ function ToolboxPanel() {
                     已选 {selection.length} 个位置；清理后可到回收站还原
                   </Text>
                 </Group>
+              </Box>
+            )}
+          {generic.tool.id === "software_pm" &&
+            (generic.data.startupItems?.length ?? 0) > 0 && (
+              <Box mt="md">
+                <Text size="sm" fw={700}>
+                  当前用户启动项（仅 Run / RunOnce）
+                </Text>
+                <Text size="xs" c="dimmed" mt={4}>
+                  停用项会保存到 HKCU\Software\SystemLens\DisabledStartup，可随时还原
+                </Text>
+                <ScrollArea type="auto" mt="xs">
+                  <Table miw={760} verticalSpacing="xs">
+                    <Table.Thead>
+                      <Table.Tr>
+                        <Table.Th>启动项</Table.Th>
+                        <Table.Th>状态</Table.Th>
+                        <Table.Th>命令</Table.Th>
+                        <Table.Th>操作</Table.Th>
+                      </Table.Tr>
+                    </Table.Thead>
+                    <Table.Tbody>
+                      {(generic.data.startupItems ?? []).map((item) => (
+                        <Table.Tr key={`${item.key}::${item.name}`}>
+                          <Table.Td>
+                            <Text size="sm" fw={600}>
+                              {item.name}
+                            </Text>
+                            <Text size="xs" c="dimmed">
+                              {item.location}
+                            </Text>
+                          </Table.Td>
+                          <Table.Td>
+                            <Badge
+                              size="xs"
+                              variant="light"
+                              color={item.enabled ? "teal" : "gray"}
+                            >
+                              {item.enabled ? "已启用" : "已停用"}
+                            </Badge>
+                          </Table.Td>
+                          <Table.Td>
+                            <Text size="xs" c="dimmed" truncate maw={340}>
+                              {item.command}
+                            </Text>
+                          </Table.Td>
+                          <Table.Td>
+                            <Button
+                              size="xs"
+                              variant="light"
+                              color={item.enabled ? "orange" : "teal"}
+                              loading={
+                                applying ===
+                                `${generic.tool.id}:toggle_startup`
+                              }
+                              onClick={() =>
+                                void toggleToolStartup(generic.tool, item)
+                              }
+                            >
+                              {item.enabled ? "停用" : "启用（还原）"}
+                            </Button>
+                          </Table.Td>
+                        </Table.Tr>
+                      ))}
+                    </Table.Tbody>
+                  </Table>
+                </ScrollArea>
+                {generic.data.startupRegistryError && (
+                  <Alert color="orange" mt="sm" icon={<IconAlertCircle />}>
+                    {generic.data.startupRegistryError}
+                  </Alert>
+                )}
               </Box>
             )}
           {generic.tool.id === "pc_optimizer" && powerSettings.length > 0 && (

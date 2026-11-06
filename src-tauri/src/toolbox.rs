@@ -81,7 +81,7 @@ pub fn tools() -> Vec<ToolDescriptor> {
         tool("intercept_bs", "捆绑软件拦截", "工具箱", "安装包捆绑行为提示（规划）", "system", true, "planned", "需安装监控"),
         tool("push_accelerator", "推送加速", "工具箱", "推送通道优化（规划）", "system", true, "planned", "第三方组件，暂不实现"),
         tool("push_open_claw", "OpenClaw 推送组件", "工具箱", "第三方推送组件（规划）", "system", true, "planned", "仅登记，不集成"),
-        tool("software_pm", "软件权限管理", "工具箱", "启动项、自动服务、计划任务与通知只读视图", "read_only", false, "planned", "工具包未安装"),
+        tool("software_pm", "软件权限管理", "工具箱", "启动项、自动服务、计划任务与通知视图；可启停当前用户启动项", "write", false, "planned", "工具包未安装"),
     ]
 }
 
