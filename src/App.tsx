@@ -4622,7 +4622,7 @@ export default function App() {
           </Text>
         </Paper>
         <Text size="xs" c="dimmed">
-          v0.36.0 · 17 个工具 · 清理大师
+          v0.37.0 · 18 个工具 · Windows 优化助手
         </Text>
       </aside>
       <main className="content">

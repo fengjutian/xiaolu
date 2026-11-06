@@ -68,7 +68,7 @@ pub fn tools() -> Vec<ToolDescriptor> {
         tool("proc_opt", "电脑智能防卡顿", "优化", "高占用进程识别与建议（规划）", "read_only", false, "planned", "不结束进程"),
         tool("memopt_pro", "内存优化 Pro", "优化", "只读诊断内存占用、提交量与进程排行", "read_only", false, "planned", "工具包未安装"),
         tool("sys_boost", "系统优化大师", "优化", "一键优化候选（规划）", "write", true, "planned", "需回滚与确认"),
-        tool("winopt_assistant", "Windows 优化助手", "优化", "系统设置建议（规划）", "write", true, "planned", "逐项确认"),
+        tool("winopt_assistant", "Windows 优化助手", "优化", "只读检查视觉特效、存储感知、休眠与诊断数据等设置", "read_only", false, "planned", "工具包未安装"),
         tool("DuplicateFileClean", "重复文件清理", "清理", "重复文件检测与清理（规划）", "read_only", false, "partial", "已具备只读检测"),
         tool("eye_care", "护眼大师", "工具箱", "护眼色温与休息提醒（规划）", "read_only", false, "planned", "仅界面层"),
         tool("multi_wechat", "微信多开", "工具箱", "多实例启动（规划）", "write", false, "planned", "需评估稳定性"),
