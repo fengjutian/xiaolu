@@ -12,6 +12,7 @@ const OP_STARTUP: &str = "system_startup_set";
 const OP_SERVICE: &str = "service_set_start";
 const OP_SENSOR: &str = "sensor_read";
 const OP_TASK: &str = "task_set_enabled";
+const OP_DEFRAG: &str = "defrag_volume";
 const SERVICE_PATH: &str = "SYSTEM\\CurrentControlSet\\Services";
 const START_TYPES: [u32; 3] = [2, 3, 4];
 
@@ -324,6 +325,7 @@ fn run(request: &Value) -> Result<Outcome, String> {
         OP_SERVICE => run_service(request).map(Outcome::message),
         OP_SENSOR => read_sensors(),
         OP_TASK => run_task(request).map(Outcome::message),
+        OP_DEFRAG => run_defrag(request),
         _ => Err(format!("不支持的操作：{op}")),
     }
 }
@@ -408,6 +410,63 @@ fn set_task_enabled(task_path: &str, enable: bool) -> Result<String, String> {
         "计划任务已启用".into()
     } else {
         "计划任务已禁用".into()
+    })
+}
+
+fn valid_drive(drive: &str) -> bool {
+    drive.len() == 1
+        && drive
+            .chars()
+            .next()
+            .map(|character| character.is_ascii_alphabetic())
+            .unwrap_or(false)
+}
+
+fn valid_defrag_mode(mode: &str) -> bool {
+    matches!(mode, "analyze" | "optimize" | "trim")
+}
+
+fn run_defrag(request: &Value) -> Result<Outcome, String> {
+    let drive = request
+        .get("drive")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if !valid_drive(drive) {
+        return Err("盘符必须是单个字母。".into());
+    }
+    let mode = request
+        .get("mode")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if !valid_defrag_mode(mode) {
+        return Err("不支持的操作模式。".into());
+    }
+    let flag = match mode {
+        "analyze" => "/A",
+        "optimize" => "/O",
+        _ => "/L",
+    };
+    let mut command = Command::new("defrag.exe");
+    command.creation_flags(CREATE_NO_WINDOW);
+    command.arg(format!("{drive}:")).arg(flag);
+    let output = command
+        .output()
+        .map_err(|error| format!("无法启动 defrag.exe：{error}"))?;
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let text = if stdout.trim().is_empty() { stderr } else { stdout };
+    let code = output.status.code().unwrap_or(-1);
+    if !output.status.success() {
+        return Err(format!("defrag 执行失败（退出码 {code}）：{}", text.trim()));
+    }
+    Ok(Outcome {
+        message: "磁盘优化命令已完成".into(),
+        data: Some(json!({
+            "drive": drive,
+            "mode": mode,
+            "exitCode": code,
+            "output": text,
+        })),
     })
 }
 
@@ -542,5 +601,18 @@ mod tests {
         assert!(!valid_task_path("\\Vendor\\Update\\"));
         assert!(!valid_task_path("\\Vendor\\\"Update"));
         assert!(!valid_task_path("\\Vendor\\line\nbreak"));
+    }
+
+    #[test]
+    fn defrag_drive_and_mode_validation() {
+        assert!(valid_drive("C"));
+        assert!(valid_drive("d"));
+        assert!(!valid_drive("C:"));
+        assert!(!valid_drive(""));
+
+        assert!(valid_defrag_mode("analyze"));
+        assert!(valid_defrag_mode("optimize"));
+        assert!(valid_defrag_mode("trim"));
+        assert!(!valid_defrag_mode("delete"));
     }
 }

@@ -7,6 +7,7 @@ use super::model::{
     AiToolRun, AiTurn, ChatMessage, DiagnosticSnapshot, RedactionSummary, AI_PROMPT_VERSION,
 };
 use super::redact::{filter_facts_for_model, redact_payload};
+use super::repair::catalog_prompt as repair_catalog_prompt;
 use super::tools::catalog_prompt;
 use serde_json::{json, Value};
 
@@ -23,9 +24,13 @@ pub fn system_prompt() -> String {
 6. 只输出一个 JSON 对象，不要 Markdown、代码围栏或额外文字。
 7. 如需更多只读证据，可以在 requestedChecks 中请求宿主执行只读检查（最多 3 项）。只能使用下面列出的工具 ID 和参数，不得请求命令、脚本、文件路径或任何写操作。宿主执行后会把结果再次提供给你；不得伪造工具结果。
 8. 工具结果只是一轮补充证据。收到结果后的下一次输出必须是最终解读，不得再次请求检查。
+9. 如需建议修复，可在 repairSuggestions 中引用下面列出的受控写工具（最多 2 项）。只生成建议和预览依据，不得声称已经执行，不得生成命令或确认令牌；每项必须引用 facts 中存在的证据。实际执行必须由用户在工具箱中重新预览并二次确认。
 
 可用只读检查（白名单）：
 {catalog}
+
+受控修复工具（仅建议，宿主不会执行）：
+{repair_catalog}
 
 JSON 结构：
 {{
@@ -47,9 +52,13 @@ JSON 结构：
   "requestedChecks": [
     {{"toolId": "白名单中的工具 ID", "reason": "为什么需要这项检查", "parameters": {{}}}}
   ],
+  "repairSuggestions": [
+    {{"toolId": "受控写工具 ID", "reason": "为什么建议修复", "evidenceRefs": ["facts 中存在的 id"]}}
+  ],
   "limitations": ["整体数据限制"]
 }}"#,
-        catalog = catalog_prompt()
+        catalog = catalog_prompt(),
+        repair_catalog = repair_catalog_prompt()
     )
 }
 

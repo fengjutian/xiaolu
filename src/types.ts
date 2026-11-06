@@ -977,6 +977,36 @@ export interface AiAnswer {
   usage: AiUsage | null;
   checks?: AiToolRun[];
   estimatedCost?: number | null;
+  repairSuggestions?: AiRepairSuggestion[];
+}
+
+export interface AiRepairSuggestion {
+  toolId: string;
+  reason: string;
+  evidenceRefs: string[];
+}
+
+export interface AiRepairTarget {
+  label: string;
+  detail: string;
+  bytes: number | null;
+  fileCount: number | null;
+  requiresAdmin: boolean;
+}
+
+export interface AiRepairPreview {
+  toolId: string;
+  label: string;
+  risk: "low" | "medium" | "high" | string;
+  reversible: boolean;
+  requiresAdmin: boolean;
+  status: string;
+  summary: string;
+  targets: AiRepairTarget[];
+  rollback: string;
+  notes: string[];
+  evidenceRefs: string[];
+  generatedAtUnixMs: number;
 }
 
 export interface AiTurn {

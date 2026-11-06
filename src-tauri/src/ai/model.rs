@@ -252,6 +252,41 @@ pub struct AiToolRun {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
+pub struct AiRepairSuggestion {
+    pub tool_id: String,
+    pub reason: String,
+    pub evidence_refs: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AiRepairTarget {
+    pub label: String,
+    pub detail: String,
+    pub bytes: Option<u64>,
+    pub file_count: Option<u64>,
+    pub requires_admin: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AiRepairPreview {
+    pub tool_id: String,
+    pub label: String,
+    pub risk: String,
+    pub reversible: bool,
+    pub requires_admin: bool,
+    pub status: String,
+    pub summary: String,
+    pub targets: Vec<AiRepairTarget>,
+    pub rollback: String,
+    pub notes: Vec<String>,
+    pub evidence_refs: Vec<String>,
+    pub generated_at_unix_ms: u64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
 pub struct AiToolAuditEntry {
     pub saved_at_unix_ms: u64,
     pub request_id: String,
@@ -294,6 +329,8 @@ pub struct AiAnswer {
     pub checks: Vec<AiToolRun>,
     #[serde(default)]
     pub estimated_cost: Option<f64>,
+    #[serde(default)]
+    pub repair_suggestions: Vec<AiRepairSuggestion>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

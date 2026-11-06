@@ -5,13 +5,15 @@
 //! reference are discarded instead of being shown as deterministic advice.
 
 use super::model::{
-    AiFinding, AiRecommendation, AiRequestedCheck, DiagnosticFact, MAX_AI_FINDINGS, Severity,
+    AiFinding, AiRecommendation, AiRepairSuggestion, AiRequestedCheck, DiagnosticFact,
+    MAX_AI_FINDINGS, Severity,
 };
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashSet;
 
 const MAX_REQUESTED_CHECKS: usize = 3;
+const MAX_REPAIR_SUGGESTIONS: usize = 2;
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -20,6 +22,7 @@ pub struct RawAnswer {
     pub findings: Vec<AiFinding>,
     pub limitations: Vec<String>,
     pub requested_checks: Vec<AiRequestedCheck>,
+    pub repair_suggestions: Vec<AiRepairSuggestion>,
 }
 
 #[derive(Debug, Default)]
@@ -28,6 +31,7 @@ pub struct ValidatedAnswer {
     pub findings: Vec<AiFinding>,
     pub limitations: Vec<String>,
     pub requested_checks: Vec<AiRequestedCheck>,
+    pub repair_suggestions: Vec<AiRepairSuggestion>,
 }
 
 fn clamp_text(value: &str, max: usize) -> String {
@@ -103,8 +107,40 @@ fn normalize_recommendations(items: Vec<AiRecommendation>) -> Vec<AiRecommendati
         .collect()
 }
 
-fn normalize_checks(items: Vec<AiRequestedCheck>) -> Vec<AiRequestedCheck> {
+fn normalize_repair_suggestions(
+    items: Vec<AiRepairSuggestion>,
+    valid_ids: &HashSet<&str>,
+) -> Vec<AiRepairSuggestion> {
     let mut seen = HashSet::new();
+    items
+        .into_iter()
+        .filter_map(|item| {
+            let spec = super::repair::find(&item.tool_id)?;
+            if !seen.insert(spec.id) {
+                return None;
+            }
+            let mut refs: Vec<String> = item
+                .evidence_refs
+                .into_iter()
+                .map(|reference| clamp_text(&reference, 80))
+                .filter(|reference| valid_ids.contains(reference.as_str()))
+                .collect();
+            refs.dedup();
+            refs.truncate(4);
+            if refs.is_empty() {
+                return None;
+            }
+            Some(AiRepairSuggestion {
+                tool_id: spec.id.to_string(),
+                reason: clamp_text(&item.reason, 300),
+                evidence_refs: refs,
+            })
+        })
+        .take(MAX_REPAIR_SUGGESTIONS)
+        .collect()
+}
+
+fn normalize_checks(items: Vec<AiRequestedCheck>) -> Vec<AiRequestedCheck> {    let mut seen = HashSet::new();
     items
         .into_iter()
         .filter_map(|item| {
@@ -200,6 +236,7 @@ pub fn validate(raw: RawAnswer, facts: &[DiagnosticFact]) -> Result<ValidatedAns
     let mut limitations = Vec::new();
     let mut findings = Vec::new();
     let requested_checks = normalize_checks(raw.requested_checks);
+    let repair_suggestions = normalize_repair_suggestions(raw.repair_suggestions, &valid_ids);
 
     for (index, finding) in raw.findings.into_iter().take(8).enumerate() {
         let title = clamp_text(&finding.title, 120);
@@ -255,7 +292,7 @@ pub fn validate(raw: RawAnswer, facts: &[DiagnosticFact]) -> Result<ValidatedAns
     });
 
     let summary = clamp_text(&raw.summary, 2000);
-    if summary.is_empty() && findings.is_empty() && requested_checks.is_empty() {
+    if summary.is_empty() && findings.is_empty() && requested_checks.is_empty() && repair_suggestions.is_empty() {
         return Err("模型未返回可用的诊断结论。".to_string());
     }
     for limitation in raw.limitations {
@@ -272,6 +309,7 @@ pub fn validate(raw: RawAnswer, facts: &[DiagnosticFact]) -> Result<ValidatedAns
         findings,
         limitations,
         requested_checks,
+        repair_suggestions,
     })
 }
 
@@ -380,6 +418,22 @@ mod tests {
             .limitations
             .iter()
             .any(|item| item.contains("缺少有效证据")));
+    }
+
+    #[test]
+    fn normalizes_repair_suggestions_by_whitelist_and_evidence() {
+        let raw = parse_answer(
+            r#"{"summary":"总体","findings":[],"repairSuggestions":[
+                {"toolId":"clean_master","reason":"清理临时文件","evidenceRefs":["memory.usage"]},
+                {"toolId":"shell.exec","reason":"执行命令","evidenceRefs":["memory.usage"]},
+                {"toolId":"clean_master","reason":"重复","evidenceRefs":["memory.usage"]},
+                {"toolId":"pc_optimizer","reason":"无证据","evidenceRefs":["missing"]}
+            ]}"#,
+        )
+        .unwrap();
+        let validated = validate(raw, &facts()).unwrap();
+        assert_eq!(validated.repair_suggestions.len(), 1);
+        assert_eq!(validated.repair_suggestions[0].tool_id, "clean_master");
     }
 
     #[test]

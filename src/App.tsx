@@ -7369,7 +7369,7 @@ export default function App() {
         {tab === "hardware" && <MemoHardwarePanel details={hardware} />}
         {tab === "devices" && <MemoDevicePanel data={deviceDetails} />}
         {tab === "sensors" && <SensorsPanel data={sensors} />}
-        {tab === "ai" && <AiPanel />}
+        {tab === "ai" && <AiPanel onOpenToolbox={() => setTab("toolbox")} />}
         {tab === "eye-care" && <EyeCarePanel settings={eyeCare} onSaved={setEyeCare} />}
         {tab === "settings" && <SettingsPanel settings={appSettings} onSaved={setAppSettings} onNavigate={setTab} />}
         {tab === "desktop" && <DesktopPanel />}

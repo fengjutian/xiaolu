@@ -4,6 +4,7 @@ import type {
   AiAnswer,
   AiCapabilityReport,
   AiPayloadPreview,
+  AiRepairPreview,
   AiSessionRecord,
   AiSettings,
   AiSettingsView,
@@ -133,6 +134,21 @@ export async function probeAiCapabilities(): Promise<AiCapabilityReport> {
     throw new Error("模型能力探测需要桌面运行时。");
   }
   return invoke<AiCapabilityReport>("probe_ai_capabilities");
+}
+
+export async function previewAiRepair(
+  toolId: string,
+  snapshotId: string,
+  evidenceRefs: string[],
+): Promise<AiRepairPreview> {
+  if (!isTauri()) {
+    throw new Error("修复预览需要桌面运行时。");
+  }
+  return invoke<AiRepairPreview>("preview_ai_repair", {
+    toolId,
+    snapshotId,
+    evidenceRefs,
+  });
 }
 
 export async function listenAiStream(

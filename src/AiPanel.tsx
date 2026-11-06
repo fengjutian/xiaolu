@@ -59,6 +59,7 @@ import {
   listenAiStream,
   newAiRequestId,
   previewAiPayload,
+  previewAiRepair,
   probeAiCapabilities,
   saveAiSettings,
   setAiSessionFeedback,
@@ -69,6 +70,7 @@ import type {
   AiConfidence,
   AiFinding,
   AiPayloadPreview,
+  AiRepairPreview,
   AiSessionRecord,
   AiSettings,
   AiSettingsView,
@@ -103,6 +105,14 @@ const kindLabel = (kind: string) =>
 const riskColor = (risk: string) =>
   risk === "high" ? "red" : risk === "medium" ? "orange" : risk === "low" ? "yellow" : "gray";
 
+const REPAIR_LABELS: Record<string, string> = {
+  clean_master: "清理大师",
+  pc_optimizer: "电脑性能优化",
+  software_pm: "软件权限管理",
+  winopt_assistant: "Windows 优化助手",
+  driver_manager: "驱动管理",
+};
+
 const compactValue = (value: unknown) => {
   try {
     const text = JSON.stringify(value);
@@ -119,6 +129,14 @@ const formatTime = (unixMs: number) =>
     hour: "2-digit",
     minute: "2-digit",
   });
+
+const formatBytes = (value: number | null | undefined) => {
+  if (value == null) return "—";
+  if (value >= 1024 ** 3) return `${(value / 1024 ** 3).toFixed(1)} GB`;
+  if (value >= 1024 ** 2) return `${(value / 1024 ** 2).toFixed(1)} MB`;
+  if (value >= 1024) return `${(value / 1024).toFixed(0)} KB`;
+  return `${value} B`;
+};
 
 function FindingCard({
   finding,
@@ -238,7 +256,11 @@ function FindingsList({
   );
 }
 
-export default function AiPanel() {
+export default function AiPanel({
+  onOpenToolbox,
+}: {
+  onOpenToolbox?: () => void;
+} = {}) {
   const desktop = isDesktopRuntime();
   const [view, setView] = useState<AiSettingsView | null>(null);
   const [form, setForm] = useState<AiSettings>({ ...DEFAULT_AI_SETTINGS });
@@ -277,6 +299,9 @@ export default function AiPanel() {
   const [probing, setProbing] = useState(false);
   const [sessionDetail, setSessionDetail] = useState<AiSessionRecord | null>(null);
   const [feedbackMap, setFeedbackMap] = useState<Record<string, string>>({});
+  const [repairPreview, setRepairPreview] = useState<AiRepairPreview | null>(null);
+  const [repairLoading, setRepairLoading] = useState<string | null>(null);
+  const [repairError, setRepairError] = useState<string | null>(null);
 
   useEffect(() => {
     const next: Record<string, string> = {};
@@ -286,8 +311,23 @@ export default function AiPanel() {
     setFeedbackMap(next);
   }, [sessions]);
 
-  const submitFeedback = async (
-    requestId: string,
+  const openRepairPreview = async (
+    toolId: string,
+    snapshotId: string,
+    evidenceRefs: string[],
+  ) => {
+    setRepairLoading(`${snapshotId}:${toolId}`);
+    setRepairError(null);
+    try {
+      setRepairPreview(await previewAiRepair(toolId, snapshotId, evidenceRefs));
+    } catch (reason) {
+      setRepairError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setRepairLoading(null);
+    }
+  };
+
+  const submitFeedback = async (    requestId: string,
     feedback: "helpful" | "not_helpful" | "inaccurate" | "clear",
   ) => {
     setFeedbackMap((previous) => {
@@ -296,6 +336,11 @@ export default function AiPanel() {
       else next[requestId] = feedback;
       return next;
     });
+    setSessionDetail((previous) =>
+      previous && previous.answer.requestId === requestId
+        ? { ...previous, feedback: feedback === "clear" ? null : feedback }
+        : previous,
+    );
     try {
       await setAiSessionFeedback(requestId, feedback);
       void getAiSessions().then(setSessions).catch(() => undefined);
@@ -861,6 +906,63 @@ export default function AiPanel() {
                                 ))}
                               </Stack>
                             </Alert>
+                          )}
+                          {(entry.answer.repairSuggestions?.length ?? 0) > 0 && (
+                            <Box mt="md">
+                              <Text fw={700} size="sm">
+                                受控修复建议（仅预览）
+                              </Text>
+                              <Text size="xs" c="dimmed" mt={4}>
+                                AI 只提出建议，不会执行任何写操作；实际执行必须在工具箱中重新预览并二次确认。
+                              </Text>
+                              <Stack gap="sm" mt="sm">
+                                {(entry.answer.repairSuggestions ?? []).map((suggestion) => {
+                                  const key = `${entry.answer.snapshotId}:${suggestion.toolId}`;
+                                  return (
+                                    <Card key={`${suggestion.toolId}-${suggestion.reason}`} withBorder radius="md" padding="sm">
+                                      <Group justify="space-between">
+                                        <Text fw={600} size="sm">
+                                          {REPAIR_LABELS[suggestion.toolId] ?? suggestion.toolId}
+                                        </Text>
+                                        <Badge size="sm" variant="light" color="gray">
+                                          仅预览
+                                        </Badge>
+                                      </Group>
+                                      <Text size="sm" mt={4}>
+                                        {suggestion.reason}
+                                      </Text>
+                                      <Group gap="xs" mt={6}>
+                                        {suggestion.evidenceRefs.map((reference) => (
+                                          <Badge key={reference} size="xs" variant="light" color="teal">
+                                            {entryFacts.get(reference)?.title ?? reference}
+                                          </Badge>
+                                        ))}
+                                      </Group>
+                                      <Button
+                                        size="xs"
+                                        variant="light"
+                                        mt="sm"
+                                        loading={repairLoading === key}
+                                        onClick={() =>
+                                          void openRepairPreview(
+                                            suggestion.toolId,
+                                            entry.answer.snapshotId,
+                                            suggestion.evidenceRefs,
+                                          )
+                                        }
+                                      >
+                                        生成修复预览
+                                      </Button>
+                                    </Card>
+                                  );
+                                })}
+                              </Stack>
+                              {repairError && (
+                                <Alert color="red" mt="sm" icon={<IconAlertCircle />}>
+                                  {repairError}
+                                </Alert>
+                              )}
+                            </Box>
                           )}
                         </>
                       )}
@@ -1546,6 +1648,92 @@ export default function AiPanel() {
             <Text size="xs" c="dimmed">
               历史会话不保存原始事实值，因此证据只显示事实 ID；完整报告请查看会话生成时的导出文件。
             </Text>
+          </Stack>
+        )}
+      </Modal>
+
+      <Modal
+        opened={repairPreview !== null}
+        onClose={() => setRepairPreview(null)}
+        title="受控修复预览（不会执行）"
+        size="lg"
+        scrollAreaComponent={ScrollArea}
+      >
+        {repairPreview && (
+          <Stack gap="sm">
+            <Group gap="xs">
+              <Badge variant="light" color="indigo">
+                {repairPreview.label}
+              </Badge>
+              <Badge variant="light" color={riskColor(repairPreview.risk)}>
+                风险 {repairPreview.risk}
+              </Badge>
+              <Badge variant="light" color={repairPreview.reversible ? "teal" : "red"}>
+                {repairPreview.reversible ? "可回滚" : "不可回滚"}
+              </Badge>
+              {repairPreview.requiresAdmin && (
+                <Badge variant="light" color="orange">
+                  部分操作需管理员
+                </Badge>
+              )}
+              <Badge variant="outline">{repairPreview.status}</Badge>
+            </Group>
+            <Text size="sm">{repairPreview.summary}</Text>
+            {repairPreview.targets.length > 0 && (
+              <Box>
+                <Text size="xs" c="dimmed" fw={700}>
+                  预览目标（只读扫描）
+                </Text>
+                <Stack gap={4} mt={4}>
+                  {repairPreview.targets.map((target, index) => (
+                    <Group key={`${target.detail}-${index}`} justify="space-between" wrap="nowrap">
+                      <Text size="xs" truncate>
+                        {target.label}
+                        {target.requiresAdmin ? "（需要管理员）" : ""}
+                      </Text>
+                      <Text size="xs" c="dimmed" style={{ flexShrink: 0 }}>
+                        {formatBytes(target.bytes)}
+                        {target.fileCount != null ? ` · ${target.fileCount} 个文件` : ""}
+                      </Text>
+                    </Group>
+                  ))}
+                </Stack>
+              </Box>
+            )}
+            <Alert color="yellow" variant="light" icon={<IconAlertCircle />} title="回滚与执行">
+              {repairPreview.rollback}
+              <Text size="xs" mt="xs">
+                AI 不会执行写操作，也不会生成确认令牌。实际执行请前往工具箱，重新预览并完成二次确认。
+              </Text>
+            </Alert>
+            {repairPreview.notes.length > 0 && (
+              <Stack gap={2}>
+                {repairPreview.notes.map((note, index) => (
+                  <Text key={`${note}-${index}`} size="xs" c="dimmed">
+                    · {note}
+                  </Text>
+                ))}
+              </Stack>
+            )}
+            <Text size="xs" c="dimmed">
+              证据：{repairPreview.evidenceRefs.join("、") || "—"}
+            </Text>
+            <Group justify="flex-end" mt="sm">
+              <Button variant="subtle" onClick={() => setRepairPreview(null)}>
+                关闭
+              </Button>
+              {onOpenToolbox && (
+                <Button
+                  variant="light"
+                  onClick={() => {
+                    setRepairPreview(null);
+                    onOpenToolbox();
+                  }}
+                >
+                  前往工具箱手动预览
+                </Button>
+              )}
+            </Group>
           </Stack>
         )}
       </Modal>

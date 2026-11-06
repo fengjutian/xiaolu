@@ -8,6 +8,7 @@ mod model;
 mod prompt;
 mod provider;
 mod redact;
+mod repair;
 mod rules;
 mod settings;
 mod store;
@@ -17,8 +18,8 @@ mod tools;
 mod evaluation;
 
 pub use model::{
-    AiAnswer, AiCapabilityReport, AiPayloadPreview, AiSettings, AiSettingsView, AiStreamEvent,
-    AiToolAuditEntry, AiTurn, DiagnosticSnapshot,
+    AiAnswer, AiCapabilityReport, AiPayloadPreview, AiRepairPreview, AiSettings, AiSettingsView,
+    AiStreamEvent, AiToolAuditEntry, AiTurn, DiagnosticSnapshot,
 };
 pub use store::AiSessionRecord;
 
@@ -261,6 +262,7 @@ fn fallback_answer(
         usage: None,
         checks: Vec::new(),
         estimated_cost: None,
+        repair_suggestions: Vec::new(),
     }
 }
 
@@ -572,6 +574,7 @@ async fn run_model_analysis(
         usage: usage.clone(),
         checks,
         estimated_cost: estimate_cost(&settings, usage.as_ref()),
+        repair_suggestions: turn.validated.repair_suggestions,
     })
 }
 
@@ -714,8 +717,21 @@ async fn probe_request(
 }
 
 #[tauri::command]
-pub async fn probe_ai_capabilities(app: AppHandle) -> Result<AiCapabilityReport, String> {
-    let settings = settings::load_settings(&app);
+pub async fn preview_ai_repair(
+    app: AppHandle,
+    tool_id: String,
+    snapshot_id: String,
+    evidence_refs: Vec<String>,
+) -> Result<AiRepairPreview, String> {
+    let snapshot = app
+        .state::<AiState>()
+        .snapshot(&snapshot_id)
+        .ok_or_else(|| "快照已过期，请重新生成本机健康快照后再预览修复。".to_string())?;
+    repair::preview(&tool_id, &snapshot, &evidence_refs).await
+}
+
+#[tauri::command]
+pub async fn probe_ai_capabilities(app: AppHandle) -> Result<AiCapabilityReport, String> {    let settings = settings::load_settings(&app);
     settings::validate_base_url(&settings.base_url)?;
     let api_key = settings::load_api_key(&app)?
         .ok_or_else(|| "尚未保存 API 密钥，请先配置模型服务。".to_string())?;
