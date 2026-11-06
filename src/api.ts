@@ -762,6 +762,8 @@ export async function listToolboxTools(): Promise<ToolDescriptor[]> {
 export async function runToolAction(
   toolId: string,
   action: string,
+  confirmation?: string | null,
+  parameters?: Record<string, unknown> | null,
 ): Promise<unknown> {
   if (!isTauri()) {
     if (toolId === "sys_clean") {
@@ -830,7 +832,12 @@ export async function runToolAction(
       note: "只读预览：只统计占用，不删除任何文件。",
     };
   }
-  return invoke<unknown>("run_tool_action", { toolId, action });
+  return invoke<unknown>("run_tool_action", {
+    toolId,
+    action,
+    confirmation: confirmation ?? null,
+    parameters: parameters ?? null,
+  });
 }
 
 export function isDesktopRuntime(): boolean {

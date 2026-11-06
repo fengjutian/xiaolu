@@ -125,6 +125,7 @@ import type {
   StartupItem,
   SystemHistorySeries,
   SystemSnapshot,
+  ToolActionDescriptor,
   ToolDescriptor,
   ToolResult,
 } from "./types";
@@ -3137,6 +3138,8 @@ function ToolboxPanel() {
   } | null>(null);
   const [runningTool, setRunningTool] = useState<string | null>(null);
   const [genericError, setGenericError] = useState<string | null>(null);
+  const [applying, setApplying] = useState<string | null>(null);
+  const [applyError, setApplyError] = useState<string | null>(null);
 
   useEffect(() => {
     void listToolboxTools()
@@ -3154,6 +3157,35 @@ function ToolboxPanel() {
       setGenericError(reason instanceof Error ? reason.message : String(reason));
     } finally {
       setRunningTool(null);
+    }
+  };
+
+  const runApply = async (
+    tool: ToolDescriptor,
+    action: ToolActionDescriptor,
+    parameters?: Record<string, unknown>,
+  ) => {
+    const token = generic?.data.confirmationToken;
+    if (!token) {
+      setApplyError("确认令牌缺失或已使用，请重新运行预览。");
+      return;
+    }
+    if (!window.confirm(`确认执行「${action.label}」？该操作会立即生效。`))
+      return;
+    setApplying(`${tool.id}:${action.id}`);
+    setApplyError(null);
+    try {
+      const data = (await runToolAction(
+        tool.id,
+        action.id,
+        token,
+        parameters,
+      )) as ToolResult;
+      setGeneric({ tool, data });
+    } catch (reason) {
+      setApplyError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setApplying(null);
     }
   };
 
@@ -3303,6 +3335,57 @@ function ToolboxPanel() {
               {note}
             </Text>
           ))}
+          {(generic.tool.actions ?? []).some((action) => action.write) && (
+            <Group gap="xs" mt="md">
+              {generic.tool.id !== "pc_optimizer" &&
+                (generic.tool.actions ?? [])
+                  .filter((action) => action.write)
+                  .map((action) => (
+                    <Button
+                      key={action.id}
+                      size="xs"
+                      color="orange"
+                      variant="light"
+                      loading={applying === `${generic.tool.id}:${action.id}`}
+                      onClick={() => void runApply(generic.tool, action)}
+                    >
+                      {action.label}
+                    </Button>
+                  ))}
+              {generic.tool.id === "pc_optimizer" &&
+                (generic.data.rows ?? [])
+                  .filter(
+                    (row) =>
+                      row.status !== "当前使用" && typeof row.guid === "string",
+                  )
+                  .map((row) => (
+                    <Button
+                      key={String(row.guid)}
+                      size="xs"
+                      variant="light"
+                      loading={applying === `${generic.tool.id}:apply`}
+                      onClick={() =>
+                        void runApply(
+                          generic.tool,
+                          {
+                            id: "apply",
+                            label: `切换到 ${String(row.name)}`,
+                            write: true,
+                          },
+                          { planGuid: row.guid },
+                        )
+                      }
+                    >
+                      切换到 {String(row.name)}
+                    </Button>
+                  ))}
+            </Group>
+          )}
+          {applyError && (
+            <Alert color="red" mt="sm" icon={<IconAlertCircle />}>
+              {applyError}
+            </Alert>
+          )}
         </Card>
       )}
 
@@ -3695,7 +3778,7 @@ export default function App() {
           </Text>
         </Paper>
         <Text size="xs" c="dimmed">
-          v0.33.0 · 14 个只读工具
+          v0.34.0 · 14 个只读工具 · 2 个写操作
         </Text>
       </aside>
       <main className="content">

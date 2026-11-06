@@ -313,6 +313,12 @@ export interface SystemHistorySeries {
   sampleCount: number;
 }
 
+export interface ToolActionDescriptor {
+  id: string;
+  label: string;
+  write: boolean;
+}
+
 export interface ToolDescriptor {
   id: string;
   name: string;
@@ -323,6 +329,7 @@ export interface ToolDescriptor {
   status: "available" | "partial" | "planned" | string;
   note: string;
   uiKind: string;
+  actions?: ToolActionDescriptor[];
 }
 
 export interface ToolResult {
@@ -330,6 +337,8 @@ export interface ToolResult {
   columns?: { key: string; label: string }[];
   rows?: Record<string, unknown>[];
   notes?: string[];
+  confirmationToken?: string;
+  confirmationTokenExpiresAt?: number;
 }
 
 export interface SlimItem {

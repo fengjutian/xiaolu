@@ -2,6 +2,14 @@ use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ToolActionDescriptor {
+    pub id: String,
+    pub label: String,
+    pub write: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ToolDescriptor {
     pub id: String,
     pub name: String,
@@ -12,6 +20,7 @@ pub struct ToolDescriptor {
     pub status: String,
     pub note: String,
     pub ui_kind: String,
+    pub actions: Vec<ToolActionDescriptor>,
 }
 
 fn tool(
@@ -34,6 +43,7 @@ fn tool(
         status: status.into(),
         note: note.into(),
         ui_kind: "none".into(),
+        actions: Vec::new(),
     }
 }
 
@@ -54,7 +64,7 @@ pub fn tools() -> Vec<ToolDescriptor> {
         tool("driver_manager", "驱动管理", "驱动", "驱动检测、更新预检与安装（规划）", "system", true, "partial", "已具备检测与只读预检"),
         tool("gpu_opt", "显卡性能优化", "优化", "显卡电源与游戏配置建议（规划）", "system", true, "planned", "仅建议，不自动改"),
         tool("ai_cooling", "AI 智能降温", "优化", "温度趋势与降频建议（规划）", "read_only", false, "planned", "依赖传感器覆盖"),
-        tool("pc_optimizer", "电脑性能优化", "优化", "启动项、服务与电源计划建议（规划）", "write", true, "planned", "只读建议优先"),
+        tool("pc_optimizer", "电脑性能优化", "优化", "预览并切换 Windows 活动电源计划", "system", false, "planned", "工具包未安装"),
         tool("proc_opt", "电脑智能防卡顿", "优化", "高占用进程识别与建议（规划）", "read_only", false, "planned", "不结束进程"),
         tool("memopt_pro", "内存优化 Pro", "优化", "只读诊断内存占用、提交量与进程排行", "read_only", false, "planned", "工具包未安装"),
         tool("sys_boost", "系统优化大师", "优化", "一键优化候选（规划）", "write", true, "planned", "需回滚与确认"),
@@ -66,7 +76,7 @@ pub fn tools() -> Vec<ToolDescriptor> {
         tool("start_menu_pro", "开始菜单 Pro", "工具箱", "开始菜单增强（规划）", "system", false, "planned", "常驻组件，需评估"),
         tool("desktop_quick", "桌面侧边栏", "工具箱", "桌面文件整理与快捷访问（规划）", "write", false, "planned", "常驻组件，需评估"),
         tool("master_pdf", "PDF 大师", "工具箱", "PDF 合并/拆分（规划）", "write", false, "planned", "依赖 PDF 库"),
-        tool("lockscreen", "锁屏", "工具箱", "快捷锁屏（规划）", "read_only", false, "planned", "调用系统锁屏"),
+        tool("lockscreen", "锁屏", "工具箱", "预览后确认锁定当前 Windows 会话", "write", false, "planned", "工具包未安装"),
         tool("adblock_master", "广告拦截", "工具箱", "广告与弹窗拦截（规划）", "system", true, "planned", "需网络过滤组件"),
         tool("intercept_bs", "捆绑软件拦截", "工具箱", "安装包捆绑行为提示（规划）", "system", true, "planned", "需安装监控"),
         tool("push_accelerator", "推送加速", "工具箱", "推送通道优化（规划）", "system", true, "planned", "第三方组件，暂不实现"),

@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "id": "lockscreen",
+  "name": "锁屏",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "description": "预览后确认锁定当前 Windows 会话",
+  "category": "工具箱",
+  "risk": "write",
+  "entry": "lockscreen.exe",
+  "arguments": ["--stdio"],
+  "permissions": {
+    "readPaths": [],
+    "writePaths": [],
+    "registry": [],
+    "network": false,
+    "elevation": "none"
+  },
+  "actions": [
+    { "id": "preview", "label": "预览", "write": false },
+    { "id": "lock", "label": "锁定屏幕", "write": true, "requiresConfirmation": true }
+  ],
+  "limits": { "timeoutMs": 30000, "maxOutputBytes": 262144 },
+  "ui": { "kind": "table" },
+  "rollback": "none",
+  "hash": "",
+  "signature": null
+}
