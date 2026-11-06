@@ -9,8 +9,9 @@
 ## 0. 实施状态（2026-11-05，v0.13.0）
 
 - 已完成：统一数据模型（`SensorValue`/可用性/错误码/稳定 ID）；SQLite 历史与保留策略；温度历史曲线；阈值告警（3 样本去抖 + 5 °C 滞回）；托盘摘要；采集来源状态。
-- 未完成：T0 仍是一次批量 PowerShell 采集（尚未替换为 Rust 直调 Win32/PDH）；T1 按次提权未实现；T2 helper 未实现（无 .NET 工具链，且按 D1 暂不引入内核驱动）；桌面 Toast 未接入（当前为应用内告警横幅）。
-- 下一步：S1 收尾（移除 T0 的 PowerShell 依赖）→ S3 按次提权 → S4 评审门禁。
+- 未完成：T0 仍是一次批量 PowerShell 采集（尚未替换为 Rust 直调 Win32/PDH）；T2 helper 未实现（无 .NET 工具链，且按 D1 暂不引入内核驱动）；桌面 Toast 未接入（当前为应用内告警横幅）。
+- 2026-11-06 更新：**T1 按次提权已实现**——`lens_helper.exe` 新增只读 `sensor_read`，ai_cooling 新增 `read_elevated`；可读取 ACPI 热区/风扇/温度探针、磁盘温度与 SMART，用户取消 UAC 即不读取。T2 仍未决策。
+- 下一步：S1 收尾（移除 T0 的 PowerShell 依赖）→ T2 评审门禁（.NET + LHM/PawnIO 许可与签名）。
 
 ## 1. 结论摘要
 

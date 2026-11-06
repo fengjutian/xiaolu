@@ -55,7 +55,12 @@ if (Test-Path $helperProject) {
         New-Item -ItemType Directory -Force -Path $softwarePmDir | Out-Null
     }
     Copy-Item $helperBinary (Join-Path $softwarePmDir "lens_helper.exe") -Force
-    Write-Host "  -> lens_helper.exe"
+    $aiCoolingDir = Join-Path $outRoot "ai_cooling"
+    if (-not (Test-Path $aiCoolingDir)) {
+        New-Item -ItemType Directory -Force -Path $aiCoolingDir | Out-Null
+    }
+    Copy-Item $helperBinary (Join-Path $aiCoolingDir "lens_helper.exe") -Force
+    Write-Host "  -> lens_helper.exe (software_pm, ai_cooling)"
 }
 
 Write-Host "Tool packaging complete: $outRoot"

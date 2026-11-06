@@ -9,7 +9,7 @@
 
 助手不是通用提权执行器：
 
-- 只接受白名单操作：`system_startup_set`（系统级启动项）与 `service_set_start`（服务启动类型）；
+- 只接受白名单操作：`system_startup_set`（系统级启动项）、`service_set_start`（服务启动类型）与 `sensor_read`（受限传感器，只读）；
 - 不执行命令、不加载脚本、不访问网络；
 - 只在 `HKLM` 的 `Run` / `RunOnce` 与专用停用备份之间移动注册表值；
 - 每次请求都需要用户逐次授权 UAC，不做常驻、不做服务。
@@ -71,6 +71,14 @@ software_pm.exe（普通权限）
 ```
 
 `startType` 只接受 2（自动）、3（手动）、4（禁用）；`expectCurrent` 必须与当前 `Start` 值一致，否则拒绝写入。
+
+传感器读取请求没有业务参数；结果放在 `data`：
+
+```json
+{ "op": "sensor_read" }
+```
+
+`data` 包含 `zones` / `fans` / `probes` / `disks` / `smart` 五段，只读，不写任何键值。
 
 ## 4. 校验与拒绝条件
 
