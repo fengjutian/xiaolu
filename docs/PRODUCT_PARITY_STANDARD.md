@@ -425,3 +425,4 @@
 | 2026-11-06 | v0.1.20 | dll_repair 0.2.0：VC++/.NET 状态检查 + 官方下载页 |
 | 2026-11-06 | v0.1.21 | c_expand 0.2.0 + lens_helper：NTFS 卷向右扩展（高风险，需真机验证） |
 | 2026-11-06 | v0.1.22 | driver_manager 0.2.0：异常码说明 + 打开设备管理器/Windows 更新 |
+| 2026-11-06 | v0.1.23 | DuplicateFileClean 0.2.1（六目录）+ adblock 0.2.1（32 条内置规则）+ sys_clean 0.2.1（导出清单） |

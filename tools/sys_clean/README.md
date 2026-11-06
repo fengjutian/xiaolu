@@ -16,6 +16,7 @@ sys_clean.exe --stdio
 |---|---|---|
 | `preview` | 否 | 列出应用包，标记白名单可移除项，返回确认令牌 |
 | `remove_appx` | 是 | 移除一个白名单应用包（当前用户） |
+| `export_list` | 否 | 导出白名单可移除清单到本地 JSON |
 
 `remove_appx` 参数：
 
@@ -40,6 +41,16 @@ sys_clean.exe --stdio
 - 只执行 `Remove-AppxPackage -Package <fullName>`，不处理系统组件、驱动或预置包。
 - 移除后重新查询确认应用包已消失。
 - 操作写入 `%LOCALAPPDATA%\SystemLens\tool-actions.jsonl`。
+
+## 导出清单
+
+`export_list` 把白名单可移除应用写成 JSON：
+
+```text
+%LOCALAPPDATA%\SystemLens\sys_clean\appx-removals-<时间戳>.json
+```
+
+只包含白名单应用，不含系统关键组件；可用于审计或重装后对照。
 
 ## 边界
 

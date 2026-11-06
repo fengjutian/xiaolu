@@ -24,6 +24,10 @@ adblock_master.exe --stdio
 { "domains": ["ads.example.com", "tracker.example.com"] }
 ```
 
+## 内置规则
+
+工具箱内置 32 个常见广告/追踪域名，可在界面点“载入内置规则”填入文本框，再逐条确认写入。内置列表只是起点，不保证覆盖所有广告；写入前仍会做域名校验。
+
 ## Hosts 管理段
 
 写入内容位于固定标记之间：
