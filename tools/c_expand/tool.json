@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "c_expand",
+  "name": "C 盘瘦身与扩容",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "description": "只读分析各卷容量、右侧未分配空间与扩容可行性",
+  "category": "存储",
+  "risk": "read_only",
+  "entry": "c_expand.exe",
+  "arguments": ["--stdio"],
+  "permissions": {
+    "readPaths": [],
+    "writePaths": [],
+    "registry": [],
+    "network": false,
+    "elevation": "none"
+  },
+  "actions": [{ "id": "preview", "label": "分析", "write": false }],
+  "limits": { "timeoutMs": 60000, "maxOutputBytes": 1048576 },
+  "ui": { "kind": "table" },
+  "rollback": "none",
+  "hash": "",
+  "signature": null
+}

@@ -6110,7 +6110,7 @@ export default function App() {
           </Text>
         </Paper>
         <Text size="xs" c="dimmed">
-          v0.49.0 · 23 个工具 · 广告审计
+          v0.50.0 · 24 个工具 · 安装检查
         </Text>
       </aside>
       <main className="content">

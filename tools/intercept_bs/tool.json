@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "intercept_bs",
+  "name": "安装拦截",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "description": "只读检查近期安装包的签名与捆绑风险，不运行安装包",
+  "category": "工具箱",
+  "risk": "read_only",
+  "entry": "intercept_bs.exe",
+  "arguments": ["--stdio"],
+  "permissions": {
+    "readPaths": ["%USERPROFILE%\\Downloads", "%USERPROFILE%\\Desktop"],
+    "writePaths": [],
+    "registry": [],
+    "network": false,
+    "elevation": "none"
+  },
+  "actions": [{ "id": "preview", "label": "检查", "write": false }],
+  "limits": { "timeoutMs": 120000, "maxOutputBytes": 1048576 },
+  "ui": { "kind": "table" },
+  "rollback": "none",
+  "hash": "",
+  "signature": null
+}

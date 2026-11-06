@@ -1,0 +1,19 @@
+[package]
+name = "intercept-bs-tool"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "intercept_bs"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tool-protocol = { path = "../shared" }
+
+[profile.release]
+panic = "abort"
+strip = true
+lto = true
+opt-level = "s"

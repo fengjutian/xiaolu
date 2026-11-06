@@ -48,7 +48,7 @@ import type {
   SystemSnapshot,
 } from "./types";
 
-const APP_VERSION = "0.49.0";
+const APP_VERSION = "0.50.0";
 const REDACTED = "[已脱敏]";
 
 type RedactionOptions = {
