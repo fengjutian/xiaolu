@@ -96,7 +96,7 @@
 
 ## 6. 实施状态（2026-11-06）
 
-按第 4 节的 P0 顺序，只读诊断工具已全部落地为 `tools/<id>/` 独立进程（24 个可运行工具：18 只读 + 6 写，另含 3 个应用内置工具页）：
+按第 4 节的 P0 顺序，只读诊断工具已全部落地为 `tools/<id>/` 独立进程（25 个可运行工具：19 只读 + 6 写，另含 3 个应用内置工具页）：
 
 | REA 功能 | 本仓库工具 | 当前能力 | 边界 |
 |---|---|---|---|
@@ -110,7 +110,7 @@
 
 - P1 低风险写操作：`lockscreen`（会话锁定）、`pc_optimizer`（电源计划切换 + 逐项电源设置）、`clean_master`（白名单清理、回收站回滚）与 `software_pm`（当前用户启动项启停、备份可还原）已实现确认令牌、审计日志与原值/回滚记录；`winopt_assistant` 已提供 11 项设置的只读体检与手动建议；`eye_care` 已以应用内页面实现（Gamma Ramp 色温滤镜 + 休息提醒）；`privacy_incognito` 已提供只读痕迹扫描（清除未实现）；`sys_boost` 已提供只读优化候选汇总（一键修改未实现）；系统级启动项修改仍待实现。
 - P2 独立工具：`omni_zip`（压缩/解压/列表）与 `master_pdf`（信息/合并/拆分/旋转）已完成；`start_menu_pro`（应用内快捷启动器）与 `desktop_quick`（桌面助手）已完成。
-- P3 高风险能力：`c_expand`、服务批量修改；`adblock_master` 与 `intercept_bs` 已完成只读首版。
+- P3 高风险能力：服务批量修改与分区实际调整；`adblock_master`、`intercept_bs`、`c_expand` 已完成只读首版。
 - 暂缓：`multi_wechat`、`push_accelerator`、`push_open_claw`。
 
 写操作框架已落地：`preview → confirmationToken → apply`、一次性令牌（宿主记录）与本地操作日志已用于上述两个写工具。清单哈希校验、恢复点与批量回滚仍待后续完成。

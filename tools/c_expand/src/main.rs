@@ -24,6 +24,9 @@ fn feasible(volume: &VolumeInfo) -> (&'static str, &'static str) {
     if volume.gap_bytes == 0 {
         return ("不可直接扩展", "右侧没有相邻未分配空间；Windows 磁盘管理无法扩展");
     }
+    if volume.gap_bytes < 1024 * 1024 * 1024 {
+        return ("空间过小", "右侧未分配不足 1 GB，扩展收益有限；可先清理或评估第三方工具");
+    }
     if volume.free == 0 && volume.size == 0 {
         return ("信息不足", "未读取到卷大小");
     }
@@ -205,5 +208,11 @@ mod tests {
         assert_eq!(rows[0]["drive"], "C:");
         assert_eq!(rows[0]["gap"], "3.0 GB");
         assert_eq!(rows[0]["system"], "是");
+    }
+
+    #[test]
+    fn small_gap_is_limited() {
+        let (status, _) = feasible(&volume(700 * 1024 * 1024, "GPT"));
+        assert_eq!(status, "空间过小");
     }
 }

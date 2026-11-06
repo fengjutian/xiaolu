@@ -6110,7 +6110,7 @@ export default function App() {
           </Text>
         </Paper>
         <Text size="xs" c="dimmed">
-          v0.50.0 · 24 个工具 · 安装检查
+          v0.51.0 · 25 个工具 · 扩容分析
         </Text>
       </aside>
       <main className="content">
