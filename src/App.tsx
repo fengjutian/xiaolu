@@ -3800,6 +3800,8 @@ function ToolboxPanel() {
     tool: ToolDescriptor;
     data: ToolResult;
   } | null>(null);
+  const [genericDrawerOpen, setGenericDrawerOpen] = useState(false);
+  const [genericSuccess, setGenericSuccess] = useState("");
   const [runningTool, setRunningTool] = useState<string | null>(null);
   const [genericError, setGenericError] = useState<string | null>(null);
   const [applying, setApplying] = useState<string | null>(null);
@@ -3815,9 +3817,12 @@ function ToolboxPanel() {
   const runGeneric = async (tool: ToolDescriptor) => {
     setRunningTool(tool.id);
     setGenericError(null);
+    setApplyError(null);
     try {
       const data = (await runToolAction(tool.id, "preview")) as ToolResult;
       setGeneric({ tool, data });
+      setGenericSuccess(`${tool.name}预览生成完成`);
+      setGenericDrawerOpen(true);
       if (tool.id === "clean_master") {
         setSelection(
           (data.rows ?? [])
@@ -3859,6 +3864,7 @@ function ToolboxPanel() {
         parameters,
       )) as ToolResult;
       setGeneric({ tool, data });
+      setGenericSuccess(`${action.label}执行完成`);
       setSelection([]);
     } catch (reason) {
       setApplyError(reason instanceof Error ? reason.message : String(reason));
@@ -3999,9 +4005,22 @@ function ToolboxPanel() {
         </Alert>
       )}
 
+      <Drawer
+        opened={genericDrawerOpen}
+        onClose={() => setGenericDrawerOpen(false)}
+        position="right"
+        size="min(1180px, 94vw)"
+        title={generic ? `${generic.tool.name} · 运行结果` : "工具运行结果"}
+        overlayProps={{ backgroundOpacity: 0.35, blur: 3 }}
+      >
       {generic && (
-        <Card className="glass-card" radius="lg">
-          <Text fw={800}>{generic.tool.name} · 预览</Text>
+        <Stack gap="md">
+          <Alert color="teal" icon={<IconShieldCheck />}>
+            {genericSuccess}
+            {(generic.data.rows ?? []).length > 0
+              ? `，共返回 ${generic.data.rows?.length} 条记录。`
+              : "。"}
+          </Alert>
           <Group gap="xs" mt="xs">
             {(generic.data.summary ?? []).map((entry) => (
               <Badge key={entry.label} variant="light">
@@ -4014,7 +4033,8 @@ function ToolboxPanel() {
               没有可显示的数据。
             </Alert>
           ) : (
-            <Table mt="md" highlightOnHover verticalSpacing="xs">
+            <ScrollArea type="auto">
+            <Table miw={720} highlightOnHover verticalSpacing="xs">
               <Table.Thead>
                 <Table.Tr>
                   {(generic.data.columns ?? []).map((column) => (
@@ -4036,6 +4056,7 @@ function ToolboxPanel() {
                 ))}
               </Table.Tbody>
             </Table>
+            </ScrollArea>
           )}
           {(generic.data.notes ?? []).map((note) => (
             <Text key={note} size="xs" c="dimmed" mt="xs">
@@ -4157,8 +4178,9 @@ function ToolboxPanel() {
               {applyError}
             </Alert>
           )}
-        </Card>
+        </Stack>
       )}
+      </Drawer>
 
       <Drawer
         opened={slimDrawerOpen}
