@@ -538,6 +538,8 @@ export interface ToolResult {
   appxItems?: AppxItem[];
   runtimeItems?: RuntimeItem[];
   expandItems?: ExpandItem[];
+  boostToken?: string;
+  undoToken?: string;
   gpuPreferences?: GpuPreference[];
   restorePointEnabled?: boolean;
   restorePointToken?: string;

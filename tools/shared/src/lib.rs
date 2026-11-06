@@ -396,7 +396,12 @@ mod tests {
 
     #[test]
     fn audit_log_appends_json_line() {
-        let dir = std::env::temp_dir().join(format!("system-lens-audit-{}", std::process::id()));
+        // 暂存目录放在本 crate 的 target 下，而不是系统临时目录：
+        // 单元测试不应依赖 %TEMP% 可写（受限沙箱/CI 会直接拒绝），否则整套测试会假红。
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test-scratch")
+            .join(format!("audit-{}", std::process::id()));
         std::env::set_var(STATE_DIR_ENV, &dir);
         append_audit_log(json!({"tool": "test", "action": "run"})).expect("write audit log");
         let text = std::fs::read_to_string(dir.join("tool-actions.jsonl")).expect("read log");

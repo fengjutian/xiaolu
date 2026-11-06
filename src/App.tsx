@@ -4795,6 +4795,39 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
     setLockRemaining(0);
   };
 
+  const runSysBoost = async (
+    tool: ToolDescriptor,
+    action: "boost" | "undo_boost",
+  ) => {
+    const token =
+      action === "boost"
+        ? generic?.data.boostToken
+        : generic?.data.undoToken;
+    if (!token) {
+      setApplyError("加速令牌缺失，请重新预览。");
+      return;
+    }
+    if (
+      !window.confirm(
+        action === "boost"
+          ? "应用一键加速？会修改视觉效果、动画、透明与电源计划，并先保存快照。"
+          : "撤销加速并恢复最近一次快照？",
+      )
+    )
+      return;
+    setApplying(`${tool.id}:${action}`);
+    setApplyError(null);
+    try {
+      await runToolAction(tool.id, action, token, {});
+      setGenericSuccess(action === "boost" ? "加速已应用" : "已恢复加速前状态");
+      await runGeneric(tool);
+    } catch (reason) {
+      setApplyError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setApplying(null);
+    }
+  };
+
   const setAiPowerLimit = async (tool: ToolDescriptor, percent: number) => {
     const token = generic?.data.confirmationToken;
     if (!token) {
@@ -6446,6 +6479,35 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                 </Table>
               </Box>
             )}
+          {generic.tool.id === "sys_boost" && (
+            <Box mt="md">
+              <Text size="sm" fw={700}>
+                一键加速
+              </Text>
+              <Text size="xs" c="dimmed" mt={4}>
+                视觉性能优先 + 关闭窗口动画/透明 + 高性能电源计划；执行前自动保存快照
+              </Text>
+              <Group mt="xs">
+                <Button
+                  size="xs"
+                  color="orange"
+                  variant="light"
+                  loading={applying === `${generic.tool.id}:boost`}
+                  onClick={() => void runSysBoost(generic.tool, "boost")}
+                >
+                  一键加速
+                </Button>
+                <Button
+                  size="xs"
+                  variant="outline"
+                  loading={applying === `${generic.tool.id}:undo_boost`}
+                  onClick={() => void runSysBoost(generic.tool, "undo_boost")}
+                >
+                  撤销加速
+                </Button>
+              </Group>
+            </Box>
+          )}
           {generic.tool.id === "gpu_opt" && (
             <Box mt="md">
               <Text size="sm" fw={700}>

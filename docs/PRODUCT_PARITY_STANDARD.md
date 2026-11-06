@@ -126,9 +126,9 @@
 
 ### 6.1 总览
 
-- 25 个独立工具进程：**15 个只读 + 10 个可写**；另有 4 个应用内页面（护眼、快捷启动、桌面助手等）。
+- 25 个独立工具进程：**7 个纯只读 + 18 个含写操作**（`tool.json` 的 `risk` 实测为 read_only 7 / write 12 / system 6）；另有 4 个应用内页面（护眼、快捷启动、桌面助手等）。
 - 安全画像（按 `tool.json` 实测）：**仅 `driver_manager` 声明联网**，其余 24 个默认离线；提权 helper 已实现（系统启动项、服务启动类型、受限传感器）。
-- 10 个写工具中，**6 个有回滚字段**（`clean_master=recycle_bin`、`DuplicateFileClean=recycle_bin`、`pc_optimizer=custom`、`software_pm=custom`、`winopt_assistant=custom`、`privacy_protection=custom`）；`proc_opt` 的结束进程不可逆，`lockscreen`、`omni_zip`、`master_pdf` 属于一次性动作或输出型。
+- 18 个含写操作的工具中，**10 个有回滚字段**（`adblock_master=custom`、`ai_cooling=custom`、`bsod_repair=custom`、`clean_master=recycle_bin`、`DuplicateFileClean=recycle_bin`、`pc_optimizer=custom`、`privacy_protection=custom`、`software_pm=custom`、`sys_boost=custom`、`winopt_assistant=custom`）；`proc_opt` 的结束进程不可逆，`lockscreen`、`omni_zip`、`master_pdf`、`gpu_opt` 属于一次性动作或输出型。
 
 排序原则：**用户感知频率 × 可逆性 × 实现成本**。先做“高频、可逆、成本低”的，再做“高风险、需提权”的。
 
@@ -195,11 +195,17 @@
 
 ### 6.3 P1：第二批（2–3 周，6 个）
 
-#### 7. sys_boost（系统优化大师）保持只读（2026-11-06 决定不开发）
+#### 7. sys_boost（系统优化大师）L0 → L2（0.2.0 一键加速 + 快照撤销）
 
-- 现状：只读汇总启动项、服务、计划任务、休眠与临时文件候选。
-- 决定：不升级为写工具。写项与 winopt_assistant / pc_optimizer 重叠，恢复点又需要提权，避免重复实现与责任扩散。
-- 保留：只读汇总与建议。
+- 现状：只读汇总启动项、服务、计划任务、休眠与临时文件候选；0.2.0 起可一键加速（视觉性能优先、关闭窗口动画与透明、切换高性能电源计划），执行前先保存原值快照。
+- 决定（2026-11-06 修订）：由「保持只读」改为可写。原决定担心与 winopt_assistant / pc_optimizer 重叠；本次实现把写入范围限定在视觉效果、窗口动画、透明效果与电源计划四类项，**不触碰启动项、服务、计划任务、休眠与页面文件**，且不需要提权。
+- 撤销：加速前把原值写入快照（`%LOCALAPPDATA%\SystemLens\sys_boost`），支持按快照一键还原；原本不存在的项按删除处理还原。
+- 验收：
+  - 加速与撤销各用**独立**确认令牌；撤销令牌不得复用加速令牌（令牌把动作名签进 HMAC 载荷，复用会被判动作不匹配）；✅ 0.2.0
+  - 加速后逐项回读校验，视觉项不一致即报错；✅ 0.2.0
+  - 写操作写入本地操作日志；✅ 0.2.0
+  - `tool.json` 必须声明 `boost` / `undo_boost` 两个写动作，否则宿主 `authorize_action` 直接拒绝执行；✅ 0.2.0
+  - 清单声明的动作集合与工具实际服务的动作集合必须一致（由 `tools/sys_boost` 的清单一致性单测守护）；✅ 0.2.0
 
 #### 8. cclean（C 盘瘦身）L0 → 合并/升级
 
@@ -430,3 +436,4 @@
 | 2026-11-06 | v0.1.25 | ai_cooling 0.3.0：UAC 限制处理器最大状态（软件降温，非风扇控制） |
 | 2026-11-06 | v0.1.26 | defrag 0.2.1（碎片率/耗时）+ adblock 0.2.2（规则文件导入）+ software_pm 0.7.1（回滚点含 HKCU 启动项） |
 | 2026-11-06 | v0.1.27 | gpu_opt 0.2.0：按应用 GPU 偏好（HKCU，可恢复默认） |
+| 2026-11-06 | v0.1.28 | sys_boost 0.2.0：一键加速（视觉/动画/透明/电源计划）+ 快照撤销 |

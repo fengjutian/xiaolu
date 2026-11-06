@@ -2,30 +2,37 @@
   "schemaVersion": 1,
   "id": "sys_boost",
   "name": "系统优化大师",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "apiVersion": 1,
-  "description": "只读汇总启动项、服务、计划任务、休眠、页面文件与临时文件候选",
+  "description": "汇总优化候选，并可一键加速（视觉/动画/透明/电源计划，带快照撤销）",
   "category": "优化",
-  "risk": "read_only",
+  "risk": "write",
   "entry": "sys_boost.exe",
   "arguments": ["--stdio"],
   "permissions": {
     "readPaths": ["%TEMP%"],
-    "writePaths": [],
+    "writePaths": ["%LOCALAPPDATA%\\SystemLens\\sys_boost"],
     "registry": [
       "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
       "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce",
       "HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
       "HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce",
+      "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\VisualEffects",
+      "HKCU\\Control Panel\\Desktop\\WindowMetrics",
+      "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
       "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Power"
     ],
     "network": false,
     "elevation": "none"
   },
-  "actions": [{ "id": "preview", "label": "扫描", "write": false }],
+  "actions": [
+    { "id": "preview", "label": "扫描", "write": false },
+    { "id": "boost", "label": "一键加速", "write": true, "requiresConfirmation": true },
+    { "id": "undo_boost", "label": "撤销加速", "write": true, "requiresConfirmation": true }
+  ],
   "limits": { "timeoutMs": 120000, "maxOutputBytes": 1048576 },
   "ui": { "kind": "table" },
-  "rollback": "none",
+  "rollback": "custom",
   "hash": "",
   "signature": null
 }
