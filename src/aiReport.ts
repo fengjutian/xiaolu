@@ -81,6 +81,10 @@ export function buildAiReportMarkdown(
 
   for (const record of records) {
     const answer = record.answer;
+    const recordFacts =
+      snapshot && answer.snapshotId === snapshot.snapshotId
+        ? facts
+        : new Map<string, DiagnosticFact>();
     lines.push(`## ${record.question ?? "本机健康解读"}`, "");
     lines.push(
       `- 生成时间：${new Date(answer.generatedAtUnixMs).toLocaleString()}`,
@@ -97,7 +101,7 @@ export function buildAiReportMarkdown(
       lines.push(answer.summary, "");
     }
     for (const finding of answer.findings) {
-      lines.push(...findingLines(finding, facts));
+      lines.push(...findingLines(finding, recordFacts));
     }
     if (answer.checks && answer.checks.length > 0) {
       lines.push("### 只读检查", "");

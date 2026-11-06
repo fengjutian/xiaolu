@@ -5027,6 +5027,25 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
     }
   };
 
+  const readElevatedSensors = async (tool: ToolDescriptor) => {
+    setApplying(`${tool.id}:read_elevated`);
+    setApplyError(null);
+    try {
+      const data = (await runToolAction(
+        tool.id,
+        "read_elevated",
+        null,
+        {},
+      )) as ToolResult;
+      setGeneric({ tool, data });
+      setGenericSuccess("受限传感器读取完成");
+    } catch (reason) {
+      setApplyError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setApplying(null);
+    }
+  };
+
   const endProcess = async (
     tool: ToolDescriptor,
     item: ProcessItem,
@@ -5797,6 +5816,21 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                 )}
               </Box>
             )}
+          {generic.tool.id === "ai_cooling" && (
+            <Group mt="md" align="center">
+              <Button
+                size="xs"
+                variant="light"
+                loading={applying === `${generic.tool.id}:read_elevated`}
+                onClick={() => void readElevatedSensors(generic.tool)}
+              >
+                读取受限传感器（需管理员）
+              </Button>
+              <Text size="xs" c="dimmed">
+                ACPI 风扇/探针、磁盘 SMART；只读，不修改任何设置
+              </Text>
+            </Group>
+          )}
           {generic.tool.id === "proc_opt" &&
             (generic.data.processItems?.length ?? 0) > 0 && (
               <Box mt="md">

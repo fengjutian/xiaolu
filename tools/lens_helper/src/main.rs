@@ -1,12 +1,16 @@
 use serde_json::{json, Value};
+use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use winreg::enums::{HKEY_LOCAL_MACHINE, KEY_READ, KEY_WRITE};
 use winreg::RegKey;
 
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const RUN_SUBKEYS: [&str; 2] = ["Run", "RunOnce"];
 const BACKUP_PATH: &str = "Software\\SystemLens\\DisabledStartup";
 const OP_STARTUP: &str = "system_startup_set";
 const OP_SERVICE: &str = "service_set_start";
+const OP_SENSOR: &str = "sensor_read";
 const SERVICE_PATH: &str = "SYSTEM\\CurrentControlSet\\Services";
 const START_TYPES: [u32; 3] = [2, 3, 4];
 
@@ -250,13 +254,20 @@ fn main() {
         .unwrap_or_default()
         .to_string();
     let response = match run(&request) {
-        Ok(message) => json!({
-            "ok": true,
-            "nonce": nonce,
-            "op": op,
-            "message": message,
-            "at": now_ms(),
-        }),
+        Ok(outcome) => {
+            let Outcome { message, data } = outcome;
+            let mut value = json!({
+                "ok": true,
+                "nonce": nonce,
+                "op": op,
+                "message": message,
+                "at": now_ms(),
+            });
+            if let (Value::Object(map), Some(data)) = (&mut value, data) {
+                map.insert("data".into(), data);
+            }
+            value
+        }
         Err(error) => json!({
             "ok": false,
             "nonce": nonce,
@@ -271,15 +282,30 @@ fn main() {
     }
 }
 
-fn run(request: &Value) -> Result<String, String> {
+struct Outcome {
+    message: String,
+    data: Option<Value>,
+}
+
+impl Outcome {
+    fn message(message: impl Into<String>) -> Self {
+        Outcome {
+            message: message.into(),
+            data: None,
+        }
+    }
+}
+
+fn run(request: &Value) -> Result<Outcome, String> {
     let version = request.get("version").and_then(Value::as_u64).unwrap_or(0);
     if version != 1 {
         return Err("不支持的请求版本。".into());
     }
     let op = request.get("op").and_then(Value::as_str).unwrap_or_default();
     match op {
-        OP_STARTUP => run_startup(request),
-        OP_SERVICE => run_service(request),
+        OP_STARTUP => run_startup(request).map(Outcome::message),
+        OP_SERVICE => run_service(request).map(Outcome::message),
+        OP_SENSOR => read_sensors(),
         _ => Err(format!("不支持的操作：{op}")),
     }
 }
@@ -319,6 +345,53 @@ fn run_service(request: &Value) -> Result<String, String> {
         .ok_or_else(|| "缺少 expectCurrent。".to_string())?;
     let expect = u32::try_from(expect).map_err(|_| "expectCurrent 超出范围。".to_string())?;
     set_service_start(service, start_type, expect)
+}
+
+fn read_sensors() -> Result<Outcome, String> {
+    let script = r#"
+[Console]::OutputEncoding=[Text.Encoding]::UTF8
+$zones=@()
+try { Get-CimInstance -Namespace root/wmi -ClassName MSAcpi_ThermalZoneTemperature -ErrorAction Stop | ForEach-Object {
+  $c=([double]$_.CurrentTemperature/10)-273.15
+  if($c -gt -50 -and $c -lt 200){ $zones += @{name=[string]$_.InstanceName; temp=[math]::Round($c,1)} }
+} } catch {}
+$fans=@()
+try { Get-CimInstance Win32_Fan -ErrorAction Stop | ForEach-Object {
+  $fans += @{name=[string]$_.DeviceID; rpm=if($null -ne $_.DesiredSpeed){[double]$_.DesiredSpeed}else{$null}; status=[string]$_.Status}
+} } catch {}
+$probes=@()
+try { Get-CimInstance Win32_TemperatureProbe -ErrorAction Stop | ForEach-Object {
+  $probes += @{name=[string]$_.DeviceID; temp=if($null -ne $_.CurrentReading){[double]$_.CurrentReading}else{$null}; status=[string]$_.Status}
+} } catch {}
+$disks=@()
+try { Get-PhysicalDisk -ErrorAction Stop | ForEach-Object {
+  $d=$_; $rel=$null
+  try { $rel=$d | Get-StorageReliabilityCounter -ErrorAction Stop } catch {}
+  $disks += @{name=[string]$d.FriendlyName; media=[string]$d.MediaType; temp=if($rel -and $null -ne $rel.Temperature){[double]$rel.Temperature}else{$null}; wear=if($rel -and $null -ne $rel.Wear){[double]$rel.Wear}else{$null}; hours=if($rel -and $null -ne $rel.PowerOnHours){[double]$rel.PowerOnHours}else{$null}}
+} } catch {}
+$smart=@()
+try { Get-CimInstance -Namespace root/wmi -ClassName MSStorageDriver_FailurePredictStatus -ErrorAction Stop | ForEach-Object { $smart += @{name=[string]$_.InstanceName; predict=[bool]$_.PredictFailure} } } catch {}
+@{zones=@($zones);fans=@($fans);probes=@($probes);disks=@($disks);smart=@($smart)} | ConvertTo-Json -Depth 6 -Compress
+"#;
+    let output = Command::new("powershell.exe")
+        .creation_flags(CREATE_NO_WINDOW)
+        .args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .output()
+        .map_err(|error| format!("无法启动传感器读取：{error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "传感器读取失败：{}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let text = text.trim().trim_start_matches('\u{feff}');
+    let value: Value = serde_json::from_str(text)
+        .map_err(|error| format!("无法解析传感器结果：{error}"))?;
+    Ok(Outcome {
+        message: "受限传感器读取完成".into(),
+        data: Some(value),
+    })
 }
 
 fn now_ms() -> u64 {

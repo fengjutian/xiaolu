@@ -481,12 +481,12 @@ export default function AiPanel() {
   };
 
   const exportAiReport = (format: "md" | "json") => {
+    const filtered = sessions.filter(
+      (record) => !snapshot || record.answer.snapshotId === snapshot.snapshotId,
+    );
     const records =
-      sessions.length > 0
-        ? sessions.filter(
-            (record) =>
-              !snapshot || record.answer.snapshotId === snapshot.snapshotId,
-          )
+      filtered.length > 0
+        ? filtered
         : entries.map((entry, index) => ({
             id: `local-${index}`,
             savedAtUnixMs: entry.answer.generatedAtUnixMs,

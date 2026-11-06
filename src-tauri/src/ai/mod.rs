@@ -452,8 +452,9 @@ async fn run_model_analysis(
 ) -> Result<AiAnswer, String> {
     let provider = provider_for(&settings)?;
     let mut usage: Option<AiUsage> = None;
+    let mut native_fallback = false;
     let mut checks = if settings.native_tools {
-        collect_native_checks(
+        match collect_native_checks(
             &app,
             provider.as_ref(),
             &settings,
@@ -465,7 +466,23 @@ async fn run_model_analysis(
             &history,
             &mut usage,
         )
-        .await?
+        .await
+        {
+            Ok(checks) => checks,
+            Err(error) if error == CANCELLED => return Err(error),
+            Err(_) => {
+                native_fallback = true;
+                emit_stream(
+                    &app,
+                    &request_id,
+                    "status",
+                    String::new(),
+                    0,
+                    "原生工具调用不可用，已回退到受控只读检查协议。".to_string(),
+                );
+                Vec::new()
+            }
+        }
     } else {
         Vec::new()
     };
@@ -517,6 +534,11 @@ async fn run_model_analysis(
         turn.validated
             .limitations
             .push(format!("只读检查“{}”未完成，相关结论请谨慎对待。", run.label));
+    }
+    if native_fallback {
+        turn.validated
+            .limitations
+            .push("原生工具调用失败，本次已回退到受控只读检查协议。".to_string());
     }
     turn.validated.limitations.dedup();
     turn.validated.limitations.truncate(8);
