@@ -1623,6 +1623,16 @@ function DriversPanel({ data }: { data: DriverInventory | null }) {
         检测结果来自 Windows CIM
         和即插即用数据库。当前版本只读，不会自动下载或安装驱动。
       </Alert>
+      <Tabs defaultValue="updates" keepMounted={false}>
+        <Tabs.List className="module-tabs-list">
+          <Tabs.Tab value="updates" leftSection={<IconDownload size={17} />}>
+            官方更新
+          </Tabs.Tab>
+          <Tabs.Tab value="inventory" leftSection={<IconTool size={17} />}>
+            驱动清单 <Badge size="xs" variant="light">{data.total}</Badge>
+          </Tabs.Tab>
+        </Tabs.List>
+        <Tabs.Panel value="updates" pt="md">
       <Card className="glass-card" radius="lg">
         <Group justify="space-between" align="flex-start">
           <Box>
@@ -1732,6 +1742,9 @@ function DriversPanel({ data }: { data: DriverInventory | null }) {
           </Stack>
         )}
       </Card>
+        </Tabs.Panel>
+        <Tabs.Panel value="inventory" pt="md">
+          <Stack gap="md">
       <TextInput
         value={query}
         onChange={(event) => setQuery(event.currentTarget.value)}
@@ -1804,6 +1817,9 @@ function DriversPanel({ data }: { data: DriverInventory | null }) {
           </Table>
         </ScrollArea>
       </Card>
+          </Stack>
+        </Tabs.Panel>
+      </Tabs>
     </Stack>
   );
 }
@@ -1829,7 +1845,15 @@ function DevicePanel({ data }: { data: DeviceDetails | null }) {
           {message}
         </Alert>
       ))}
-      <SimpleGrid cols={{ base: 1, lg: 2 }}>
+      <Tabs defaultValue="monitors" keepMounted={false}>
+        <Tabs.List className="module-tabs-list">
+          <Tabs.Tab value="monitors" leftSection={<IconDeviceDesktop size={17} />}>显示器 <Badge size="xs" variant="light">{data.monitors.length}</Badge></Tabs.Tab>
+          <Tabs.Tab value="audio" leftSection={<IconSpeakerphone size={17} />}>音频 <Badge size="xs" variant="light">{data.audio.length}</Badge></Tabs.Tab>
+          <Tabs.Tab value="usb" leftSection={<IconUsb size={17} />}>USB <Badge size="xs" variant="light">{data.usb.length}</Badge></Tabs.Tab>
+          <Tabs.Tab value="bluetooth" leftSection={<IconBluetooth size={17} />}>蓝牙 <Badge size="xs" variant="light">{data.bluetooth.length}</Badge></Tabs.Tab>
+          <Tabs.Tab value="cameras" leftSection={<IconCamera size={17} />}>摄像头 <Badge size="xs" variant="light">{data.cameras.length}</Badge></Tabs.Tab>
+        </Tabs.List>
+        <Tabs.Panel value="monitors" pt="md">
         <Card className="glass-card" radius="lg">
           <Group justify="space-between">
             <Text fw={800}>显示器</Text>
@@ -1872,7 +1896,9 @@ function DevicePanel({ data }: { data: DeviceDetails | null }) {
             </Table>
           )}
         </Card>
+        </Tabs.Panel>
 
+        <Tabs.Panel value="audio" pt="md">
         <Card className="glass-card" radius="lg">
           <Group justify="space-between">
             <Text fw={800}>音频设备</Text>
@@ -1907,7 +1933,9 @@ function DevicePanel({ data }: { data: DeviceDetails | null }) {
             </Table>
           )}
         </Card>
+        </Tabs.Panel>
 
+        <Tabs.Panel value="usb" pt="md">
         <Card className="glass-card" radius="lg">
           <Group justify="space-between">
             <Text fw={800}>USB 设备</Text>
@@ -1953,7 +1981,9 @@ function DevicePanel({ data }: { data: DeviceDetails | null }) {
             </Table>
           )}
         </Card>
+        </Tabs.Panel>
 
+        <Tabs.Panel value="bluetooth" pt="md">
         <Card className="glass-card" radius="lg">
           <Group justify="space-between">
             <Text fw={800}>蓝牙</Text>
@@ -1995,7 +2025,9 @@ function DevicePanel({ data }: { data: DeviceDetails | null }) {
             </Table>
           )}
         </Card>
+        </Tabs.Panel>
 
+        <Tabs.Panel value="cameras" pt="md">
         <Card className="glass-card" radius="lg">
           <Group justify="space-between">
             <Text fw={800}>摄像头</Text>
@@ -2032,7 +2064,8 @@ function DevicePanel({ data }: { data: DeviceDetails | null }) {
             </Table>
           )}
         </Card>
-      </SimpleGrid>
+        </Tabs.Panel>
+      </Tabs>
       <Text size="xs" c="dimmed">
         来源：{data.source} · 采集于{" "}
         {new Date(data.capturedAtUnixMs).toLocaleString()}
@@ -2820,6 +2853,16 @@ function NetworkPanel({ data }: { data: NetworkDiagnosticReport | null }) {
           color="blue"
         />
       </SimpleGrid>
+      <Tabs defaultValue="connections" keepMounted={false}>
+        <Tabs.List className="module-tabs-list">
+          <Tabs.Tab value="connections" leftSection={<IconNetwork size={17} />}>
+            活动连接 <Badge size="xs" variant="light">{data.connections.length}</Badge>
+          </Tabs.Tab>
+          <Tabs.Tab value="dns" leftSection={<IconServer size={17} />}>
+            DNS 配置 <Badge size="xs" variant="light">{data.dns.length}</Badge>
+          </Tabs.Tab>
+        </Tabs.List>
+        <Tabs.Panel value="dns" pt="md">
       <Card className="glass-card" radius="lg">
         <Text fw={800} mb="md">
           DNS 服务器
@@ -2838,6 +2881,9 @@ function NetworkPanel({ data }: { data: NetworkDiagnosticReport | null }) {
           <Text c="dimmed">没有读取到 IPv4 DNS 服务器。</Text>
         )}
       </Card>
+        </Tabs.Panel>
+        <Tabs.Panel value="connections" pt="md">
+          <Stack gap="md">
       <Group justify="space-between">
         <Title order={3}>已建立连接</Title>
         <TextInput
@@ -2890,6 +2936,9 @@ function NetworkPanel({ data }: { data: NetworkDiagnosticReport | null }) {
           </Table>
         </ScrollArea>
       </Card>
+          </Stack>
+        </Tabs.Panel>
+      </Tabs>
     </Stack>
   );
 }
@@ -2971,6 +3020,27 @@ function DiagnosticsPanel({ data }: { data: DiagnosticReport | null }) {
           }
         />
       </SimpleGrid>
+      <Tabs defaultValue="errors" keepMounted={false}>
+        <Tabs.List className="module-tabs-list">
+          <Tabs.Tab value="errors" leftSection={<IconAlertCircle size={17} />}>
+            系统错误 <Badge size="xs" color={data.events.length ? "orange" : "teal"}>{data.events.length}</Badge>
+          </Tabs.Tab>
+          <Tabs.Tab value="crashes" leftSection={<IconHeartbeat size={17} />}>
+            崩溃与关机 <Badge size="xs" color={data.crashEvents.length ? "red" : "teal"}>{data.crashEvents.length}</Badge>
+          </Tabs.Tab>
+          <Tabs.Tab value="services" leftSection={<IconTool size={17} />}>
+            服务异常 <Badge size="xs" color={data.serviceIssues.length ? "orange" : "teal"}>{data.serviceIssues.length}</Badge>
+          </Tabs.Tab>
+          <Tabs.Tab value="event-log" leftSection={<IconSearch size={17} />}>
+            事件日志查询
+          </Tabs.Tab>
+          {battery.present && (
+            <Tabs.Tab value="battery" leftSection={<IconBolt size={17} />}>
+              电池详情
+            </Tabs.Tab>
+          )}
+        </Tabs.List>
+        <Tabs.Panel value="battery" pt="md">
       {battery.present && (
         <Card className="glass-card" radius="lg">
           <Group justify="space-between">
@@ -3024,6 +3094,9 @@ function DiagnosticsPanel({ data }: { data: DiagnosticReport | null }) {
           </SimpleGrid>
         </Card>
       )}
+        </Tabs.Panel>
+        <Tabs.Panel value="errors" pt="md">
+          <Stack gap="md">
       <Group justify="space-between" mt="sm">
         <Title order={3}>最近 24 小时系统错误</Title>
         <Badge variant="light" color={data.events.length ? "orange" : "teal"}>
@@ -3067,6 +3140,10 @@ function DiagnosticsPanel({ data }: { data: DiagnosticReport | null }) {
           </Card>
         ))
       )}
+          </Stack>
+        </Tabs.Panel>
+        <Tabs.Panel value="crashes" pt="md">
+          <Stack gap="md">
       <Group justify="space-between" mt="sm">
         <Title order={3}>最近 7 天崩溃与意外关机</Title>
         <Badge
@@ -3110,6 +3187,10 @@ function DiagnosticsPanel({ data }: { data: DiagnosticReport | null }) {
           </Card>
         ))
       )}
+          </Stack>
+        </Tabs.Panel>
+        <Tabs.Panel value="services" pt="md">
+          <Stack gap="md">
       <Group justify="space-between" mt="sm">
         <Title order={3}>自动启动服务异常</Title>
         <Badge
@@ -3154,7 +3235,11 @@ function DiagnosticsPanel({ data }: { data: DiagnosticReport | null }) {
           </Table>
         </Card>
       )}
+          </Stack>
+        </Tabs.Panel>
 
+        <Tabs.Panel value="event-log" pt="md">
+          <Stack gap="md">
       <Group justify="space-between" mt="md">
         <Title order={3}>事件日志查询</Title>
         <Text size="xs" c="dimmed">
@@ -3285,6 +3370,9 @@ function DiagnosticsPanel({ data }: { data: DiagnosticReport | null }) {
           </ScrollArea>
         </Card>
       )}
+          </Stack>
+        </Tabs.Panel>
+      </Tabs>
     </Stack>
   );
 }

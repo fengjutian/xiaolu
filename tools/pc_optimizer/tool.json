@@ -18,7 +18,8 @@
   },
   "actions": [
     { "id": "preview", "label": "预览", "write": false },
-    { "id": "apply", "label": "切换电源计划", "write": true, "requiresConfirmation": true }
+    { "id": "apply", "label": "切换电源计划", "write": true, "requiresConfirmation": true },
+    { "id": "apply_settings", "label": "应用电源设置", "write": true, "requiresConfirmation": true }
   ],
   "limits": { "timeoutMs": 30000, "maxOutputBytes": 262144 },
   "ui": { "kind": "table" },

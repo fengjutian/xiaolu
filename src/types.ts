@@ -332,6 +332,17 @@ export interface ToolDescriptor {
   actions?: ToolActionDescriptor[];
 }
 
+export interface PowerSettingOption {
+  id: string;
+  label: string;
+  unit: string;
+  min: number;
+  max: number;
+  ac: number | null;
+  dc: number | null;
+  note: string;
+}
+
 export interface ToolResult {
   summary?: { label: string; value: string }[];
   columns?: { key: string; label: string }[];
@@ -339,6 +350,7 @@ export interface ToolResult {
   notes?: string[];
   confirmationToken?: string;
   confirmationTokenExpiresAt?: number;
+  powerSettings?: PowerSettingOption[];
 }
 
 export interface SlimItem {

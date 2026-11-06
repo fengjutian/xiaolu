@@ -1,9 +1,114 @@
 use serde_json::{json, Value};
+use std::collections::HashSet;
 use std::ffi::c_void;
 use tool_protocol::{attach_token, column, digest_of, item, table, Request, ToolError};
 
 const ACTION: &str = "apply";
+const ACTION_SETTINGS: &str = "apply_settings";
 const ACCESS_SCHEME: u32 = 16;
+
+#[derive(Clone, Copy)]
+struct PowerSetting {
+    id: &'static str,
+    label: &'static str,
+    subgroup: &'static str,
+    setting: &'static str,
+    unit: &'static str,
+    min: u32,
+    max: u32,
+    /// 注册表/API 原始值到展示单位的换算倍数（分钟 → 秒为 60）。
+    scale: u32,
+    note: &'static str,
+}
+
+const SETTINGS: [PowerSetting; 5] = [
+    PowerSetting {
+        id: "processor-min",
+        label: "处理器最小状态",
+        subgroup: "54533251-82be-4824-96c1-47b60b740d00",
+        setting: "893dee8e-2bef-41e0-89c6-b55d0929964c",
+        unit: "%",
+        min: 0,
+        max: 100,
+        scale: 1,
+        note: "降低可省电，过低可能影响响应速度。",
+    },
+    PowerSetting {
+        id: "processor-max",
+        label: "处理器最大状态",
+        subgroup: "54533251-82be-4824-96c1-47b60b740d00",
+        setting: "bc5038f7-23e0-4960-96da-33abaf5935ec",
+        unit: "%",
+        min: 0,
+        max: 100,
+        scale: 1,
+        note: "限制上限可降温，但会损失性能。",
+    },
+    PowerSetting {
+        id: "display-off",
+        label: "关闭显示器",
+        subgroup: "7516b95f-f776-4464-8c53-06167f40cc99",
+        setting: "3c0bc021-c8a8-4e07-a973-6b14cbcb2b7e",
+        unit: "分钟",
+        min: 0,
+        max: 120,
+        scale: 60,
+        note: "0 表示永不关闭。",
+    },
+    PowerSetting {
+        id: "sleep",
+        label: "睡眠",
+        subgroup: "238c9fa8-0aad-41ed-83f4-97be242c8f20",
+        setting: "29f6c1db-86da-48c5-9fdb-f2b67b1f44da",
+        unit: "分钟",
+        min: 0,
+        max: 1440,
+        scale: 60,
+        note: "0 表示永不睡眠。",
+    },
+    PowerSetting {
+        id: "disk-off",
+        label: "关闭硬盘",
+        subgroup: "0012ee47-9041-4b5d-9b77-535fba8b1442",
+        setting: "6738e2c4-e8a5-4a42-b16a-e040e769756e",
+        unit: "分钟",
+        min: 0,
+        max: 1440,
+        scale: 60,
+        note: "SSD 通常无需调整。",
+    },
+];
+
+fn setting_by_id(id: &str) -> Option<&'static PowerSetting> {
+    SETTINGS.iter().find(|setting| setting.id == id)
+}
+
+fn setting_guids(setting: &PowerSetting) -> Option<(Guid, Guid)> {
+    Some((Guid::parse(setting.subgroup)?, Guid::parse(setting.setting)?))
+}
+
+fn validate_value(setting: &PowerSetting, value: u64) -> Result<u32, ToolError> {
+    let value = u32::try_from(value).map_err(|_| {
+        ToolError::new(
+            "INVALID_INPUT",
+            format!("{}的取值超出范围。", setting.label),
+        )
+    })?;
+    if value < setting.min || value > setting.max {
+        return Err(ToolError::new(
+            "INVALID_INPUT",
+            format!(
+                "{}必须在 {}–{} {} 之间。",
+                setting.label, setting.min, setting.max, setting.unit
+            ),
+        ));
+    }
+    Ok(value)
+}
+
+fn raw_value(setting: &PowerSetting, display: u32) -> u32 {
+    display.saturating_mul(setting.scale)
+}
 
 #[repr(C)]
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -110,6 +215,34 @@ extern "system" {
         buffer: *mut u8,
         size: *mut u32,
     ) -> u32;
+    fn PowerReadACValueIndex(
+        root: *mut c_void,
+        scheme: *const Guid,
+        subgroup: *const Guid,
+        setting: *const Guid,
+        value: *mut u32,
+    ) -> u32;
+    fn PowerReadDCValueIndex(
+        root: *mut c_void,
+        scheme: *const Guid,
+        subgroup: *const Guid,
+        setting: *const Guid,
+        value: *mut u32,
+    ) -> u32;
+    fn PowerWriteACValueIndex(
+        root: *mut c_void,
+        scheme: *const Guid,
+        subgroup: *const Guid,
+        setting: *const Guid,
+        value: u32,
+    ) -> u32;
+    fn PowerWriteDCValueIndex(
+        root: *mut c_void,
+        scheme: *const Guid,
+        subgroup: *const Guid,
+        setting: *const Guid,
+        value: u32,
+    ) -> u32;
 }
 
 #[link(name = "kernel32")]
@@ -208,12 +341,84 @@ fn power_source() -> &'static str {
     }
 }
 
-fn plan_digest(plans: &[(Guid, String)]) -> String {
-    let texts = plans
+fn read_setting(plan: &Guid, setting: &PowerSetting, ac: bool) -> Option<u32> {
+    let (subgroup, setting_guid) = setting_guids(setting)?;
+    let mut value: u32 = 0;
+    // SAFETY: GUID 均来自固定常量，value 为可写输出参数。
+    let rc = unsafe {
+        if ac {
+            PowerReadACValueIndex(
+                std::ptr::null_mut(),
+                plan,
+                &subgroup,
+                &setting_guid,
+                &mut value,
+            )
+        } else {
+            PowerReadDCValueIndex(
+                std::ptr::null_mut(),
+                plan,
+                &subgroup,
+                &setting_guid,
+                &mut value,
+            )
+        }
+    };
+    (rc == 0).then_some(value)
+}
+
+fn write_setting(plan: &Guid, setting: &PowerSetting, ac: bool, raw: u32) -> u32 {
+    let Some((subgroup, setting_guid)) = setting_guids(setting) else {
+        return 87; // ERROR_INVALID_PARAMETER
+    };
+    // SAFETY: GUID 均来自固定常量，raw 已按范围校验。
+    unsafe {
+        if ac {
+            PowerWriteACValueIndex(
+                std::ptr::null_mut(),
+                plan,
+                &subgroup,
+                &setting_guid,
+                raw,
+            )
+        } else {
+            PowerWriteDCValueIndex(
+                std::ptr::null_mut(),
+                plan,
+                &subgroup,
+                &setting_guid,
+                raw,
+            )
+        }
+    }
+}
+
+fn display_value(setting: &PowerSetting, raw: Option<u32>) -> Option<u32> {
+    raw.map(|value| value / setting.scale)
+}
+
+fn format_value(setting: &PowerSetting, value: Option<u32>) -> String {
+    match value {
+        Some(value) => format!("{value} {}", setting.unit),
+        None => "未知".into(),
+    }
+}
+
+fn token_digest(plans: &[(Guid, String)], active: Option<Guid>) -> String {
+    let mut parts = plans
         .iter()
         .map(|(guid, _)| guid.to_text())
         .collect::<Vec<_>>();
-    let refs = texts.iter().map(String::as_str).collect::<Vec<_>>();
+    parts.push(format!(
+        "active:{}",
+        active
+            .map(|guid| guid.to_text())
+            .unwrap_or_else(|| "none".into())
+    ));
+    for setting in SETTINGS.iter() {
+        parts.push(format!("setting:{}", setting.id));
+    }
+    let refs = parts.iter().map(String::as_str).collect::<Vec<_>>();
     digest_of(&refs)
 }
 
@@ -234,7 +439,7 @@ fn preview() -> Result<Value, ToolError> {
                 .map(|(_, name)| name.clone())
         })
         .unwrap_or_else(|| "未知".into());
-    let token = tool_protocol::issue_token(ACTION, &plan_digest(&plans))?;
+    let token = tool_protocol::issue_token(ACTION, &token_digest(&plans, active))?;
 
     let rows = plans
         .iter()
@@ -247,6 +452,24 @@ fn preview() -> Result<Value, ToolError> {
             })
         })
         .collect::<Vec<_>>();
+
+    let mut settings_rows = Vec::new();
+    if let Some(plan) = active {
+        for setting in SETTINGS.iter() {
+            let ac = display_value(setting, read_setting(&plan, setting, true));
+            let dc = display_value(setting, read_setting(&plan, setting, false));
+            settings_rows.push(json!({
+                "id": setting.id,
+                "label": setting.label,
+                "unit": setting.unit,
+                "min": setting.min,
+                "max": setting.max,
+                "ac": ac,
+                "dc": dc,
+                "note": setting.note,
+            }));
+        }
+    }
 
     let mut data = table(
         json!([
@@ -261,11 +484,17 @@ fn preview() -> Result<Value, ToolError> {
         ]),
         Value::Array(rows),
         json!([
-            "只切换活动电源计划，不逐项修改处理器、磁盘或显示设置。",
-            "选择可切换计划并确认后立即生效，原计划与目标计划会写入本地操作日志。",
-            "计划列表变化后旧确认令牌失效，需要重新预览。",
+            "只读预览：可切换电源计划，也可修改当前计划的处理器/显示/睡眠/硬盘设置。",
+            "所有修改会立即生效，原值写入本地操作日志；可重新输入原值恢复。",
+            "计划列表或活动计划变化后旧确认令牌失效，需要重新预览。",
+            "电源设置写入在受限账户或沙箱环境可能返回权限错误。",
         ]),
     );
+    if !settings_rows.is_empty() {
+        if let Value::Object(map) = &mut data {
+            map.insert("powerSettings".into(), Value::Array(settings_rows));
+        }
+    }
     attach_token(&mut data, token);
     Ok(data)
 }
@@ -292,7 +521,7 @@ fn apply(request: &Request) -> Result<Value, ToolError> {
             "无法枚举电源计划，已取消切换。",
         ));
     }
-    tool_protocol::verify_token(token, ACTION, &plan_digest(&plans))?;
+    tool_protocol::verify_token(token, ACTION, &token_digest(&plans, active_plan()))?;
 
     let target_name = plans
         .iter()
@@ -364,7 +593,212 @@ fn apply(request: &Request) -> Result<Value, ToolError> {
         }]),
         json!([
             "切换已生效；原计划已写入本地操作日志，可再次预览后切换回去。",
-            "本工具只切换计划，不修改计划内的单项电源设置。",
+            "可在预览页继续修改当前计划的单项电源设置。",
+        ]),
+    ))
+}
+
+struct SettingChange {
+    setting: &'static PowerSetting,
+    ac: u32,
+    dc: u32,
+}
+
+fn apply_settings(request: &Request) -> Result<Value, ToolError> {
+    let token = request.confirmation.as_deref().ok_or_else(|| {
+        ToolError::new(
+            "CONFIRMATION_REQUIRED",
+            "修改电源设置需要确认令牌，请先预览并修改数值。",
+        )
+    })?;
+    let changes = request
+        .parameters
+        .get("changes")
+        .and_then(Value::as_array)
+        .ok_or_else(|| ToolError::new("INVALID_INPUT", "缺少参数 changes。"))?;
+    if changes.is_empty() {
+        return Err(ToolError::new(
+            "INVALID_INPUT",
+            "没有需要应用的电源设置。",
+        ));
+    }
+
+    let plans = enumerate_plans();
+    if plans.is_empty() {
+        return Err(ToolError::new(
+            "INTERNAL",
+            "无法枚举电源计划，已取消修改。",
+        ));
+    }
+    let active = active_plan()
+        .ok_or_else(|| ToolError::new("INTERNAL", "无法读取当前活动电源计划。"))?;
+    tool_protocol::verify_token(token, ACTION, &token_digest(&plans, Some(active)))?;
+    let plan_name = plans
+        .iter()
+        .find(|(guid, _)| *guid == active)
+        .map(|(_, name)| name.clone())
+        .unwrap_or_else(|| "当前计划".into());
+
+    let mut parsed: Vec<SettingChange> = Vec::new();
+    let mut seen = HashSet::new();
+    for change in changes {
+        let id = change
+            .get("id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| ToolError::new("INVALID_INPUT", "电源设置项缺少 id。"))?;
+        let setting = setting_by_id(id).ok_or_else(|| {
+            ToolError::new("INVALID_INPUT", format!("不支持的电源设置：{id}"))
+        })?;
+        if !seen.insert(setting.id) {
+            return Err(ToolError::new(
+                "INVALID_INPUT",
+                format!("{} 重复出现。", setting.label),
+            ));
+        }
+        let ac = change.get("ac").and_then(Value::as_u64).ok_or_else(|| {
+            ToolError::new(
+                "INVALID_INPUT",
+                format!("{}缺少交流电取值。", setting.label),
+            )
+        })?;
+        let dc = change.get("dc").and_then(Value::as_u64).ok_or_else(|| {
+            ToolError::new("INVALID_INPUT", format!("{}缺少电池取值。", setting.label))
+        })?;
+        parsed.push(SettingChange {
+            setting,
+            ac: validate_value(setting, ac)?,
+            dc: validate_value(setting, dc)?,
+        });
+    }
+
+    let originals = parsed
+        .iter()
+        .map(|change| {
+            (
+                change.setting,
+                read_setting(&active, change.setting, true),
+                read_setting(&active, change.setting, false),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    for change in &parsed {
+        for (ac, value) in [(true, change.ac), (false, change.dc)] {
+            let rc = write_setting(
+                &active,
+                change.setting,
+                ac,
+                raw_value(change.setting, value),
+            );
+            if rc != 0 {
+                let (code, message) = if rc == 5 {
+                    (
+                        "PERMISSION_DENIED",
+                        "当前进程没有写入电源设置的权限（受限账户或沙箱环境）。请在普通桌面会话中重试；仍失败时以管理员身份运行。",
+                    )
+                } else {
+                    (
+                        "INTERNAL",
+                        "写入电源设置失败，请检查设备是否支持该项目。",
+                    )
+                };
+                return Err(ToolError::new(
+                    code,
+                    format!("{}：错误码 {rc}。", message),
+                ));
+            }
+        }
+    }
+
+    // 写入索引后激活当前计划，让改动立即生效。
+    // SAFETY: active 来自系统返回的活动计划 GUID。
+    let rc = unsafe { PowerSetActiveScheme(std::ptr::null_mut(), &active) };
+    if rc == 5 {
+        return Err(ToolError::new(
+            "PERMISSION_DENIED",
+            "当前进程没有应用电源设置的权限，请以管理员身份重试。",
+        ));
+    }
+    if rc != 0 {
+        return Err(ToolError::new(
+            "INTERNAL",
+            format!("应用电源设置失败（错误码 {rc}）。"),
+        ));
+    }
+
+    for (change, (_, _, _)) in parsed.iter().zip(originals.iter()) {
+        let ac_after = read_setting(&active, change.setting, true);
+        let dc_after = read_setting(&active, change.setting, false);
+        if ac_after != Some(raw_value(change.setting, change.ac))
+            || dc_after != Some(raw_value(change.setting, change.dc))
+        {
+            return Err(ToolError::new(
+                "INTERNAL",
+                format!("{}写入后回读不一致。", change.setting.label),
+            ));
+        }
+    }
+
+    let audit_changes = parsed
+        .iter()
+        .zip(originals.iter())
+        .map(|(change, (_, ac_before, dc_before))| {
+            json!({
+                "id": change.setting.id,
+                "beforeAc": display_value(change.setting, *ac_before),
+                "beforeDc": display_value(change.setting, *dc_before),
+                "afterAc": change.ac,
+                "afterDc": change.dc,
+            })
+        })
+        .collect::<Vec<_>>();
+    let _ = tool_protocol::append_audit_log(json!({
+        "tool": "pc_optimizer",
+        "action": ACTION_SETTINGS,
+        "planGuid": active.to_text(),
+        "planName": plan_name,
+        "changes": audit_changes,
+        "result": "ok",
+        "at": tool_protocol::now_ms(),
+    }));
+
+    let rows = parsed
+        .iter()
+        .zip(originals.iter())
+        .map(|(change, (_, ac_before, dc_before))| {
+            json!({
+                "label": change.setting.label,
+                "before": format!(
+                    "{} / {}",
+                    format_value(change.setting, display_value(change.setting, *ac_before)),
+                    format_value(change.setting, display_value(change.setting, *dc_before))
+                ),
+                "after": format!(
+                    "{} / {}",
+                    format_value(change.setting, Some(change.ac)),
+                    format_value(change.setting, Some(change.dc))
+                ),
+                "status": "已应用",
+            })
+        })
+        .collect::<Vec<_>>();
+
+    Ok(table(
+        json!([
+            item("应用项", parsed.len().to_string()),
+            item("当前计划", plan_name.clone()),
+        ]),
+        json!([
+            column("label", "设置项"),
+            column("before", "原值（交流 / 电池）"),
+            column("after", "新值（交流 / 电池）"),
+            column("status", "结果"),
+        ]),
+        Value::Array(rows),
+        json!([
+            "电源设置已应用并激活当前计划。",
+            "原值已写入本地操作日志；可重新输入原值恢复，或在“电源选项”中恢复默认。",
+            "确认令牌一次性使用，继续调整需要重新预览。",
         ]),
     ))
 }
@@ -373,10 +807,11 @@ fn main() {
     tool_protocol::serve_with_request(
         "pc_optimizer",
         env!("CARGO_PKG_VERSION"),
-        &["preview", ACTION],
+        &["preview", ACTION, ACTION_SETTINGS],
         |request| match request.action.as_str() {
             "preview" => preview(),
             ACTION => apply(request),
+            ACTION_SETTINGS => apply_settings(request),
             other => Err(ToolError::unsupported(other)),
         },
     );
@@ -407,7 +842,7 @@ mod tests {
     }
 
     #[test]
-    fn plan_digest_is_stable_and_order_independent() {
+    fn token_digest_binds_active_plan_and_settings() {
         let a = (
             Guid::parse("381b4222-f694-41f0-9685-ff5bb260df2e").unwrap(),
             "平衡".to_string(),
@@ -416,6 +851,39 @@ mod tests {
             Guid::parse("8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c").unwrap(),
             "高性能".to_string(),
         );
-        assert_eq!(plan_digest(&[a.clone(), b.clone()]), plan_digest(&[b, a]));
+        let active_a = Some(a.0);
+        let active_b = Some(b.0);
+        assert_eq!(
+            token_digest(&[a.clone(), b.clone()], active_a),
+            token_digest(&[b.clone(), a.clone()], active_a)
+        );
+        assert_ne!(
+            token_digest(&[a.clone()], active_a),
+            token_digest(&[a], active_b)
+        );
+    }
+
+    #[test]
+    fn validates_setting_ranges_and_units() {
+        let processor = setting_by_id("processor-min").expect("processor setting");
+        assert_eq!(validate_value(processor, 100).unwrap(), 100);
+        assert!(validate_value(processor, 101).is_err());
+        assert!(validate_value(processor, 0).is_ok());
+
+        let sleep = setting_by_id("sleep").expect("sleep setting");
+        assert_eq!(validate_value(sleep, 30).unwrap(), 30);
+        assert!(validate_value(sleep, 1441).is_err());
+        assert_eq!(raw_value(sleep, 30), 1800);
+        assert_eq!(display_value(sleep, Some(1800)), Some(30));
+
+        let display = setting_by_id("display-off").expect("display setting");
+        assert_eq!(raw_value(display, 10), 600);
+        assert_eq!(display_value(display, Some(600)), Some(10));
+    }
+
+    #[test]
+    fn unknown_setting_ids_are_rejected() {
+        assert!(setting_by_id("processor-min").is_some());
+        assert!(setting_by_id("nope").is_none());
     }
 }
