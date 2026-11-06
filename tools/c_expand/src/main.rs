@@ -80,12 +80,14 @@ fn collect() -> Result<Vec<VolumeInfo>, ToolError> {
         ));
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let json_line = stdout
+    let Some(json_line) = stdout
         .lines()
         .map(str::trim)
         .filter(|line| line.starts_with('{') || line.starts_with('['))
         .last()
-        .ok_or_else(|| ToolError::new("INTERNAL", "分区查询没有返回 JSON"))?;
+    else {
+        return Ok(Vec::new());
+    };
     let value: Value = serde_json::from_str(json_line)
         .map_err(|error| ToolError::new("INTERNAL", format!("无法解析分区信息：{error}")))?;
     let array = match value {

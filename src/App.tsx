@@ -5128,6 +5128,7 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                 generic.tool.id !== "adblock_master" &&
                 generic.tool.id !== "bsod_repair" &&
                 generic.tool.id !== "sys_clean" &&
+                generic.tool.id !== "c_expand" &&
                 (generic.tool.actions ?? [])
                   .filter((action) => action.write)
                   .map((action) => (
@@ -5676,6 +5677,70 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                     </ScrollArea>
                   </Box>
                 )}
+              </Box>
+            )}
+          {generic.tool.id === "c_expand" &&
+            (generic.data.expandItems?.length ?? 0) > 0 && (
+              <Box mt="md">
+                <Text size="sm" fw={700}>
+                  扩容（仅向右扩展相邻未分配空间）
+                </Text>
+                <Alert color="red" mt="xs" icon={<IconAlertCircle />}>
+                  分区操作有数据丢失风险。请先备份重要数据、确认电源稳定，并保留恢复介质。
+                </Alert>
+                <Stack gap="sm" mt="sm">
+                  {(generic.data.expandItems ?? []).map(
+                    (item: ExpandItem) => (
+                      <Card key={item.drive} withBorder padding="sm">
+                        <Text size="sm" fw={600}>
+                          {item.drive}: 当前 {item.size} · 右侧未分配{" "}
+                          {item.gap} · 最大可扩至{" "}
+                          {Math.floor(item.maxBytes / 1024 ** 3)} GB
+                        </Text>
+                        <Text size="xs" c="dimmed" mt={2}>
+                          文件系统 {item.filesystem}；不移动数据、不跨盘、不缩小
+                        </Text>
+                        <Checkbox
+                          mt="xs"
+                          checked={!!expandAck[item.drive]}
+                          onChange={(event) =>
+                            setExpandAck((current) => ({
+                              ...current,
+                              [item.drive]: event.currentTarget.checked,
+                            }))
+                          }
+                          label="我已备份重要数据，并确认电源稳定"
+                        />
+                        <Button
+                          mt="xs"
+                          size="xs"
+                          color="red"
+                          variant="light"
+                          disabled={!expandAck[item.drive]}
+                          loading={
+                            applying === `${generic.tool.id}:expand_volume`
+                          }
+                          onClick={() =>
+                            void runApply(
+                              generic.tool,
+                              {
+                                id: "expand_volume",
+                                label: `扩展 ${item.drive}:`,
+                                write: true,
+                              },
+                              {
+                                drive: item.drive,
+                                targetBytes: item.maxBytes,
+                              },
+                            )
+                          }
+                        >
+                          扩展至最大
+                        </Button>
+                      </Card>
+                    ),
+                  )}
+                </Stack>
               </Box>
             )}
           {generic.tool.id === "dll_repair" &&
