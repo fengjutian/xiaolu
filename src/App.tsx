@@ -4771,6 +4771,7 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
   const [privacyDraft, setPrivacyDraft] = useState<Record<string, string>>({});
   const [procPriority, setProcPriority] = useState<Record<string, string>>({});
   const [adblockDomains, setAdblockDomains] = useState("");
+  const [dumpDraft, setDumpDraft] = useState("");
 
   const updatePrivacyValue = (id: string, value: string | null) => {
     if (value == null) return;
@@ -4837,6 +4838,12 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
       if (tool.id === "privacy_protection") {
         setPrivacyDraft({});
       }
+      if (tool.id === "adblock_master") {
+        setDumpDraft("");
+      }
+      if (tool.id === "bsod_repair") {
+        setDumpDraft((data as ToolResult).dumpMode?.mode ?? "");
+      }
       if (tool.id === "proc_opt") {
         const items = (data as ToolResult).processItems ?? [];
         setProcPriority(
@@ -4889,6 +4896,9 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
       }
       if (data.privacySettings) {
         setPrivacyDraft({});
+      }
+      if (data.dumpMode) {
+        setDumpDraft(data.dumpMode.mode);
       }
       setGenericSuccess(`${action.label}执行完成`);
       setSelection([]);
@@ -5479,6 +5489,7 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                 generic.tool.id !== "proc_opt" &&
                 generic.tool.id !== "defrag" &&
                 generic.tool.id !== "adblock_master" &&
+                generic.tool.id !== "bsod_repair" &&
                 (generic.tool.actions ?? [])
                   .filter((action) => action.write)
                   .map((action) => (
@@ -6029,6 +6040,53 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                 )}
               </Box>
             )}
+          {generic.tool.id === "bsod_repair" && generic.data.dumpMode && (
+            <Box mt="md">
+              <Text size="sm" fw={700}>
+                崩溃转储设置
+              </Text>
+              <Text size="xs" c="dimmed" mt={4}>
+                当前：{generic.data.dumpMode.label}；切换需要管理员授权（UAC）
+              </Text>
+              <Group mt="xs" align="center">
+                <Select
+                  size="xs"
+                  w={200}
+                  data={[
+                    { value: "automatic", label: "自动内存转储" },
+                    { value: "kernel", label: "内核内存转储" },
+                    { value: "small", label: "小内存转储" },
+                    { value: "none", label: "不转储" },
+                  ]}
+                  value={dumpDraft}
+                  allowDeselect={false}
+                  onChange={(next) => setDumpDraft(next ?? "")}
+                />
+                <Button
+                  size="xs"
+                  color="orange"
+                  variant="light"
+                  disabled={
+                    !dumpDraft || dumpDraft === generic.data.dumpMode.mode
+                  }
+                  loading={applying === `${generic.tool.id}:set_dump_mode`}
+                  onClick={() =>
+                    void runApply(
+                      generic.tool,
+                      {
+                        id: "set_dump_mode",
+                        label: "切换崩溃转储模式",
+                        write: true,
+                      },
+                      { mode: dumpDraft },
+                    )
+                  }
+                >
+                  应用转储模式
+                </Button>
+              </Group>
+            </Box>
+          )}
           {generic.tool.id === "adblock_master" && (
             <Box mt="md">
               <Text size="sm" fw={700}>

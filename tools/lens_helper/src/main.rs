@@ -15,6 +15,7 @@ const OP_TASK: &str = "task_set_enabled";
 const OP_DEFRAG: &str = "defrag_volume";
 const OP_HOSTS_APPLY: &str = "hosts_apply";
 const OP_HOSTS_RESTORE: &str = "hosts_restore";
+const OP_CRASH_DUMP: &str = "crash_dump_set";
 const HOSTS_BEGIN: &str = "# BEGIN SystemLens AdBlock";
 const HOSTS_END: &str = "# END SystemLens AdBlock";
 const SERVICE_PATH: &str = "SYSTEM\\CurrentControlSet\\Services";
@@ -332,6 +333,7 @@ fn run(request: &Value) -> Result<Outcome, String> {
         OP_DEFRAG => run_defrag(request),
         OP_HOSTS_APPLY => run_hosts_apply(request),
         OP_HOSTS_RESTORE => run_hosts_restore(),
+        OP_CRASH_DUMP => run_crash_dump(request),
         _ => Err(format!("不支持的操作：{op}")),
     }
 }
@@ -618,8 +620,53 @@ fn run_hosts_restore() -> Result<Outcome, String> {
     })
 }
 
-fn read_sensors() -> Result<Outcome, String> {
-    let script = r#"
+fn crash_dump_value(mode: &str) -> Option<u32> {
+    match mode {
+        "none" => Some(0),
+        "complete" => Some(1),
+        "kernel" => Some(2),
+        "small" => Some(3),
+        "automatic" => Some(7),
+        _ => None,
+    }
+}
+
+fn run_crash_dump(request: &Value) -> Result<Outcome, String> {
+    let mode = request
+        .get("mode")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let value = crash_dump_value(mode)
+        .ok_or_else(|| "不支持的转储模式。".to_string())?;
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let key = hklm
+        .open_subkey_with_flags(
+            "SYSTEM\\CurrentControlSet\\Control\\CrashControl",
+            KEY_READ | KEY_WRITE,
+        )
+        .map_err(|error| registry_error("打开崩溃控制注册表", error))?;
+    let before: u32 = key
+        .get_value("CrashDumpEnabled")
+        .map_err(|error| registry_error("读取转储模式", error))?;
+    key.set_value("CrashDumpEnabled", &value)
+        .map_err(|error| registry_error("写入转储模式", error))?;
+    let after: u32 = key
+        .get_value("CrashDumpEnabled")
+        .map_err(|error| registry_error("回读转储模式", error))?;
+    if after != value {
+        return Err("写入后回读转储模式不一致。".into());
+    }
+    Ok(Outcome {
+        message: "崩溃转储模式已更新".into(),
+        data: Some(json!({
+            "mode": mode,
+            "before": before,
+            "after": after,
+        })),
+    })
+}
+
+fn read_sensors() -> Result<Outcome, String> {    let script = r#"
 [Console]::OutputEncoding=[Text.Encoding]::UTF8
 $zones=@()
 try { Get-CimInstance -Namespace root/wmi -ClassName MSAcpi_ThermalZoneTemperature -ErrorAction Stop | ForEach-Object {
@@ -784,5 +831,15 @@ mod tests {
         assert!(output.contains("localhost"));
         assert!(output.contains("foo.com"));
         assert!(!output.contains("ads.com"));
+    }
+
+    #[test]
+    fn crash_dump_modes_are_limited() {
+        assert_eq!(crash_dump_value("none"), Some(0));
+        assert_eq!(crash_dump_value("complete"), Some(1));
+        assert_eq!(crash_dump_value("kernel"), Some(2));
+        assert_eq!(crash_dump_value("small"), Some(3));
+        assert_eq!(crash_dump_value("automatic"), Some(7));
+        assert_eq!(crash_dump_value("invalid"), None);
     }
 }

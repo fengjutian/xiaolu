@@ -437,6 +437,12 @@ export interface ServiceItem {
   path: string;
 }
 
+export interface DumpMode {
+  value: number | null;
+  mode: string;
+  label: string;
+}
+
 export interface VolumeItem {
   drive: string;
   name: string;
@@ -490,6 +496,7 @@ export interface ToolResult {
   volumeItems?: VolumeItem[];
   hostsManagedDomains?: number;
   hostsPath?: string;
+  dumpMode?: DumpMode;
   journalPath?: string;
   journalDir?: string;
   startupRegistryError?: string;
