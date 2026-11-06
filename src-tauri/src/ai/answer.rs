@@ -192,7 +192,11 @@ pub fn parse_answer(text: &str) -> Result<RawAnswer, String> {
 
 /// Validates findings against the immutable snapshot facts.
 pub fn validate(raw: RawAnswer, facts: &[DiagnosticFact]) -> Result<ValidatedAnswer, String> {
-    let valid_ids: HashSet<&str> = facts.iter().map(|fact| fact.id.as_str()).collect();
+    let valid_ids: HashSet<&str> = facts
+        .iter()
+        .filter(|fact| fact.is_available() && !fact.sensitive)
+        .map(|fact| fact.id.as_str())
+        .collect();
     let mut limitations = Vec::new();
     let mut findings = Vec::new();
     let requested_checks = normalize_checks(raw.requested_checks);
@@ -360,6 +364,22 @@ mod tests {
         assert_eq!(validated.requested_checks.len(), 3);
         assert_eq!(validated.requested_checks[0].tool_id, "event_log.recent");
         assert_eq!(validated.requested_checks[1].tool_id, "drivers.problems");
+    }
+
+    #[test]
+    fn rejects_evidence_from_unavailable_fact() {
+        let mut facts = facts();
+        facts[0].availability = Availability::Unavailable;
+        let raw = parse_answer(
+            r#"{"summary":"总体","findings":[{"id":"f","title":"内存高","severity":"warning","summary":"s","confidence":"high","evidenceRefs":["memory.usage"]}]}"#,
+        )
+        .unwrap();
+        let validated = validate(raw, &facts).unwrap();
+        assert!(validated.findings.is_empty());
+        assert!(validated
+            .limitations
+            .iter()
+            .any(|item| item.contains("缺少有效证据")));
     }
 
     #[test]

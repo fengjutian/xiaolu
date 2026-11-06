@@ -1,0 +1,35 @@
+{
+  "name": "conflicting_signals",
+  "description": "本地规则判定内存 critical，但模型结论只引用磁盘证据并称整体正常。",
+  "limitations": [],
+  "facts": [
+    {
+      "id": "memory.usage",
+      "snapshotId": "snap-fixture-conflicting",
+      "category": "memory",
+      "severity": "critical",
+      "title": "内存当前使用率",
+      "value": { "usagePercent": 97.0 },
+      "source": "sysinfo",
+      "capturedAtUnixMs": 1762300007000,
+      "confidence": 0.9,
+      "availability": "available",
+      "evidenceRefs": [],
+      "sensitive": false
+    },
+    {
+      "id": "disk.c.space",
+      "snapshotId": "snap-fixture-conflicting",
+      "category": "disk",
+      "severity": "info",
+      "title": "C 盘空间",
+      "value": { "drive": "C:", "freePercent": 42.0 },
+      "source": "Windows 卷信息",
+      "capturedAtUnixMs": 1762300007000,
+      "confidence": 0.9,
+      "availability": "available",
+      "evidenceRefs": [],
+      "sensitive": false
+    }
+  ]
+}

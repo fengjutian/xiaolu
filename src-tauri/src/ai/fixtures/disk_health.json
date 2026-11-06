@@ -1,0 +1,55 @@
+{
+  "name": "disk_health",
+  "description": "SMART 预测故障，同时健康规则判为 critical。",
+  "limitations": [],
+  "facts": [
+    {
+      "id": "storage.health.0",
+      "snapshotId": "snap-fixture-disk-health",
+      "category": "storage",
+      "severity": "critical",
+      "title": "存储健康：SATA SSD",
+      "value": {
+        "name": "SATA SSD",
+        "healthStatus": "Warning",
+        "wearPercent": 91.0,
+        "readErrorsTotal": 12,
+        "signals": [{ "code": "SMART_PREDICT_FAILURE", "severity": "critical", "message": "SMART 预测故障" }]
+      },
+      "source": "SMART",
+      "capturedAtUnixMs": 1762300002000,
+      "confidence": 0.9,
+      "availability": "available",
+      "evidenceRefs": [],
+      "sensitive": false
+    },
+    {
+      "id": "storage.smart.0",
+      "snapshotId": "snap-fixture-disk-health",
+      "category": "storage",
+      "severity": "critical",
+      "title": "SMART 预测：SATA SSD",
+      "value": { "instance": "SATA SSD", "predictFailure": true, "healthLevel": "critical", "attributeCount": 22 },
+      "source": "ATA SMART",
+      "capturedAtUnixMs": 1762300002000,
+      "confidence": 0.85,
+      "availability": "available",
+      "evidenceRefs": ["storage.health.0"],
+      "sensitive": false
+    },
+    {
+      "id": "memory.usage",
+      "snapshotId": "snap-fixture-disk-health",
+      "category": "memory",
+      "severity": "info",
+      "title": "内存当前使用率",
+      "value": { "usagePercent": 47.0 },
+      "source": "sysinfo",
+      "capturedAtUnixMs": 1762300002000,
+      "confidence": 0.9,
+      "availability": "available",
+      "evidenceRefs": [],
+      "sensitive": false
+    }
+  ]
+}

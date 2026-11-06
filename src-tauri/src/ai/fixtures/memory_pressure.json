@@ -1,0 +1,35 @@
+{
+  "name": "memory_pressure",
+  "description": "内存使用率 96%，触发严重压力规则。",
+  "limitations": [],
+  "facts": [
+    {
+      "id": "memory.usage",
+      "snapshotId": "snap-fixture-memory-pressure",
+      "category": "memory",
+      "severity": "critical",
+      "title": "内存当前使用率",
+      "value": { "usagePercent": 96.0, "totalBytes": 17179869184, "usedBytes": 16492674416 },
+      "source": "sysinfo",
+      "capturedAtUnixMs": 1762300003000,
+      "confidence": 0.9,
+      "availability": "available",
+      "evidenceRefs": [],
+      "sensitive": false
+    },
+    {
+      "id": "trend.system.24h",
+      "snapshotId": "snap-fixture-memory-pressure",
+      "category": "trend",
+      "severity": "warning",
+      "title": "最近 24 小时系统趋势",
+      "value": { "available": true, "cpuMaxPercent": 72.0, "memoryMaxPercent": 97.0, "sampleCount": 710 },
+      "source": "本地指标数据库",
+      "capturedAtUnixMs": 1762300003000,
+      "confidence": 0.8,
+      "availability": "available",
+      "evidenceRefs": [],
+      "sensitive": false
+    }
+  ]
+}

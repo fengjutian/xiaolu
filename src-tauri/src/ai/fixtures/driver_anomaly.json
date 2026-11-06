@@ -1,0 +1,41 @@
+{
+  "name": "driver_anomaly",
+  "description": "存在缺失驱动和异常设备。",
+  "limitations": [],
+  "facts": [
+    {
+      "id": "drivers.inventory",
+      "snapshotId": "snap-fixture-driver-anomaly",
+      "category": "drivers",
+      "severity": "warning",
+      "title": "设备驱动状态",
+      "value": {
+        "total": 118,
+        "missing": 2,
+        "problems": 1,
+        "unsigned": 0,
+        "problemDevices": ["未知 USB 设备", "蓝牙控制器"]
+      },
+      "source": "SetupAPI / PnP",
+      "capturedAtUnixMs": 1762300004000,
+      "confidence": 0.9,
+      "availability": "available",
+      "evidenceRefs": [],
+      "sensitive": false
+    },
+    {
+      "id": "diagnostics.report",
+      "snapshotId": "snap-fixture-driver-anomaly",
+      "category": "diagnostics",
+      "severity": "info",
+      "title": "系统诊断摘要",
+      "value": { "pendingReboot": false, "crashEventCount": 0, "minidumpCount": 0, "serviceIssueCount": 0 },
+      "source": "Windows CIM / WMI",
+      "capturedAtUnixMs": 1762300004000,
+      "confidence": 0.85,
+      "availability": "available",
+      "evidenceRefs": [],
+      "sensitive": false
+    }
+  ]
+}

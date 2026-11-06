@@ -141,6 +141,20 @@ pub fn evaluate(facts: &[DiagnosticFact], _limitations: &[String]) -> Vec<AiFind
         }
     }
 
+    if let Some(network) = fact(facts, "network.throughput") {
+        if number(network, "interfaces").unwrap_or(1.0) == 0.0 {
+            findings.push(finding(
+                "rule.network.interfaces",
+                "未检测到可用网络接口",
+                Severity::Warning,
+                "系统当前没有报告可用网络接口，网络诊断可能不完整。".to_string(),
+                "medium",
+                vec![network.id.clone()],
+                vec![recommendation("检查网络适配器与驱动状态", "read_only_check", "none")],
+            ));
+        }
+    }
+
     for alert in facts
         .iter()
         .filter(|fact| fact.id.starts_with("sensor.alert."))

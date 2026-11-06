@@ -2,11 +2,11 @@
   "schemaVersion": 1,
   "id": "privacy_protection",
   "name": "隐私保护",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "apiVersion": 1,
-  "description": "只读检查诊断数据、广告 ID 与位置/相机/麦克风权限",
+  "description": "检查诊断数据、广告 ID 与位置/相机/麦克风权限，4 项用户级设置可应用与撤销",
   "category": "privacy",
-  "risk": "read_only",
+  "risk": "write",
   "entry": "privacy_protection.exe",
   "arguments": ["--stdio"],
   "permissions": {
@@ -20,10 +20,13 @@
     "network": false,
     "elevation": "none"
   },
-  "actions": [{ "id": "preview", "label": "预览", "write": false }],
+  "actions": [
+    { "id": "preview", "label": "预览", "write": false },
+    { "id": "apply_settings", "label": "应用隐私设置", "write": true, "requiresConfirmation": true }
+  ],
   "limits": { "timeoutMs": 60000, "maxOutputBytes": 1048576 },
   "ui": { "kind": "table" },
-  "rollback": "none",
+  "rollback": "custom",
   "hash": "",
   "signature": null
 }

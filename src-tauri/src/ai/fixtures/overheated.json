@@ -1,0 +1,63 @@
+{
+  "name": "overheated",
+  "description": "CPU 温度触发本地严重告警。",
+  "limitations": [],
+  "facts": [
+    {
+      "id": "cpu.usage",
+      "snapshotId": "snap-fixture-overheated",
+      "category": "cpu",
+      "severity": "info",
+      "title": "CPU 当前使用率",
+      "value": { "usagePercent": 62.0, "logicalCores": 8, "frequencyMhz": 3200 },
+      "source": "sysinfo",
+      "capturedAtUnixMs": 1762300001000,
+      "confidence": 0.9,
+      "availability": "available",
+      "evidenceRefs": [],
+      "sensitive": false
+    },
+    {
+      "id": "sensor.temperature",
+      "snapshotId": "snap-fixture-overheated",
+      "category": "sensor",
+      "severity": "warning",
+      "title": "CPU / GPU / 磁盘温度",
+      "value": { "available": true, "values": [{ "hardwareClass": "cpu", "valueC": 96.0 }] },
+      "source": "ACPI",
+      "capturedAtUnixMs": 1762300001000,
+      "confidence": 0.85,
+      "availability": "available",
+      "evidenceRefs": [],
+      "sensitive": false
+    },
+    {
+      "id": "sensor.alert.cpu-high",
+      "snapshotId": "snap-fixture-overheated",
+      "category": "sensor",
+      "severity": "critical",
+      "title": "温度告警：CPU 温度",
+      "value": { "level": "critical", "value": 96.0, "threshold": 95.0, "message": "CPU 温度 96°C，超过危险阈值 95°C" },
+      "source": "本地温度规则引擎",
+      "capturedAtUnixMs": 1762300001000,
+      "confidence": 0.9,
+      "availability": "available",
+      "evidenceRefs": ["sensor.temperature"],
+      "sensitive": false
+    },
+    {
+      "id": "memory.usage",
+      "snapshotId": "snap-fixture-overheated",
+      "category": "memory",
+      "severity": "info",
+      "title": "内存当前使用率",
+      "value": { "usagePercent": 51.0 },
+      "source": "sysinfo",
+      "capturedAtUnixMs": 1762300001000,
+      "confidence": 0.9,
+      "availability": "available",
+      "evidenceRefs": [],
+      "sensitive": false
+    }
+  ]
+}

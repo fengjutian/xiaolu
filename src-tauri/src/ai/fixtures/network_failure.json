@@ -1,0 +1,35 @@
+{
+  "name": "network_failure",
+  "description": "系统报告 0 个网络接口，网络诊断数据不完整。",
+  "limitations": ["网络接口数量为 0，网络诊断可能不完整。"],
+  "facts": [
+    {
+      "id": "network.throughput",
+      "snapshotId": "snap-fixture-network-failure",
+      "category": "network",
+      "severity": "warning",
+      "title": "网络吞吐",
+      "value": { "downloadBytesPerSec": 0, "uploadBytesPerSec": 0, "interfaces": 0 },
+      "source": "sysinfo",
+      "capturedAtUnixMs": 1762300005000,
+      "confidence": 0.85,
+      "availability": "available",
+      "evidenceRefs": [],
+      "sensitive": false
+    },
+    {
+      "id": "diagnostics.report",
+      "snapshotId": "snap-fixture-network-failure",
+      "category": "diagnostics",
+      "severity": "info",
+      "title": "系统诊断摘要",
+      "value": { "pendingReboot": false, "crashEventCount": 0, "minidumpCount": 0, "serviceIssueCount": 0 },
+      "source": "Windows CIM / WMI",
+      "capturedAtUnixMs": 1762300005000,
+      "confidence": 0.85,
+      "availability": "available",
+      "evidenceRefs": [],
+      "sensitive": false
+    }
+  ]
+}

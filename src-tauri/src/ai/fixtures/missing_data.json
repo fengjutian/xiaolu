@@ -1,0 +1,49 @@
+{
+  "name": "missing_data",
+  "description": "温度与系统诊断不可用，不能据此生成确定性结论。",
+  "limitations": ["未检测到可用温度传感器，不能对温度作确定性判断。", "系统诊断不可用：访问被拒绝。"],
+  "facts": [
+    {
+      "id": "sensor.temperature",
+      "snapshotId": "snap-fixture-missing-data",
+      "category": "sensor",
+      "severity": "info",
+      "title": "CPU / GPU / 磁盘温度",
+      "value": { "available": false, "reason": "未检测到可用温度传感器" },
+      "source": "ACPI",
+      "capturedAtUnixMs": 1762300006000,
+      "confidence": 0.4,
+      "availability": "unavailable",
+      "evidenceRefs": [],
+      "sensitive": false
+    },
+    {
+      "id": "diagnostics.report",
+      "snapshotId": "snap-fixture-missing-data",
+      "category": "diagnostics",
+      "severity": "info",
+      "title": "系统诊断摘要",
+      "value": { "available": false },
+      "source": "Windows CIM / WMI",
+      "capturedAtUnixMs": 1762300006000,
+      "confidence": 0.4,
+      "availability": "unavailable",
+      "evidenceRefs": [],
+      "sensitive": false
+    },
+    {
+      "id": "memory.usage",
+      "snapshotId": "snap-fixture-missing-data",
+      "category": "memory",
+      "severity": "info",
+      "title": "内存当前使用率",
+      "value": { "usagePercent": 38.0 },
+      "source": "sysinfo",
+      "capturedAtUnixMs": 1762300006000,
+      "confidence": 0.9,
+      "availability": "available",
+      "evidenceRefs": [],
+      "sensitive": false
+    }
+  ]
+}
