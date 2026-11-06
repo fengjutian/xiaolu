@@ -437,6 +437,15 @@ export interface ServiceItem {
   path: string;
 }
 
+export interface RuntimeItem {
+  id: string;
+  label: string;
+  installed: boolean;
+  version: string;
+  url: string;
+  note: string;
+}
+
 export interface AppxItem {
   name: string;
   fullName: string;
@@ -508,6 +517,7 @@ export interface ToolResult {
   hostsPath?: string;
   dumpMode?: DumpMode;
   appxItems?: AppxItem[];
+  runtimeItems?: RuntimeItem[];
   journalPath?: string;
   journalDir?: string;
   startupRegistryError?: string;

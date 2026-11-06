@@ -13,11 +13,17 @@
   "permissions": {
     "readPaths": ["%SystemRoot%\\System32", "%SystemRoot%\\SysWOW64"],
     "writePaths": [],
-    "registry": [],
+    "registry": [
+      "HKLM\\SOFTWARE\\Microsoft\\VisualStudio\\14.0\\VC\\Runtimes",
+      "HKLM\\SOFTWARE\\Microsoft\\NET Framework Setup\\NDP\\v4\\Full"
+    ],
     "network": false,
     "elevation": "none"
   },
-  "actions": [{ "id": "preview", "label": "预览", "write": false }],
+  "actions": [
+    { "id": "preview", "label": "预览", "write": false },
+    { "id": "open_official", "label": "打开官方下载页", "write": false }
+  ],
   "limits": { "timeoutMs": 60000, "maxOutputBytes": 1048576 },
   "ui": { "kind": "table" },
   "rollback": "none",

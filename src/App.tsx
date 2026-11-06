@@ -181,6 +181,7 @@ import type {
   PrivacySetting,
   ProcessItem,
   AppxItem,
+  RuntimeItem,
   ScheduledTaskItem,
   ToolActionDescriptor,
   ToolDescriptor,
@@ -4675,6 +4676,19 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
     }
   };
 
+  const openOfficialRuntime = async (tool: ToolDescriptor, id: string) => {
+    setApplying(`${tool.id}:open_official`);
+    setApplyError(null);
+    try {
+      await runToolAction(tool.id, "open_official", null, { id });
+      setGenericSuccess("已在默认浏览器打开微软官方下载页");
+    } catch (reason) {
+      setApplyError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setApplying(null);
+    }
+  };
+
   const removeAppx = async (tool: ToolDescriptor, item: AppxItem) => {
     const token = generic?.data.confirmationToken;
     if (!token) {
@@ -5654,6 +5668,65 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                     </ScrollArea>
                   </Box>
                 )}
+              </Box>
+            )}
+          {generic.tool.id === "dll_repair" &&
+            (generic.data.runtimeItems?.length ?? 0) > 0 && (
+              <Box mt="md">
+                <Text size="sm" fw={700}>
+                  VC++ / .NET 运行库
+                </Text>
+                <Text size="xs" c="dimmed" mt={4}>
+                  打开微软官方下载页手动安装；本工具不自动下载或安装
+                </Text>
+                <Table miw={760} mt="xs" verticalSpacing="xs">
+                  <Table.Thead>
+                    <Table.Tr>
+                      <Table.Th>运行库</Table.Th>
+                      <Table.Th>状态</Table.Th>
+                      <Table.Th>版本</Table.Th>
+                      <Table.Th>操作</Table.Th>
+                    </Table.Tr>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {(generic.data.runtimeItems ?? []).map((item) => (
+                      <Table.Tr key={item.id}>
+                        <Table.Td>
+                          <Text size="sm" fw={600}>
+                            {item.label}
+                          </Text>
+                          <Text size="xs" c="dimmed">
+                            {item.note}
+                          </Text>
+                        </Table.Td>
+                        <Table.Td>
+                          <Badge
+                            size="xs"
+                            variant="light"
+                            color={item.installed ? "teal" : "orange"}
+                          >
+                            {item.installed ? "已安装" : "未检测到"}
+                          </Badge>
+                        </Table.Td>
+                        <Table.Td>{item.version}</Table.Td>
+                        <Table.Td>
+                          <Button
+                            size="xs"
+                            variant="light"
+                            loading={
+                              applying === `${generic.tool.id}:open_official`
+                            }
+                            onClick={() =>
+                              void openOfficialRuntime(generic.tool, item.id)
+                            }
+                          >
+                            打开官方下载页
+                          </Button>
+                        </Table.Td>
+                      </Table.Tr>
+                    ))}
+                  </Table.Tbody>
+                </Table>
               </Box>
             )}
           {generic.tool.id === "sys_clean" &&
