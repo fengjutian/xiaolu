@@ -178,11 +178,16 @@ fn is_excluded(name: &std::ffi::OsStr, exclusions: &[String]) -> bool {
         .any(|candidate| candidate.eq_ignore_ascii_case(&name))
 }
 
-fn walk_root(root: &Path, exclusions: &[String]) -> impl Iterator<Item = walkdir::Result<walkdir::DirEntry>> {
+fn walk_root<'a>(
+    root: &'a Path,
+    exclusions: &'a [String],
+) -> impl Iterator<Item = walkdir::Result<walkdir::DirEntry>> + 'a {
     WalkDir::new(root)
         .follow_links(false)
         .into_iter()
-        .filter_entry(move |entry| entry.depth() != 1 || !is_excluded(entry.file_name(), exclusions))
+        .filter_entry(move |entry| {
+            entry.depth() != 1 || !is_excluded(entry.file_name(), exclusions)
+        })
 }
 
 fn category(path: &Path) -> String {
@@ -473,13 +478,20 @@ pub async fn scan_large_files(
     limit: u32,
 ) -> Result<LargeFileScan, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let (label, path) = target(&kind)?;
+        let scope = scope(&kind)?;
         let min_bytes = min_bytes.clamp(1024 * 1024, 10 * 1024 * 1024 * 1024);
         let limit = (limit as usize).clamp(10, 200);
-        let scan = scan_large_files_in(&path, &kind, label, min_bytes, limit)?;
+        let scan = scan_large_files_in(
+            &scope.root,
+            &scope.kind,
+            &scope.label,
+            min_bytes,
+            limit,
+            &scope.exclusions,
+        )?;
         // 扫描期间目录可能被删除，给出明确结果而不是空表。
         if scan.file_count == 0 {
-            return Err(format!("{}目录没有可统计的文件", label));
+            return Err(format!("{}没有可统计的文件", scope.label));
         }
         Ok(scan)
     })
@@ -490,12 +502,52 @@ pub async fn scan_large_files(
 #[tauri::command]
 pub async fn scan_duplicates(kind: String, limit: u32) -> Result<DuplicateScan, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let (label, path) = target(&kind)?;
+        let scope = scope(&kind)?;
         let limit = (limit as usize).clamp(5, 200);
-        scan_duplicates_in(&path, &kind, label, limit)
+        scan_duplicates_in(
+            &scope.root,
+            &scope.kind,
+            &scope.label,
+            limit,
+            &scope.exclusions,
+        )
     })
     .await
     .map_err(|error| format!("重复文件扫描任务失败：{error}"))?
+}
+
+#[tauri::command]
+pub async fn get_storage_drives() -> Result<Vec<StorageDrive>, String> {
+    let disks = sysinfo::Disks::new_with_refreshed_list()
+        .map_err(|error| format!("无法枚举磁盘：{error}"))?;
+    let mut drives = disks
+        .iter()
+        .filter(|disk| !disk.mount_point().as_os_str().is_empty())
+        .map(|disk| {
+            let mount_point = disk.mount_point().to_string_lossy().into_owned();
+            let letter = mount_point
+                .chars()
+                .next()
+                .map(|value| value.to_ascii_uppercase().to_string())
+                .unwrap_or_default();
+            let name = disk.name().to_string_lossy().trim().to_string();
+            StorageDrive {
+                letter: letter.clone(),
+                label: if name.is_empty() {
+                    format!("{letter} 盘")
+                } else {
+                    name
+                },
+                mount_point,
+                file_system: disk.file_system().to_string_lossy().into_owned(),
+                total_bytes: disk.total_space(),
+                free_bytes: disk.available_space(),
+                removable: disk.is_removable(),
+            }
+        })
+        .collect::<Vec<_>>();
+    drives.sort_by(|left, right| left.mount_point.cmp(&right.mount_point));
+    Ok(drives)
 }
 
 #[derive(Debug, Serialize)]
@@ -627,7 +679,7 @@ fn listing_in(
                 continue;
             }
         };
-        if relative_path.is_empty() && is_excluded(&entry.file_name(), exclusions) {
+        if relative_path.is_empty() && is_excluded(entry.file_name(), exclusions) {
             continue;
         }
         let child_relative = path
@@ -711,8 +763,15 @@ pub async fn scan_directory(
     limit: u32,
 ) -> Result<DirectoryListing, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let (label, root) = target(&kind)?;
-        listing_in(&root, &kind, label, &relative, (limit as usize).clamp(10, 500))
+        let scope = scope(&kind)?;
+        listing_in(
+            &scope.root,
+            &scope.kind,
+            &scope.label,
+            &relative,
+            (limit as usize).clamp(10, 500),
+            &scope.exclusions,
+        )
     })
     .await
     .map_err(|error| format!("目录扫描任务失败：{error}"))?
@@ -734,8 +793,22 @@ mod tests {
 
     #[test]
     fn rejects_arbitrary_paths() {
-        assert!(target("C:\\").is_err());
-        assert!(target("../Downloads").is_err());
+        assert!(scope("C:\\").is_err());
+        assert!(scope("../Downloads").is_err());
+        assert!(scope("drive:CC").is_err());
+        assert!(scope("drive:1").is_err());
+    }
+
+    #[test]
+    fn drive_scope_labels_and_excludes_system_dirs() {
+        if !std::path::Path::new("C:\\").is_dir() {
+            return;
+        }
+        let scope = scope("drive:c").expect("C drive scope");
+        assert_eq!(scope.label, "C 盘");
+        assert!(scope.exclusions.iter().any(|item| item == "Windows"));
+        assert!(scope.exclusions.iter().any(|item| item == "$Recycle.Bin"));
+        assert!(scope.exclusions.iter().any(|item| item == "pagefile.sys"));
     }
 
     #[test]
@@ -746,7 +819,7 @@ mod tests {
         fs::write(root.join("small.txt"), b"tiny").unwrap();
         fs::write(root.join("sub").join("b.bin"), vec![2u8; 3 * 1024 * 1024]).unwrap();
 
-        let scan = scan_large_files_in(&root, "downloads", "下载", 1024 * 1024, 10).unwrap();
+        let scan = scan_large_files_in(&root, "downloads", "下载", 1024 * 1024, 10, &[]).unwrap();
         assert_eq!(scan.file_count, 3);
         assert_eq!(scan.files.len(), 2);
         assert_eq!(scan.files[0].bytes, 3 * 1024 * 1024);
@@ -766,7 +839,7 @@ mod tests {
         fs::write(root.join("c.bin"), vec![9u8; 2 * 1024 * 1024]).unwrap();
         fs::write(root.join("tiny.bin"), b"same").unwrap();
 
-        let scan = scan_duplicates_in(&root, "downloads", "下载", 10).unwrap();
+        let scan = scan_duplicates_in(&root, "downloads", "下载", 10, &[]).unwrap();
         assert_eq!(scan.groups.len(), 1);
         assert_eq!(scan.groups[0].files.len(), 2);
         assert_eq!(scan.groups[0].size_bytes, 2 * 1024 * 1024);
@@ -780,8 +853,8 @@ mod tests {
     #[test]
     fn missing_directory_is_reported() {
         let root = temp_root("missing");
-        assert!(scan_large_files_in(&root, "downloads", "下载", 1024, 10).is_err());
-        assert!(scan_duplicates_in(&root, "downloads", "下载", 10).is_err());
+        assert!(scan_large_files_in(&root, "downloads", "下载", 1024, 10, &[]).is_err());
+        assert!(scan_duplicates_in(&root, "downloads", "下载", 10, &[]).is_err());
     }
 
     #[test]
@@ -792,7 +865,7 @@ mod tests {
         fs::write(root.join("big").join("b.bin"), vec![0u8; 2000]).unwrap();
         fs::write(root.join("big").join("inner").join("c.bin"), vec![0u8; 500]).unwrap();
 
-        let listing = listing_in(&root, "downloads", "下载", "", 50).unwrap();
+        let listing = listing_in(&root, "downloads", "下载", "", 50, &[]).unwrap();
         assert_eq!(listing.total_files, 3);
         assert_eq!(listing.total_bytes, 3500);
         assert_eq!(listing.children.len(), 2);
@@ -813,14 +886,38 @@ mod tests {
         fs::write(root.join("big").join("b.bin"), vec![0u8; 2000]).unwrap();
         fs::write(root.join("big").join("inner").join("c.bin"), vec![0u8; 500]).unwrap();
 
-        let listing = listing_in(&root, "downloads", "下载", "big\\inner", 50).unwrap();
+        let listing = listing_in(&root, "downloads", "下载", "big\\inner", 50, &[]).unwrap();
         assert_eq!(listing.relative_path, "big\\inner");
         assert_eq!(listing.parent_relative_path.as_deref(), Some("big"));
         assert_eq!(listing.children.len(), 1);
         assert_eq!(listing.children[0].name, "c.bin");
 
-        let top_level = listing_in(&root, "downloads", "下载", "big", 50).unwrap();
+        let top_level = listing_in(&root, "downloads", "下载", "big", 50, &[]).unwrap();
         assert_eq!(top_level.parent_relative_path.as_deref(), Some(""));
+
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn skips_excluded_top_level_directories() {
+        let root = temp_root("exclude");
+        fs::create_dir_all(root.join("Windows")).unwrap();
+        fs::create_dir_all(root.join("Users")).unwrap();
+        fs::write(root.join("Windows").join("system.bin"), vec![0u8; 4096]).unwrap();
+        fs::write(root.join("Users").join("data.bin"), vec![0u8; 2048]).unwrap();
+        fs::write(root.join("pagefile.sys"), vec![0u8; 1024]).unwrap();
+
+        let exclusions = vec!["Windows".to_string(), "pagefile.sys".to_string()];
+        let scan = scan_large_files_in(&root, "drive:C", "C 盘", 1024, 10, &exclusions).unwrap();
+        assert_eq!(scan.file_count, 1);
+        assert_eq!(scan.total_bytes, 2048);
+        assert!(scan.directories.iter().all(|item| item.name != "Windows"));
+
+        let listing = listing_in(&root, "drive:C", "C 盘", "", 50, &exclusions).unwrap();
+        assert_eq!(listing.children.len(), 1);
+        assert_eq!(listing.children[0].name, "Users");
+        assert_eq!(listing.exclusions, exclusions);
+        assert_eq!(listing.total_files, 1);
 
         fs::remove_dir_all(&root).ok();
     }
@@ -829,8 +926,8 @@ mod tests {
     fn rejects_path_escape_and_absolute_paths() {
         let root = temp_root("escape");
         fs::create_dir_all(&root).unwrap();
-        assert!(listing_in(&root, "downloads", "下载", "..\\Windows", 50).is_err());
-        assert!(listing_in(&root, "downloads", "下载", "C:\\Windows", 50).is_err());
+        assert!(listing_in(&root, "downloads", "下载", "..\\Windows", 50, &[]).is_err());
+        assert!(listing_in(&root, "downloads", "下载", "C:\\Windows", 50, &[]).is_err());
         fs::remove_dir_all(&root).ok();
     }
 }
