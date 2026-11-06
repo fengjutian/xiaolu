@@ -4,6 +4,28 @@ use walkdir::WalkDir;
 
 const MAX_FILES_PER_CANDIDATE: usize = 150_000;
 
+/// 允许“移动到回收站”的清理项：仅用户可写缓存，不含系统更新缓存与回收站本身。
+pub const SAFE_CLEANUP_IDS: &[&str] = &[
+    "user-temp",
+    "thumbnail-cache",
+    "edge-cache",
+    "inet-cache",
+    "crash-dumps",
+    "error-reporting",
+];
+
+pub fn target_path(id: &str) -> Option<PathBuf> {
+    targets()
+        .into_iter()
+        .find(|target| target.id == id)
+        .and_then(|target| target.path)
+}
+
+pub fn measure(path: &Path) -> (u64, usize) {
+    let (bytes, files, _, _) = directory_stats(path);
+    (bytes, files)
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CleanupCandidate {
