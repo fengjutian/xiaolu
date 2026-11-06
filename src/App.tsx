@@ -8,6 +8,7 @@ import {
   Card,
   Center,
   Checkbox,
+  Drawer,
   Group,
   Loader,
   NavLink,
@@ -3791,6 +3792,7 @@ function ToolboxPanel() {
   const [tools, setTools] = useState<ToolDescriptor[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [slim, setSlim] = useState<SlimScan | null>(null);
+  const [slimDrawerOpen, setSlimDrawerOpen] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
   const [openPathError, setOpenPathError] = useState<string | null>(null);
@@ -3869,7 +3871,9 @@ function ToolboxPanel() {
     setScanning(true);
     setScanError(null);
     try {
-      setSlim((await runToolAction("cclean", "preview")) as SlimScan);
+      const result = (await runToolAction("cclean", "preview")) as SlimScan;
+      setSlim(result);
+      setSlimDrawerOpen(true);
     } catch (reason) {
       setScanError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -3920,11 +3924,7 @@ function ToolboxPanel() {
         </Box>
         <Badge variant="light">{available.length} 个</Badge>
       </Group>
-      <SimpleGrid
-        cols={{ base: 1, sm: 2, md: 3, lg: 4, xl: 6 }}
-        spacing="sm"
-        verticalSpacing="sm"
-      >
+      <Box className="toolbox-grid">
         {available.map((tool) => (
           <Card key={tool.id} className="glass-card" radius="lg">
             <Group justify="space-between" align="flex-start">
@@ -3979,7 +3979,7 @@ function ToolboxPanel() {
             )}
           </Card>
         ))}
-      </SimpleGrid>
+      </Box>
 
       {scanError && (
         <Alert color="red" icon={<IconAlertCircle />}>
@@ -4160,8 +4160,19 @@ function ToolboxPanel() {
         </Card>
       )}
 
-      {slim && (
-        <Card className="glass-card" radius="lg">
+      <Drawer
+        opened={slimDrawerOpen}
+        onClose={() => setSlimDrawerOpen(false)}
+        position="right"
+        size="min(1180px, 94vw)"
+        title="C 盘瘦身扫描结果"
+        overlayProps={{ backgroundOpacity: 0.35, blur: 3 }}
+      >
+        {slim && (
+        <Stack gap="md">
+          <Alert color="teal" icon={<IconShieldCheck />}>
+            扫描完成：发现 {slim.items.length} 个位置、{slim.fileCount} 个文件，预计可安全清理 {bytes(slim.safeBytes)}。
+          </Alert>
           <Group justify="space-between" align="flex-start" wrap="wrap">
             <Box>
               <Text fw={800}>C 盘瘦身预览</Text>
@@ -4193,7 +4204,8 @@ function ToolboxPanel() {
           <Text size="xs" c="dimmed" mt="sm">
             {slim.items.length} 个位置 · {slim.fileCount} 个文件
           </Text>
-          <Table mt="md" highlightOnHover verticalSpacing="xs">
+          <ScrollArea type="auto">
+          <Table miw={900} highlightOnHover verticalSpacing="xs">
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>位置</Table.Th>
@@ -4249,11 +4261,13 @@ function ToolboxPanel() {
               ))}
             </Table.Tbody>
           </Table>
+          </ScrollArea>
           <Text size="xs" c="dimmed" mt="md">
             {slim.note}
           </Text>
-        </Card>
-      )}
+        </Stack>
+        )}
+      </Drawer>
 
       <Group justify="space-between" align="flex-end" mt="md">
         <Box>
