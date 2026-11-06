@@ -9,6 +9,10 @@ node_modules
 /tools/*/target/
 /tools-dist/
 
+# Rust 本地构建缓存（CARGO_HOME / CARGO_TARGET_DIR 指向仓库内时产生）
+/.cargo-home/
+/.cargo-target/
+
 # 开发调试产物（CDP 脚本、验证日志、临时片段）
 /.cdp_*
 /.static*.log

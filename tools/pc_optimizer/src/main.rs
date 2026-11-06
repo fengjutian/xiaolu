@@ -1,6 +1,7 @@
 use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::ffi::c_void;
+use std::path::PathBuf;
 use tool_protocol::{attach_token, column, digest_of, item, table, Request, ToolError};
 
 const ACTION: &str = "apply";
@@ -404,6 +405,93 @@ fn format_value(setting: &PowerSetting, value: Option<u32>) -> String {
     }
 }
 
+/// 读取当前计划的全部设置项，供预览和“应用后”结果复用。
+fn collect_settings(plan: &Guid) -> Vec<Value> {
+    SETTINGS
+        .iter()
+        .map(|setting| {
+            json!({
+                "id": setting.id,
+                "label": setting.label,
+                "unit": setting.unit,
+                "min": setting.min,
+                "max": setting.max,
+                "ac": display_value(setting, read_setting(plan, setting, true)),
+                "dc": display_value(setting, read_setting(plan, setting, false)),
+                "note": setting.note,
+            })
+        })
+        .collect()
+}
+
+fn snapshot_dir() -> PathBuf {
+    tool_protocol::state_dir().join("pc_optimizer")
+}
+
+/// 写入本次修改的原值、回读值与结果，供事后核对。
+fn write_snapshot(payload: &Value) -> Result<PathBuf, String> {
+    let dir = snapshot_dir();
+    std::fs::create_dir_all(&dir).map_err(|error| format!("无法创建快照目录：{error}"))?;
+    let path = dir.join(format!(
+        "run-{}-{}.json",
+        tool_protocol::now_ms(),
+        std::process::id()
+    ));
+    let text = serde_json::to_string_pretty(payload)
+        .map_err(|error| format!("无法序列化快照：{error}"))?;
+    std::fs::write(&path, text).map_err(|error| format!("无法写入快照：{error}"))?;
+    Ok(path)
+}
+
+/// 单项结果：只有写入成功且回读一致才算“已应用”。
+fn item_status(
+    rc_ac: u32,
+    rc_dc: u32,
+    after_ac: Option<u32>,
+    after_dc: Option<u32>,
+    target_ac: u32,
+    target_dc: u32,
+) -> &'static str {
+    let ac_ok = rc_ac == 0 && after_ac == Some(target_ac);
+    let dc_ok = rc_dc == 0 && after_dc == Some(target_dc);
+    match (ac_ok, dc_ok) {
+        (true, true) => "已应用",
+        (true, false) | (false, true) => "部分应用",
+        (false, false) => "失败",
+    }
+}
+
+fn item_reason(
+    setting: &PowerSetting,
+    rc_ac: u32,
+    rc_dc: u32,
+    after_ac: Option<u32>,
+    after_dc: Option<u32>,
+    target_ac: u32,
+    target_dc: u32,
+) -> String {
+    let mut parts = Vec::new();
+    if rc_ac != 0 {
+        parts.push(format!("交流写入错误码 {rc_ac}"));
+    } else if after_ac != Some(target_ac) {
+        parts.push(format!(
+            "交流回读 {}，目标 {}",
+            format_value(setting, display_value(setting, after_ac)),
+            format_value(setting, display_value(setting, Some(target_ac)))
+        ));
+    }
+    if rc_dc != 0 {
+        parts.push(format!("电池写入错误码 {rc_dc}"));
+    } else if after_dc != Some(target_dc) {
+        parts.push(format!(
+            "电池回读 {}，目标 {}",
+            format_value(setting, display_value(setting, after_dc)),
+            format_value(setting, display_value(setting, Some(target_dc)))
+        ));
+    }
+    parts.join("；")
+}
+
 fn token_digest(plans: &[(Guid, String)], active: Option<Guid>) -> String {
     let mut parts = plans
         .iter()
@@ -453,23 +541,7 @@ fn preview() -> Result<Value, ToolError> {
         })
         .collect::<Vec<_>>();
 
-    let mut settings_rows = Vec::new();
-    if let Some(plan) = active {
-        for setting in SETTINGS.iter() {
-            let ac = display_value(setting, read_setting(&plan, setting, true));
-            let dc = display_value(setting, read_setting(&plan, setting, false));
-            settings_rows.push(json!({
-                "id": setting.id,
-                "label": setting.label,
-                "unit": setting.unit,
-                "min": setting.min,
-                "max": setting.max,
-                "ac": ac,
-                "dc": dc,
-                "note": setting.note,
-            }));
-        }
-    }
+    let settings_rows = active.map(collect_settings).unwrap_or_default();
 
     let mut data = table(
         json!([

@@ -9,6 +9,10 @@ const ACTION: &str = "apply";
 const MAX_SCAN_FILES: usize = 25_000;
 const MAX_DELETE_FILES: usize = 10_000;
 const LOCK_SAMPLE: usize = 200;
+/// 每批移入回收站的文件数。批量失败时再逐文件重试，隔离单个坏文件。
+const RECYCLE_BATCH: usize = 256;
+/// 结果表格最多展示的逐文件明细行数，完整清单写入本地日志。
+const MAX_DETAIL_ROWS: usize = 500;
 
 #[derive(Clone)]
 struct Candidate {
@@ -117,10 +121,16 @@ fn candidates() -> Vec<Candidate> {
     list
 }
 
+#[derive(Clone)]
+struct FileEntry {
+    path: PathBuf,
+    bytes: u64,
+}
+
 #[derive(Default)]
 struct WalkResult {
     exists: bool,
-    files: Vec<PathBuf>,
+    files: Vec<FileEntry>,
     sample: Vec<PathBuf>,
     bytes: u64,
     count: usize,
@@ -184,9 +194,13 @@ fn walk_candidate(candidate: &Candidate, collect_files: bool) -> WalkResult {
         }
         match entry.metadata() {
             Ok(metadata) => {
-                result.bytes = result.bytes.saturating_add(metadata.len());
+                let bytes = metadata.len();
+                result.bytes = result.bytes.saturating_add(bytes);
                 if collect_files {
-                    result.files.push(entry.path().to_path_buf());
+                    result.files.push(FileEntry {
+                        path: entry.path().to_path_buf(),
+                        bytes,
+                    });
                 } else if result.sample.len() < LOCK_SAMPLE {
                     result.sample.push(entry.path().to_path_buf());
                 }
@@ -264,6 +278,156 @@ fn recycle_files(paths: &[PathBuf]) -> Result<(), String> {
     Ok(())
 }
 
+/// 单个文件的处理结果。执行阶段对每个文件留痕，而不是只给目录级汇总。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Outcome {
+    Recycled,
+    Locked,
+    Missing,
+    Failed,
+    Budget,
+}
+
+impl Outcome {
+    fn key(self) -> &'static str {
+        match self {
+            Outcome::Recycled => "recycled",
+            Outcome::Locked => "locked",
+            Outcome::Missing => "missing",
+            Outcome::Failed => "failed",
+            Outcome::Budget => "budget",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Outcome::Recycled => "已移入回收站",
+            Outcome::Locked => "跳过：占用/只读/无权限",
+            Outcome::Missing => "跳过：已不存在",
+            Outcome::Failed => "失败",
+            Outcome::Budget => "跳过：超出单次上限",
+        }
+    }
+}
+
+struct FileRecord {
+    entry: FileEntry,
+    outcome: Outcome,
+    reason: String,
+}
+
+fn record(entry: FileEntry, outcome: Outcome, reason: impl Into<String>) -> FileRecord {
+    FileRecord {
+        entry,
+        outcome,
+        reason: reason.into(),
+    }
+}
+
+/// 把一批候选文件移入回收站。批量失败时退回逐文件执行，避免一个坏文件拖垮整批。
+/// 返回结果保持与输入相同的顺序。
+fn recycle_entries(entries: &[FileEntry], budget: &mut usize) -> Vec<FileRecord> {
+    let mut records: Vec<(usize, FileRecord)> = Vec::with_capacity(entries.len());
+    let mut pending: Vec<(usize, FileEntry)> =
+        Vec::with_capacity(RECYCLE_BATCH.min(entries.len()));
+
+    for (index, entry) in entries.iter().enumerate() {
+        if *budget == 0 {
+            records.push((
+                index,
+                record(
+                    entry.clone(),
+                    Outcome::Budget,
+                    format!("单次最多移入回收站 {MAX_DELETE_FILES} 个文件"),
+                ),
+            ));
+            continue;
+        }
+        if !entry.path.exists() {
+            records.push((
+                index,
+                record(
+                    entry.clone(),
+                    Outcome::Missing,
+                    "扫描后文件已被删除或移动",
+                ),
+            ));
+            continue;
+        }
+        if is_locked(&entry.path) {
+            records.push((
+                index,
+                record(
+                    entry.clone(),
+                    Outcome::Locked,
+                    "写句柄打开失败，可能被占用、只读或无权限",
+                ),
+            ));
+            continue;
+        }
+        *budget -= 1;
+        pending.push((index, entry.clone()));
+        if pending.len() >= RECYCLE_BATCH {
+            flush_batch(&mut pending, &mut records);
+        }
+    }
+    flush_batch(&mut pending, &mut records);
+    records.sort_by_key(|(index, _)| *index);
+    records
+        .into_iter()
+        .map(|(_, record)| record)
+        .collect()
+}
+
+fn flush_batch(
+    batch: &mut Vec<(usize, FileEntry)>,
+    records: &mut Vec<(usize, FileRecord)>,
+) {
+    if batch.is_empty() {
+        return;
+    }
+    let paths = batch
+        .iter()
+        .map(|(_, entry)| entry.path.clone())
+        .collect::<Vec<_>>();
+    match recycle_files(&paths) {
+        Ok(()) => {
+            for (index, entry) in batch.drain(..) {
+                if entry.path.exists() {
+                    records.push((
+                        index,
+                        record(entry, Outcome::Failed, "回收站操作返回成功，但文件仍存在"),
+                    ));
+                } else {
+                    records.push((index, record(entry, Outcome::Recycled, "")));
+                }
+            }
+        }
+        Err(batch_error) => {
+            // 整批失败时逐文件重试，把失败隔离到具体文件。
+            for (index, entry) in batch.drain(..) {
+                match recycle_files(std::slice::from_ref(&entry.path)) {
+                    Ok(()) if !entry.path.exists() => {
+                        records.push((index, record(entry, Outcome::Recycled, "")))
+                    }
+                    Ok(()) => records.push((
+                        index,
+                        record(entry, Outcome::Failed, "回收站操作返回成功，但文件仍存在"),
+                    )),
+                    Err(error) => records.push((
+                        index,
+                        record(
+                            entry,
+                            Outcome::Failed,
+                            format!("{batch_error}；单个文件重试：{error}"),
+                        ),
+                    )),
+                }
+            }
+        }
+    }
+}
+
 fn candidate_digest(list: &[Candidate]) -> String {
     let ids = list
         .iter()
@@ -337,13 +501,32 @@ fn preview() -> Result<Value, ToolError> {
         Value::Array(rows),
         json!([
             "只读扫描：预览不会删除任何文件；确认后所选文件会移入回收站，可从回收站还原。",
-            "占用检测为抽样（每个位置最多 200 个文件，结果标注“占用/只读”）；执行时仍会逐个检测并跳过被占用、只读或无权限的文件。",
+            "占用检测为抽样（每个位置最多 200 个文件，结果标注“占用/只读”）；执行时会逐个检测并跳过被占用、只读或无权限的文件。",
             "系统级目录（Windows 临时、更新缓存、传递优化等）通常需要管理员权限，普通权限下会记录失败或跳过。",
             "只清理固定白名单位置，不接受任意路径；单个位置最多统计 2.5 万个文件、单次最多删除 1 万个，超出部分标记为已截断。",
         ]),
     );
     attach_token(&mut data, token);
     Ok(data)
+}
+
+fn journal_dir() -> PathBuf {
+    tool_protocol::state_dir().join("cleanup")
+}
+
+/// 写入完整逐文件清单。返回路径供结果页展示，失败不阻断清理。
+fn write_journal(payload: &Value) -> Result<PathBuf, String> {
+    let dir = journal_dir();
+    std::fs::create_dir_all(&dir).map_err(|error| format!("无法创建清单目录：{error}"))?;
+    let path = dir.join(format!(
+        "clean-{}-{}.json",
+        tool_protocol::now_ms(),
+        std::process::id()
+    ));
+    let text = serde_json::to_string_pretty(payload)
+        .map_err(|error| format!("无法序列化清理清单：{error}"))?;
+    std::fs::write(&path, text).map_err(|error| format!("无法写入清理清单：{error}"))?;
+    Ok(path)
 }
 
 fn apply(request: &Request) -> Result<Value, ToolError> {
@@ -381,13 +564,19 @@ fn apply(request: &Request) -> Result<Value, ToolError> {
         ));
     }
 
+    let started_at = tool_protocol::now_ms();
     let mut rows = Vec::new();
+    let mut journal_candidates = Vec::new();
     let mut freed_bytes = 0u64;
     let mut recycled_files = 0usize;
     let mut skipped_locked = 0usize;
-    let mut failed_candidates = 0usize;
+    let mut failed_files = 0usize;
+    let mut budget_skipped = 0usize;
+    let mut missing_files = 0usize;
+    let mut before_bytes_total = 0u64;
+    let mut after_bytes_total = 0u64;
     let mut delete_budget = MAX_DELETE_FILES;
-    let mut audit = Vec::new();
+    let mut details_truncated = false;
 
     for candidate in &list {
         if !selected.contains(candidate.id) {
@@ -397,83 +586,88 @@ fn apply(request: &Request) -> Result<Value, ToolError> {
         if !before.exists {
             rows.push(json!({
                 "label": candidate.label,
-                "freed": "0 B",
-                "files": 0usize,
+                "file": candidate.base.to_string_lossy(),
+                "size": "0 B",
                 "status": "目录不存在，已跳过",
+                "reason": "",
+            }));
+            journal_candidates.push(json!({
+                "id": candidate.id,
+                "label": candidate.label,
+                "path": candidate.base.to_string_lossy(),
+                "before": {"files": 0, "bytes": 0},
+                "after": {"files": 0, "bytes": 0},
+                "records": [],
             }));
             continue;
         }
-        let mut to_recycle = Vec::new();
-        let mut locked = 0usize;
-        for path in &before.files {
-            if to_recycle.len() >= delete_budget {
-                break;
-            }
-            if is_locked(path) {
-                locked += 1;
-                continue;
-            }
-            to_recycle.push(path.clone());
-        }
-        skipped_locked += locked;
-        delete_budget = delete_budget.saturating_sub(to_recycle.len());
 
-        let outcome: Result<(u64, usize), String> = if to_recycle.is_empty() {
-            Ok((0, 0))
-        } else {
-            recycle_files(&to_recycle).map(|()| {
-                let after = walk_candidate(candidate, false);
-                (
-                    before.bytes.saturating_sub(after.bytes),
-                    before.count.saturating_sub(after.count),
-                )
-            })
-        };
+        let records = recycle_entries(&before.files, &mut delete_budget);
+        let after = walk_candidate(candidate, false);
+        before_bytes_total = before_bytes_total.saturating_add(before.bytes);
+        after_bytes_total = after_bytes_total.saturating_add(after.bytes);
 
-        match outcome {
-            Ok((freed, removed)) => {
-                freed_bytes = freed_bytes.saturating_add(freed);
-                recycled_files += removed;
-                audit.push(json!({
-                    "id": candidate.id,
-                    "freedBytes": freed,
-                    "files": removed,
-                    "locked": locked,
-                    "result": "ok",
-                }));
-                let status = if removed == 0 {
-                    "没有可清理的文件".to_string()
-                } else if locked > 0 {
-                    format!("已移入回收站，跳过 {locked} 个占用/只读/无权限文件")
-                } else {
-                    "已移入回收站".to_string()
-                };
+        for entry in &records {
+            match entry.outcome {
+                Outcome::Recycled => {
+                    recycled_files += 1;
+                    freed_bytes = freed_bytes.saturating_add(entry.entry.bytes);
+                }
+                Outcome::Locked => skipped_locked += 1,
+                Outcome::Missing => missing_files += 1,
+                Outcome::Failed => failed_files += 1,
+                Outcome::Budget => budget_skipped += 1,
+            }
+            if rows.len() < MAX_DETAIL_ROWS {
                 rows.push(json!({
                     "label": candidate.label,
-                    "freed": human_bytes(freed),
-                    "files": removed,
-                    "status": status,
+                    "file": entry.entry.path.to_string_lossy(),
+                    "size": human_bytes(entry.entry.bytes),
+                    "status": entry.outcome.label(),
+                    "reason": entry.reason,
                 }));
-            }
-            Err(error) => {
-                failed_candidates += 1;
-                audit.push(json!({
-                    "id": candidate.id,
-                    "freedBytes": 0,
-                    "files": 0,
-                    "locked": locked,
-                    "result": "failed",
-                    "error": error,
-                }));
-                rows.push(json!({
-                    "label": candidate.label,
-                    "freed": "0 B",
-                    "files": 0usize,
-                    "status": error,
-                }));
+            } else {
+                details_truncated = true;
             }
         }
+
+        journal_candidates.push(json!({
+            "id": candidate.id,
+            "label": candidate.label,
+            "path": candidate.base.to_string_lossy(),
+            "before": {"files": before.count, "bytes": before.bytes},
+            "after": {"files": after.count, "bytes": after.bytes},
+            "records": records
+                .iter()
+                .map(|record| json!({
+                    "path": record.entry.path.to_string_lossy(),
+                    "bytes": record.entry.bytes,
+                    "outcome": record.outcome.key(),
+                    "reason": record.reason,
+                }))
+                .collect::<Vec<_>>(),
+        }));
     }
+
+    let journal = json!({
+        "tool": "clean_master",
+        "version": env!("CARGO_PKG_VERSION"),
+        "action": ACTION,
+        "startedAt": started_at,
+        "finishedAt": tool_protocol::now_ms(),
+        "totals": {
+            "freedBytes": freed_bytes,
+            "recycledFiles": recycled_files,
+            "skippedLocked": skipped_locked,
+            "failedFiles": failed_files,
+            "budgetSkipped": budget_skipped,
+            "missingFiles": missing_files,
+            "beforeBytes": before_bytes_total,
+            "afterBytes": after_bytes_total,
+        },
+        "candidates": journal_candidates,
+    });
+    let journal_path = write_journal(&journal);
 
     let _ = tool_protocol::append_audit_log(json!({
         "tool": "clean_master",
@@ -481,30 +675,48 @@ fn apply(request: &Request) -> Result<Value, ToolError> {
         "freedBytes": freed_bytes,
         "files": recycled_files,
         "skippedLocked": skipped_locked,
-        "candidates": audit,
+        "failedFiles": failed_files,
+        "budgetSkipped": budget_skipped,
+        "journal": journal_path.as_ref().ok().map(|path| path.to_string_lossy().to_string()),
         "at": tool_protocol::now_ms(),
     }));
 
+    let mut notes = vec![
+        "所选文件已移入回收站，可打开回收站按原路径还原。".to_string(),
+        "被占用、只读或无权限的文件已逐个跳过，不会中断其他文件。".to_string(),
+        format!("单次最多移入回收站 {MAX_DELETE_FILES} 个文件；明细最多展示 {MAX_DETAIL_ROWS} 条。"),
+        "本工具只清理固定白名单位置，不删除目录本身，也不修改注册表或服务。".to_string(),
+        "再次清理需要重新扫描获取新的确认令牌。".to_string(),
+    ];
+    match &journal_path {
+        Ok(path) => notes.push(format!("完整逐文件清单：{}", path.display())),
+        Err(error) => notes.push(format!("完整清单写入失败：{error}")),
+    }
+    if details_truncated {
+        notes.push("结果表格已截断，完整明细以本地清单为准。".to_string());
+    }
+
+    let verified_freed = before_bytes_total.saturating_sub(after_bytes_total);
+    let summary = json!([
+        item("释放空间", human_bytes(freed_bytes)),
+        item("移入回收站", format!("{recycled_files} 个文件")),
+        item("跳过占用/只读", skipped_locked.to_string()),
+        item("失败", failed_files.to_string()),
+        item("超出上限", budget_skipped.to_string()),
+        item("复核减少", human_bytes(verified_freed)),
+    ]);
+
     Ok(table(
-        json!([
-            item("释放空间", human_bytes(freed_bytes)),
-            item("移入回收站", format!("{recycled_files} 个文件")),
-            item("跳过占用/只读", skipped_locked.to_string()),
-            item("失败位置", failed_candidates.to_string()),
-        ]),
+        summary,
         json!([
             column("label", "位置"),
-            column("freed", "释放"),
-            column("files", "文件"),
+            column("file", "文件"),
+            column("size", "大小"),
             column("status", "结果"),
+            column("reason", "原因"),
         ]),
         Value::Array(rows),
-        json!([
-            "所选文件已移入回收站，可在“回收站”中还原到原位置。",
-            "被占用或只读的文件已跳过，关闭相关程序后可重新预览清理。",
-            "本工具只清理固定白名单位置，不删除目录本身，也不修改注册表或服务。",
-            "本次操作已写入本地操作日志；再次执行需要重新预览获取新令牌。",
-        ]),
+        json!(notes),
     ))
 }
 
@@ -553,6 +765,10 @@ mod tests {
         }
     }
 
+    fn entry(path: PathBuf, bytes: u64) -> FileEntry {
+        FileEntry { path, bytes }
+    }
+
     #[test]
     fn candidate_ids_are_unique_and_absolute() {
         let list = candidates();
@@ -570,12 +786,13 @@ mod tests {
         fs::write(root.join("a.bin"), vec![0u8; 100]).unwrap();
         fs::write(root.join("sub").join("b.bin"), vec![0u8; 200]).unwrap();
 
-        let scanned = walk_candidate(&candidate(root.clone(), &[]), false);
+        let scanned = walk_candidate(&candidate(root.clone(), &[]), true);
         assert!(scanned.exists);
         assert_eq!(scanned.count, 2);
         assert_eq!(scanned.bytes, 300);
         assert_eq!(scanned.errors, 0);
-        assert!(scanned.sample.len() <= LOCK_SAMPLE);
+        assert_eq!(scanned.files.len(), 2);
+        assert!(scanned.files.iter().all(|entry| entry.bytes > 0));
 
         fs::remove_dir_all(&root).ok();
     }
@@ -620,6 +837,94 @@ mod tests {
         permissions.set_readonly(false);
         fs::set_permissions(&file, permissions).unwrap();
         assert!(!is_locked(&file));
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn recycle_entries_records_each_file() {
+        let root = temp_root("records");
+        fs::create_dir_all(&root).unwrap();
+        let first = root.join("a.tmp");
+        let second = root.join("b.tmp");
+        fs::write(&first, vec![0u8; 10]).unwrap();
+        fs::write(&second, vec![0u8; 20]).unwrap();
+
+        let mut budget = 10;
+        let records = recycle_entries(
+            &[entry(first.clone(), 10), entry(second.clone(), 20)],
+            &mut budget,
+        );
+
+        assert_eq!(records.len(), 2);
+        assert!(records.iter().all(|record| record.outcome == Outcome::Recycled));
+        assert!(!first.exists());
+        assert!(!second.exists());
+        assert_eq!(budget, 8);
+
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn recycle_entries_skips_missing_and_readonly() {
+        let root = temp_root("skip");
+        fs::create_dir_all(&root).unwrap();
+        let missing = root.join("already-gone.tmp");
+        let readonly = root.join("readonly.tmp");
+        fs::write(&readonly, b"data").unwrap();
+        let mut permissions = fs::metadata(&readonly).unwrap().permissions();
+        permissions.set_readonly(true);
+        fs::set_permissions(&readonly, permissions).unwrap();
+
+        let mut budget = 10;
+        let records = recycle_entries(
+            &[entry(missing.clone(), 1), entry(readonly.clone(), 4)],
+            &mut budget,
+        );
+
+        assert_eq!(records[0].outcome, Outcome::Missing);
+        assert_eq!(records[1].outcome, Outcome::Locked);
+        assert!(readonly.exists());
+        assert_eq!(budget, 10, "skipped files must not consume the delete budget");
+
+        let mut permissions = fs::metadata(&readonly).unwrap().permissions();
+        permissions.set_readonly(false);
+        fs::set_permissions(&readonly, permissions).unwrap();
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn recycle_entries_marks_budget_overflow() {
+        let root = temp_root("budget");
+        fs::create_dir_all(&root).unwrap();
+        let first = root.join("a.tmp");
+        let second = root.join("b.tmp");
+        fs::write(&first, b"a").unwrap();
+        fs::write(&second, b"b").unwrap();
+
+        let mut budget = 1;
+        let records = recycle_entries(
+            &[entry(first.clone(), 1), entry(second.clone(), 1)],
+            &mut budget,
+        );
+
+        assert_eq!(records[0].outcome, Outcome::Recycled);
+        assert_eq!(records[1].outcome, Outcome::Budget);
+        assert!(second.exists());
+
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn journal_payload_is_writable_json() {
+        let root = temp_root("journal");
+        fs::create_dir_all(&root).unwrap();
+        std::env::set_var("SYSTEM_LENS_STATE_DIR", &root);
+        let path = write_journal(&json!({"tool": "clean_master", "totals": {"files": 2}}))
+            .expect("write journal");
+        let text = fs::read_to_string(&path).expect("read journal");
+        std::env::remove_var("SYSTEM_LENS_STATE_DIR");
+        assert!(text.contains("\"clean_master\""));
+        assert!(text.contains("\"files\": 2"));
         fs::remove_dir_all(&root).ok();
     }
 }

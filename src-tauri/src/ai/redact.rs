@@ -5,9 +5,7 @@
 //! sensitive keys recursively and masks Windows user-profile paths.
 
 use super::model::RedactionSummary;
-use serde_json::{Map, Value};
-
-const MASK: &str = "[已脱敏]";
+use serde_json::Value;
 
 fn normalize_key(key: &str) -> String {
     key.chars()
@@ -51,13 +49,35 @@ fn is_sensitive_key(key: &str) -> bool {
         || normalized.ends_with("localpath")
 }
 
+fn has_drive_path(input: &str) -> bool {
+    let characters: Vec<char> = input.chars().collect();
+    for index in 0..characters.len().saturating_sub(2) {
+        if !characters[index].is_ascii_alphabetic() {
+            continue;
+        }
+        if characters[index + 1] != ':' {
+            continue;
+        }
+        if characters[index + 2] != '\\' && characters[index + 2] != '/' {
+            continue;
+        }
+        let previous_is_word = index > 0
+            && (characters[index - 1].is_alphanumeric() || characters[index - 1] == '_');
+        if !previous_is_word {
+            return true;
+        }
+    }
+    false
+}
+
 fn scrub_string(input: &str) -> Option<String> {
     let lowered = input.to_ascii_lowercase();
     let looks_like_profile_path = lowered.contains(":\\users\\")
         || lowered.contains(":\\documents and settings\\")
         || lowered.contains(":/users/");
-    if looks_like_profile_path {
-        return Some("[本地用户路径已脱敏]".to_string());
+    let looks_like_unc_path = input.trim_start().starts_with("\\\\");
+    if looks_like_profile_path || looks_like_unc_path || has_drive_path(input) {
+        return Some("[本地路径已脱敏]".to_string());
     }
     None
 }
@@ -110,14 +130,17 @@ pub fn redact_payload(payload: &Value) -> (Value, RedactionSummary) {
     if rules.is_empty() {
         rules.push("按字段策略检查，未发现需要移除的敏感字段".to_string());
     }
-    RedactionSummary {
-        removed_fields: removed,
-        applied_rules: rules,
-        excluded_facts: 0,
-    }
+    (
+        redacted,
+        RedactionSummary {
+            removed_fields: removed,
+            applied_rules: rules,
+            excluded_facts: 0,
+        },
+    )
 }
 
-/// Drops facts that are marked sensitive or unavailable to the model.
+/// Drops facts that are marked sensitive before the payload is built.
 pub fn filter_facts_for_model<'a>(
     facts: impl Iterator<Item = &'a super::model::DiagnosticFact>,
 ) -> (Vec<super::model::DiagnosticFact>, usize) {
@@ -132,9 +155,6 @@ pub fn filter_facts_for_model<'a>(
     }
     (kept, excluded)
 }
-
-#[allow(dead_code)]
-fn _map_type_assertion(_map: &Map<String, Value>) {}
 
 #[cfg(test)]
 mod tests {
@@ -165,8 +185,21 @@ mod tests {
     fn masks_user_profile_paths() {
         let payload = json!({ "note": "C:\\Users\\alice\\Downloads\\dump.dmp" });
         let (redacted, summary) = redact_payload(&payload);
-        assert_eq!(redacted["note"], "[本地用户路径已脱敏]");
+        assert_eq!(redacted["note"], "[本地路径已脱敏]");
         assert_eq!(summary.removed_fields, 1);
+    }
+
+    #[test]
+    fn masks_arbitrary_drive_paths_but_not_urls() {
+        let payload = json!({
+            "note": "读取 D:\\github\\xiaolu\\src-tauri 失败",
+            "url": "https://api.deepseek.com/v1",
+            "drive": "C:",
+        });
+        let (redacted, _) = redact_payload(&payload);
+        assert_eq!(redacted["note"], "[本地路径已脱敏]");
+        assert_eq!(redacted["url"], "https://api.deepseek.com/v1");
+        assert_eq!(redacted["drive"], "C:");
     }
 
     #[test]

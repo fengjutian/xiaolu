@@ -86,33 +86,6 @@ impl FactBuilder {
             sensitive: false,
         });
     }
-
-    fn push_with_evidence(
-        &mut self,
-        id: impl Into<String>,
-        category: &str,
-        severity: Severity,
-        title: impl Into<String>,
-        value: Value,
-        source: impl Into<String>,
-        confidence: f64,
-        availability: Availability,
-        evidence_refs: Vec<String>,
-    ) {
-        self.push(
-            id,
-            category,
-            severity,
-            title,
-            value,
-            source,
-            confidence,
-            availability,
-        );
-        if let Some(fact) = self.facts.last_mut() {
-            fact.evidence_refs = evidence_refs;
-        }
-    }
 }
 
 fn number_at(value: &Value, path: &[&str]) -> Option<f64> {
@@ -145,9 +118,13 @@ fn health_severity(level: HealthLevel) -> Severity {
 
 fn disk_letter(mount_point: &str) -> String {
     let trimmed = mount_point.trim().trim_end_matches(['\\', '/']);
-    if trimmed.len() >= 2 && trimmed.as_bytes()[1] == b':' {
-        trimmed[..2].to_ascii_uppercase()
-    } else if trimmed.is_empty() {
+    let mut characters = trimmed.chars();
+    if let (Some(drive), Some(':')) = (characters.next(), characters.next()) {
+        if drive.is_ascii_alphabetic() {
+            return format!("{}:", drive.to_ascii_uppercase());
+        }
+    }
+    if trimmed.is_empty() {
         "unknown".to_string()
     } else {
         truncate_text(trimmed, 12)

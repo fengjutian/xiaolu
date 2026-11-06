@@ -4,7 +4,7 @@
 //! numbers, MAC/IP addresses, command lines and full paths never enter it.
 
 use super::model::{
-    AiFinding, AiTurn, ChatMessage, DiagnosticFact, DiagnosticSnapshot, Severity, AI_PROMPT_VERSION,
+    AiTurn, ChatMessage, DiagnosticSnapshot, RedactionSummary, AI_PROMPT_VERSION,
 };
 use super::redact::{filter_facts_for_model, redact_payload};
 use serde_json::{json, Value};
@@ -89,13 +89,16 @@ pub fn build_payload(
         })
         .collect();
 
-    let safe_history: Vec<Value> = history
+    let mut selected: Vec<&AiTurn> = history
         .iter()
         .filter(|turn| turn.snapshot_id == snapshot.snapshot_id)
         .filter(|turn| turn.role == "user" || turn.role == "assistant")
-        .rev()
-        .take(6)
-        .rev()
+        .collect();
+    if selected.len() > 6 {
+        selected = selected.split_off(selected.len() - 6);
+    }
+    let safe_history: Vec<Value> = selected
+        .into_iter()
         .map(|turn| {
             json!({
                 "role": turn.role,
@@ -112,7 +115,11 @@ pub fn build_payload(
         "facts": fact_values,
         "localRuleFindings": local_findings,
         "limitations": snapshot.limitations.iter().take(20).collect::<Vec<_>>(),
-        "sources": snapshot.sources,
+        "sources": snapshot.sources.iter().map(|source| json!({
+            "id": source.id,
+            "label": source.label,
+            "ok": source.ok,
+        })).collect::<Vec<_>>(),
         "question": question.map(|value| value.chars().take(800).collect::<String>()),
         "history": safe_history,
     });
@@ -127,9 +134,10 @@ pub fn build_messages(
     snapshot: &DiagnosticSnapshot,
     question: Option<&str>,
     history: &[AiTurn],
-) -> (Vec<ChatMessage>, Value, usize) {
+) -> (Vec<ChatMessage>, Value, usize, RedactionSummary) {
     let (payload, excluded) = build_payload(snapshot, question, history);
-    let (redacted, _) = redact_payload(&payload);
+    let (redacted, mut redaction) = redact_payload(&payload);
+    redaction.excluded_facts = excluded + snapshot.excluded_fact_count;
     let question_text = question
         .map(|value| value.trim())
         .filter(|value| !value.is_empty())
@@ -152,6 +160,7 @@ pub fn build_messages(
         ],
         redacted,
         excluded,
+        redaction,
     )
 }
 
@@ -160,15 +169,12 @@ pub fn estimate_tokens(messages: &[ChatMessage]) -> usize {
     ((characters as f64) / 2.2).ceil() as usize
 }
 
-pub fn severity_rank(finding: &AiFinding) -> Severity {
-    Severity::parse(&finding.severity)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::ai::model::{
-        AiSourceStatus, Availability, DiagnosticFact, DiagnosticSnapshot, AI_SCHEMA_VERSION,
+        AiSourceStatus, Availability, DiagnosticFact, DiagnosticSnapshot, Severity,
+        AI_SCHEMA_VERSION,
     };
 
     fn snapshot() -> DiagnosticSnapshot {

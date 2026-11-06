@@ -189,7 +189,7 @@ fn update_tray(app: &AppHandle, values: &[SensorValue], alerts: &[Alert]) {
     }
 }
 
-fn snapshot_blocking(app: &AppHandle) -> Result<SensorSnapshot, String> {
+pub(crate) fn snapshot_blocking(app: &AppHandle) -> Result<SensorSnapshot, String> {
     let parsed = collect::collect()?;
     let captured_at = now_unix_ms();
     let path = db_path(app)?;

@@ -68,6 +68,7 @@ import {
   IconMoon,
   IconSun,
   IconWind,
+  IconSparkles,
 } from "@tabler/icons-react";
 import {
   Area,
@@ -180,6 +181,7 @@ import type {
 } from "./types";
 import "./styles.css";
 import ReportPanel from "./report";
+import AiPanel from "./AiPanel";
 
 const logoUrl = "/logo.png";
 
@@ -187,6 +189,7 @@ type Tab =
   | "overview"
   | "benchmark"
   | "sensors"
+  | "ai"
   | "eye-care"
   | "drivers"
   | "diagnostics"
@@ -217,6 +220,7 @@ const nav = [
   ["overview", "性能概览", IconGauge],
   ["benchmark", "性能跑分", IconActivity],
   ["sensors", "温度与健康", IconTemperature],
+  ["ai", "AI 解读", IconSparkles],
   ["eye-care", "护眼模式", IconEye],
   ["drivers", "驱动检测", IconTool],
   ["diagnostics", "系统诊断", IconHeartbeat],
@@ -6086,7 +6090,7 @@ export default function App() {
           </Text>
         </Paper>
         <Text size="xs" c="dimmed">
-          v0.52.0 · 25 个工具 · HTML 报告
+          v0.53.0 · 25 个工具 · AI 解读
         </Text>
       </aside>
       <main className="content">
@@ -6310,6 +6314,7 @@ export default function App() {
         {tab === "hardware" && <MemoHardwarePanel details={hardware} />}
         {tab === "devices" && <MemoDevicePanel data={deviceDetails} />}
         {tab === "sensors" && <SensorsPanel data={sensors} />}
+        {tab === "ai" && <AiPanel />}
         {tab === "eye-care" && <EyeCarePanel settings={eyeCare} onSaved={setEyeCare} />}
         {tab === "settings" && <SettingsPanel settings={appSettings} onSaved={setAppSettings} onNavigate={setTab} />}
         {tab === "desktop" && <DesktopPanel />}

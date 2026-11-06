@@ -45,6 +45,7 @@ pub enum Availability {
 }
 
 impl Availability {
+    #[allow(dead_code)]
     pub fn as_str(self) -> &'static str {
         match self {
             Availability::Available => "available",

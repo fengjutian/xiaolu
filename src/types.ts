@@ -772,3 +772,125 @@ export interface NvmeHealthReport {
   lastError: string | null;
   note: string;
 }
+
+export type AiSeverity = "info" | "warning" | "critical";
+export type AiConfidence = "low" | "medium" | "high";
+export type AiAvailability = "available" | "partial" | "unavailable";
+
+export interface AiRecommendation {
+  label: string;
+  kind: "read_only_check" | "manual_action" | "controlled_write_preview" | string;
+  toolId?: string | null;
+  risk: "none" | "low" | "medium" | "high" | string;
+  requiresConfirmation: boolean;
+}
+
+export interface AiFinding {
+  id: string;
+  title: string;
+  severity: AiSeverity | string;
+  summary: string;
+  confidence: AiConfidence | string;
+  evidenceRefs: string[];
+  recommendations: AiRecommendation[];
+  limitations: string[];
+}
+
+export interface AiSourceStatus {
+  id: string;
+  label: string;
+  ok: boolean;
+  detail: string;
+}
+
+export interface DiagnosticFact {
+  id: string;
+  snapshotId: string;
+  category: string;
+  severity: AiSeverity;
+  title: string;
+  value: unknown;
+  source: string;
+  capturedAtUnixMs: number;
+  confidence: number;
+  availability: AiAvailability;
+  evidenceRefs: string[];
+  sensitive: boolean;
+}
+
+export interface DiagnosticSnapshot {
+  schemaVersion: number;
+  snapshotId: string;
+  capturedAtUnixMs: number;
+  facts: DiagnosticFact[];
+  localFindings: AiFinding[];
+  limitations: string[];
+  sources: AiSourceStatus[];
+  excludedFactCount: number;
+}
+
+export interface AiSettings {
+  enabled: boolean;
+  provider: string;
+  baseUrl: string;
+  model: string;
+  maxOutputTokens: number;
+  timeoutSeconds: number;
+}
+
+export interface AiSettingsView {
+  settings: AiSettings;
+  hasApiKey: boolean;
+  keyStorage: string;
+}
+
+export interface AiRedactionSummary {
+  removedFields: number;
+  appliedRules: string[];
+  excludedFacts: number;
+}
+
+export interface AiPayloadPreview {
+  snapshotId: string;
+  baseUrl: string;
+  model: string;
+  payload: unknown;
+  estimatedInputTokens: number;
+  redaction: AiRedactionSummary;
+}
+
+export interface AiUsage {
+  promptTokens: number | null;
+  completionTokens: number | null;
+  totalTokens: number | null;
+}
+
+export interface AiAnswer {
+  requestId: string;
+  snapshotId: string;
+  generatedAtUnixMs: number;
+  provider: string;
+  model: string;
+  promptVersion: string;
+  degraded: boolean;
+  degradedReason: string | null;
+  summary: string;
+  findings: AiFinding[];
+  limitations: string[];
+  localFindings: AiFinding[];
+  usage: AiUsage | null;
+}
+
+export interface AiTurn {
+  snapshotId: string;
+  role: "user" | "assistant" | string;
+  content: string;
+}
+
+export interface AiStreamEvent {
+  requestId: string;
+  stage: "status" | "delta" | string;
+  delta: string;
+  charCount: number;
+  message: string;
+}

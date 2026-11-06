@@ -63,7 +63,7 @@ struct PowerShellReport {
 }
 
 #[cfg(windows)]
-fn collect() -> Result<DiagnosticReport, String> {
+pub(crate) fn collect_report() -> Result<DiagnosticReport, String> {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x08000000;
     let script = r#"
@@ -96,11 +96,11 @@ $pendingRename=$null -ne (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Contr
 }
 
 #[cfg(not(windows))]
-fn collect() -> Result<DiagnosticReport, String> {
+pub(crate) fn collect_report() -> Result<DiagnosticReport, String> {
     Ok(DiagnosticReport { captured_at_unix_ms: 0, pending_reboot: false, pending_windows_update_reboot: false, battery: BatteryReport { present: false, name: "未支持".into(), status: "Unknown".into(), charge_percent: None, design_capacity_mwh: None, full_charge_capacity_mwh: None, health_percent: None, cycle_count: None }, events: vec![], crash_events: vec![], service_issues: vec![], minidump_count: 0, latest_minidump: String::new(), source: "unsupported".into() })
 }
 
 #[tauri::command]
 pub async fn get_diagnostic_report() -> Result<DiagnosticReport, String> {
-    tauri::async_runtime::spawn_blocking(collect).await.map_err(|error| format!("系统诊断任务失败：{error}"))?
+    tauri::async_runtime::spawn_blocking(collect_report).await.map_err(|error| format!("系统诊断任务失败：{error}"))?
 }

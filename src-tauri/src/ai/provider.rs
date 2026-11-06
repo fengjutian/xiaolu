@@ -59,7 +59,6 @@ pub enum StreamEvent {
 
 pub trait AiProvider: Send + Sync {
     fn id(&self) -> &'static str;
-    fn label(&self) -> &'static str;
     fn complete<'a>(
         &'a self,
         request: ProviderRequest,
@@ -147,10 +146,6 @@ fn classify_error(error: reqwest::Error) -> String {
 impl AiProvider for OpenAiCompatible {
     fn id(&self) -> &'static str {
         "openai-compatible"
-    }
-
-    fn label(&self) -> &'static str {
-        "OpenAI 兼容接口"
     }
 
     fn complete<'a>(
