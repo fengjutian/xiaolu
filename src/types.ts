@@ -477,6 +477,7 @@ export interface NetworkDiagnosticReport {
 export interface SoftwareInventory {
   capturedAtUnixMs: number;
   total: number;
+  residueCount: number;
   estimatedSizeBytes: number;
   items: Array<{
     name: string;
@@ -488,6 +489,10 @@ export interface SoftwareInventory {
     scope: string;
     architecture: string;
     uninstallAvailable: boolean;
+    key: string;
+    uninstallString: string;
+    quietUninstallString: string;
+    residue: boolean;
   }>;
   source: string;
 }

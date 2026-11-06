@@ -114,6 +114,7 @@ import {
   getScheduledTasks,
   saveSensorSettings,
   getSoftwareInventory,
+  launchSoftwareUninstall,
   getStartupItems,
   getSystemSnapshot,
   getProcessInventory,
@@ -2714,6 +2715,25 @@ function StoragePanel() {
 
 function SoftwarePanel({ data }: { data: SoftwareInventory | null }) {
   const [query, setQuery] = useState("");
+  const [uninstallStatus, setUninstallStatus] = useState<string | null>(null);
+  const [uninstallError, setUninstallError] = useState<string | null>(null);
+
+  const uninstall = async (item: SoftwareInventory["items"][number]) => {
+    const command = item.uninstallString || item.quietUninstallString;
+    if (
+      !window.confirm(
+        `确认启动“${item.name}”的系统卸载程序？\n\n${command}\n\n卸载不可回滚，建议先创建还原点。`,
+      )
+    )
+      return;
+    try {
+      setUninstallStatus(await launchSoftwareUninstall(item.key));
+      setUninstallError(null);
+    } catch (error) {
+      setUninstallStatus(null);
+      setUninstallError(error instanceof Error ? error.message : String(error));
+    }
+  };
   if (!data)
     return (
       <Center h={260}>
@@ -2802,10 +2822,27 @@ function SoftwarePanel({ data }: { data: SoftwareInventory | null }) {
                       {item.uninstallAvailable ? "提供卸载入口" : "无卸载入口"}
                     </Text>
                   </Table.Td>
-                  <Table.Td>
+                                    <Table.Td>
                     {item.estimatedSizeBytes
                       ? bytes(item.estimatedSizeBytes)
                       : "未登记"}
+                  </Table.Td>
+                  <Table.Td>
+                    <Group gap="xs" wrap="nowrap">
+                      {item.residue && (
+                        <Badge size="xs" color="orange" variant="light">
+                          目录不存在
+                        </Badge>
+                      )}
+                      <Button
+                        size="xs"
+                        variant="light"
+                        disabled={!item.uninstallAvailable || !item.key}
+                        onClick={() => void uninstall(item)}
+                      >
+                        卸载
+                      </Button>
+                    </Group>
                   </Table.Td>
                 </Table.Tr>
               ))}
@@ -5475,7 +5512,7 @@ export default function App() {
           </Text>
         </Paper>
         <Text size="xs" c="dimmed">
-          v0.41.0 · 18 个工具 · 设置页
+          v0.42.0 · 18 个工具 · 软件卸载
         </Text>
       </aside>
       <main className="content">

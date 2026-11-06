@@ -329,8 +329,12 @@ export async function getNetworkDiagnostics(): Promise<NetworkDiagnosticReport> 
   return invoke<NetworkDiagnosticReport>("get_network_diagnostics");
 }
 
+export async function launchSoftwareUninstall(key: string): Promise<string> {
+  if (!isTauri()) return "浏览器演示不启动卸载程序。";
+  return invoke<string>("launch_software_uninstall", { key });
+}
 export async function getSoftwareInventory(): Promise<SoftwareInventory> {
-  if (!isTauri()) return { capturedAtUnixMs: Date.now(), total: 2, estimatedSizeBytes: 2.4 * gib, source: "浏览器演示", items: [{ name: "演示应用", version: "1.2.0", publisher: "演示厂商", installDate: "20260101", installLocation: "C:\\Apps\\Demo", estimatedSizeBytes: 1.4 * gib, scope: "所有用户", architecture: "64-bit", uninstallAvailable: true }, { name: "示例工具", version: "3.0", publisher: "示例组织", installDate: "", installLocation: "", estimatedSizeBytes: 1 * gib, scope: "当前用户", architecture: "当前用户", uninstallAvailable: true }] };
+  if (!isTauri()) return { capturedAtUnixMs: Date.now(), total: 2, residueCount: 1, estimatedSizeBytes: 2.4 * gib, source: "浏览器演示", items: [{ name: "演示应用", version: "1.2.0", publisher: "演示厂商", installDate: "20260101", installLocation: "C:\\Apps\\Demo", estimatedSizeBytes: 1.4 * gib, scope: "所有用户", architecture: "64-bit", uninstallAvailable: true, key: "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall|Demo", uninstallString: "MsiExec.exe /X{DEMO}", quietUninstallString: "", residue: true }, { name: "示例工具", version: "3.0", publisher: "示例组织", installDate: "", installLocation: "", estimatedSizeBytes: 1 * gib, scope: "当前用户", architecture: "当前用户", uninstallAvailable: true, key: "HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall|Demo", uninstallString: "\"C:\\Demo\\uninst.exe\" /S", quietUninstallString: "", residue: false }] };
   return invoke<SoftwareInventory>("get_software_inventory");
 }
 
