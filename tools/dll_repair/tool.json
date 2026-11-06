@@ -2,9 +2,10 @@
   "schemaVersion": 1,
   "id": "dll_repair",
   "name": "DLL 修复",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "apiVersion": 1,
-  "description": "只读检查常见运行库 DLL 是否存在",
+  "description": "检查运行库 DLL 与 VC++/.NET 安装状态，可打开微软官方下载页"
+,
   "category": "repair",
   "risk": "read_only",
   "entry": "dll_repair.exe",
