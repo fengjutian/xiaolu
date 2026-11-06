@@ -421,28 +421,34 @@ fn scan() -> Result<Value, ToolError> {
     Ok(data)
 }
 
-fn toggle_startup(request: &Request) -> Result<Value, ToolError> {
-    let token = request.confirmation.as_deref().ok_or_else(|| {
-        ToolError::new(
-            "CONFIRMATION_REQUIRED",
-            "启停启动项需要确认令牌，请先预览并选择。",
-        )
-    })?;
-    let key = request
-        .parameters
+#[derive(Clone)]
+struct ChangeRequest {
+    key: String,
+    name: String,
+    enable: bool,
+}
+
+struct ChangeRecord {
+    key: String,
+    name: String,
+    enable: bool,
+    status: &'static str,
+    reason: String,
+}
+
+fn change_from_value(value: &Value) -> Result<ChangeRequest, ToolError> {
+    let key = value
         .get("key")
         .and_then(Value::as_str)
-        .ok_or_else(|| ToolError::new("INVALID_INPUT", "缺少参数 key。"))?;
-    let name = request
-        .parameters
+        .ok_or_else(|| ToolError::new("INVALID_INPUT", "启动项变更缺少 key。"))?;
+    let name = value
         .get("name")
         .and_then(Value::as_str)
-        .ok_or_else(|| ToolError::new("INVALID_INPUT", "缺少参数 name。"))?;
-    let enable = request
-        .parameters
+        .ok_or_else(|| ToolError::new("INVALID_INPUT", "启动项变更缺少 name。"))?;
+    let enable = value
         .get("enable")
         .and_then(Value::as_bool)
-        .ok_or_else(|| ToolError::new("INVALID_INPUT", "缺少参数 enable。"))?;
+        .ok_or_else(|| ToolError::new("INVALID_INPUT", "启动项变更缺少 enable。"))?;
     if !RUN_SUBKEYS.contains(&key) {
         return Err(ToolError::new(
             "INVALID_INPUT",
@@ -450,102 +456,323 @@ fn toggle_startup(request: &Request) -> Result<Value, ToolError> {
         ));
     }
     validate_startup_name(name)?;
+    Ok(ChangeRequest {
+        key: key.to_string(),
+        name: name.to_string(),
+        enable,
+    })
+}
 
-    let before = read_startup_items()?;
-    tool_protocol::verify_token(token, ACTION_TOGGLE, &startup_digest(&before))?;
-    let entry = before
+fn parse_changes(request: &Request) -> Result<Vec<ChangeRequest>, ToolError> {
+    let changes = request
+        .parameters
+        .get("changes")
+        .and_then(Value::as_array)
+        .ok_or_else(|| ToolError::new("INVALID_INPUT", "缺少参数 changes。"))?;
+    if changes.is_empty() {
+        return Err(ToolError::new("INVALID_INPUT", "没有需要应用的启动项变更。"));
+    }
+    let parsed = changes
         .iter()
-        .find(|item| item.key == key && item.name == name && item.enabled != enable)
-        .cloned()
-        .ok_or_else(|| {
-            ToolError::new("CONFLICT", "启动项状态已变化，请重新预览后再操作。")
-        })?;
+        .map(change_from_value)
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut seen = std::collections::HashSet::new();
+    for change in &parsed {
+        if !seen.insert((change.key.clone(), change.name.clone())) {
+            return Err(ToolError::new(
+                "INVALID_INPUT",
+                format!("启动项 {} 重复出现。", change.name),
+            ));
+        }
+    }
+    Ok(parsed)
+}
 
+/// 在注册表 Run 与停用备份之间移动同一个启动项。
+fn apply_change(entry: &StartupValue, enable: bool) -> Result<(), ToolError> {
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     if enable {
         let backup = hkcu
             .open_subkey_with_flags(BACKUP_PATH, KEY_READ | KEY_WRITE)
             .map_err(|error| registry_error("读取停用备份", error))?;
         let (run, _) = hkcu
-            .create_subkey(run_key_path(key))
+            .create_subkey(run_key_path(&entry.key))
             .map_err(|error| registry_error("打开启动项注册表", error))?;
-        run.set_value(name, &entry.command)
+        run.set_value(&entry.name, &entry.command)
             .map_err(|error| registry_error("恢复启动项", error))?;
-        if let Err(error) = backup.delete_value(backup_value_name(key, name)) {
-            let _ = run.delete_value(name);
+        if let Err(error) = backup.delete_value(backup_value_name(&entry.key, &entry.name)) {
+            let _ = run.delete_value(&entry.name);
             return Err(registry_error("清理停用备份", error));
         }
     } else {
         let run = hkcu
-            .open_subkey_with_flags(run_key_path(key), KEY_READ | KEY_WRITE)
+            .open_subkey_with_flags(run_key_path(&entry.key), KEY_READ | KEY_WRITE)
             .map_err(|error| registry_error("打开启动项注册表", error))?;
         let (backup, _) = hkcu
             .create_subkey(BACKUP_PATH)
             .map_err(|error| registry_error("创建停用备份", error))?;
         backup
-            .set_value(backup_value_name(key, name), &entry.command)
+            .set_value(backup_value_name(&entry.key, &entry.name), &entry.command)
             .map_err(|error| registry_error("写入停用备份", error))?;
-        if let Err(error) = run.delete_value(name) {
-            let _ = backup.delete_value(backup_value_name(key, name));
+        if let Err(error) = run.delete_value(&entry.name) {
+            let _ = backup.delete_value(backup_value_name(&entry.key, &entry.name));
             return Err(registry_error("停用启动项", error));
+        }
+    }
+    Ok(())
+}
+
+/// 直接回读注册表，确认启动项确实处于目标位置。
+fn verify_state(key: &str, name: &str, enable: bool) -> bool {
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let in_run = hkcu
+        .open_subkey_with_flags(run_key_path(key), KEY_READ)
+        .ok()
+        .and_then(|run| run.get_value::<String, _>(name).ok())
+        .is_some();
+    let in_backup = hkcu
+        .open_subkey_with_flags(BACKUP_PATH, KEY_READ)
+        .ok()
+        .and_then(|backup| backup.get_value::<String, _>(backup_value_name(key, name)).ok())
+        .is_some();
+    if enable {
+        in_run && !in_backup
+    } else {
+        !in_run && in_backup
+    }
+}
+
+fn snapshot_dir() -> std::path::PathBuf {
+    tool_protocol::state_dir().join("software_pm")
+}
+
+fn write_snapshot(payload: &Value) -> Result<std::path::PathBuf, String> {
+    let dir = snapshot_dir();
+    std::fs::create_dir_all(&dir).map_err(|error| format!("无法创建快照目录：{error}"))?;
+    let path = dir.join(format!(
+        "startup-{}-{}.json",
+        tool_protocol::now_ms(),
+        std::process::id()
+    ));
+    let text = serde_json::to_string_pretty(payload)
+        .map_err(|error| format!("无法序列化快照：{error}"))?;
+    std::fs::write(&path, text).map_err(|error| format!("无法写入快照：{error}"))?;
+    Ok(path)
+}
+
+/// 逐项执行启动项变更：单项失败不中断其他项，执行后回读并写入快照。
+fn execute_changes(
+    before: &[StartupValue],
+    changes: Vec<ChangeRequest>,
+    action: &str,
+) -> Result<Value, ToolError> {
+    let started_at = tool_protocol::now_ms();
+    let mut records = Vec::with_capacity(changes.len());
+    for change in changes {
+        let entry = before
+            .iter()
+            .find(|entry| entry.key == change.key && entry.name == change.name);
+        let Some(entry) = entry else {
+            records.push(ChangeRecord {
+                key: change.key,
+                name: change.name,
+                enable: change.enable,
+                status: "跳过",
+                reason: "未找到该启动项，可能已被其他程序修改".into(),
+            });
+            continue;
+        };
+        if entry.enabled == change.enable {
+            records.push(ChangeRecord {
+                key: change.key,
+                name: change.name,
+                enable: change.enable,
+                status: "跳过",
+                reason: "已是目标状态".into(),
+            });
+            continue;
+        }
+        match apply_change(entry, change.enable) {
+            Ok(()) if verify_state(&change.key, &change.name, change.enable) => {
+                records.push(ChangeRecord {
+                    key: change.key,
+                    name: change.name,
+                    enable: change.enable,
+                    status: if change.enable { "已启用" } else { "已停用" },
+                    reason: String::new(),
+                });
+            }
+            Ok(()) => records.push(ChangeRecord {
+                key: change.key,
+                name: change.name,
+                enable: change.enable,
+                status: "失败",
+                reason: "写入后回读状态不一致".into(),
+            }),
+            Err(error) => records.push(ChangeRecord {
+                key: change.key,
+                name: change.name,
+                enable: change.enable,
+                status: "失败",
+                reason: error.message,
+            }),
         }
     }
 
     let after = read_startup_items()?;
-    let applied = after
+    let succeeded = records
         .iter()
-        .any(|item| item.key == key && item.name == name && item.enabled == enable);
-    if !applied {
-        return Err(ToolError::new(
-            "INTERNAL",
-            "写入后校验失败：启动项状态未生效。",
-        ));
-    }
+        .filter(|record| record.status == "已启用" || record.status == "已停用")
+        .count();
+    let skipped = records
+        .iter()
+        .filter(|record| record.status == "跳过")
+        .count();
+    let failed = records
+        .iter()
+        .filter(|record| record.status == "失败")
+        .count();
+    let disabled_after = after.iter().filter(|entry| !entry.enabled).count();
+
+    let finished_at = tool_protocol::now_ms();
+    let snapshot = json!({
+        "tool": "software_pm",
+        "version": env!("CARGO_PKG_VERSION"),
+        "action": action,
+        "startedAt": started_at,
+        "finishedAt": finished_at,
+        "before": startup_items_json(before),
+        "after": startup_items_json(&after),
+        "records": records
+            .iter()
+            .map(|record| json!({
+                "key": record.key,
+                "name": record.name,
+                "enable": record.enable,
+                "status": record.status,
+                "reason": record.reason,
+            }))
+            .collect::<Vec<_>>(),
+    });
+    let snapshot_path = write_snapshot(&snapshot);
 
     let _ = tool_protocol::append_audit_log(json!({
         "tool": "software_pm",
-        "action": ACTION_TOGGLE,
-        "key": key,
-        "name": name,
-        "enable": enable,
-        "result": "ok",
-        "at": tool_protocol::now_ms(),
+        "action": action,
+        "succeeded": succeeded,
+        "skipped": skipped,
+        "failed": failed,
+        "snapshot": snapshot_path.as_ref().ok().map(|path| path.to_string_lossy().to_string()),
+        "at": finished_at,
     }));
 
-    Ok(table(
+    let rows = records
+        .iter()
+        .map(|record| {
+            json!({
+                "name": record.name,
+                "location": format!("HKCU\\...\\{}", record.key),
+                "action": if record.enable { "启用" } else { "停用" },
+                "status": record.status,
+                "reason": record.reason,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let mut data = table(
         json!([
-            item("操作", if enable { "启用" } else { "停用" }),
-            item("启动项", name),
-            item("位置", format!("HKCU\\...\\{key}")),
+            item("成功", succeeded.to_string()),
+            item("跳过", skipped.to_string()),
+            item("失败", failed.to_string()),
+            item("剩余停用项", disabled_after.to_string()),
         ]),
         json!([
             column("name", "启动项"),
-            column("status", "状态"),
+            column("location", "位置"),
+            column("action", "操作"),
+            column("status", "结果"),
+            column("reason", "原因"),
         ]),
-        json!([{
-            "name": name,
-            "status": if enable { "已启用" } else { "已停用（可从备份还原）" },
-        }]),
+        Value::Array(rows),
         json!([
-            if enable {
-                "启动项已从停用备份恢复到注册表，下次登录/触发时生效。"
-            } else {
-                "启动项已从注册表移除并保存到 HKCU\\Software\\SystemLens\\DisabledStartup，可随时恢复。"
-            },
+            "每项独立执行：单项失败不会中断其他项，写入后会直接回读注册表确认。",
             "只处理当前用户 Run / RunOnce；系统级启动项保持只读。",
-            "操作已写入本地审计日志；再次操作需要重新预览获取新令牌。",
+            "停用项保存在 HKCU\\Software\\SystemLens\\DisabledStartup，可随时恢复。",
+            snapshot_path
+                .as_ref()
+                .map(|path| format!("本次执行快照：{}", path.display()))
+                .unwrap_or_else(|error| format!("快照写入失败：{error}")),
         ]),
-    ))
+    );
+    if let Value::Object(map) = &mut data {
+        map.insert("startupItems".into(), startup_items_json(&after));
+    }
+    if let Ok(token) = tool_protocol::issue_token(ACTION_TOGGLE, &startup_digest(&after)) {
+        attach_token(&mut data, token);
+    }
+    Ok(data)
+}
+
+fn toggle_startup(request: &Request) -> Result<Value, ToolError> {
+    let token = request.confirmation.as_deref().ok_or_else(|| {
+        ToolError::new(
+            "CONFIRMATION_REQUIRED",
+            "启停启动项需要确认令牌，请先预览并选择。",
+        )
+    })?;
+    let change = change_from_value(&request.parameters)?;
+    let before = read_startup_items()?;
+    tool_protocol::verify_token(token, ACTION_TOGGLE, &startup_digest(&before))?;
+    execute_changes(&before, vec![change], ACTION_TOGGLE)
+}
+
+fn toggle_startups(request: &Request) -> Result<Value, ToolError> {
+    let token = request.confirmation.as_deref().ok_or_else(|| {
+        ToolError::new(
+            "CONFIRMATION_REQUIRED",
+            "批量启停启动项需要确认令牌，请先预览并选择。",
+        )
+    })?;
+    let changes = parse_changes(request)?;
+    let before = read_startup_items()?;
+    tool_protocol::verify_token(token, ACTION_TOGGLE, &startup_digest(&before))?;
+    execute_changes(&before, changes, "toggle_startups")
+}
+
+fn restore_all(request: &Request) -> Result<Value, ToolError> {
+    let token = request.confirmation.as_deref().ok_or_else(|| {
+        ToolError::new(
+            "CONFIRMATION_REQUIRED",
+            "恢复停用启动项需要确认令牌，请先预览。",
+        )
+    })?;
+    let before = read_startup_items()?;
+    tool_protocol::verify_token(token, ACTION_TOGGLE, &startup_digest(&before))?;
+    let changes = before
+        .iter()
+        .filter(|entry| !entry.enabled)
+        .map(|entry| ChangeRequest {
+            key: entry.key.clone(),
+            name: entry.name.clone(),
+            enable: true,
+        })
+        .collect::<Vec<_>>();
+    if changes.is_empty() {
+        return Err(ToolError::new("CONFLICT", "当前没有已停用的启动项。"));
+    }
+    execute_changes(&before, changes, "restore_all")
 }
 
 fn main() {
     tool_protocol::serve_with_request(
         "software_pm",
         env!("CARGO_PKG_VERSION"),
-        &["preview", ACTION_TOGGLE],
+        &["preview", ACTION_TOGGLE, "toggle_startups", "restore_all"],
         |request| match request.action.as_str() {
             "preview" => scan(),
             ACTION_TOGGLE => toggle_startup(request),
+            "toggle_startups" => toggle_startups(request),
+            "restore_all" => restore_all(request),
             other => Err(ToolError::unsupported(other)),
         },
     );
@@ -708,5 +935,32 @@ mod tests {
     fn falls_back_to_generic_startup_location() {
         assert_eq!(startup_location(""), "启动项");
         assert_eq!(startup_location("HKLM\\...\\Run"), "HKLM\\...\\Run");
+    }
+
+    #[test]
+    fn parses_change_values_and_rejects_invalid_input() {
+        let change = change_from_value(&json!({
+            "key": "Run",
+            "name": "App",
+            "enable": true
+        }))
+        .expect("valid change");
+        assert_eq!(change.key, "Run");
+        assert_eq!(change.name, "App");
+        assert!(change.enable);
+
+        assert!(change_from_value(&json!({
+            "key": "Services",
+            "name": "App",
+            "enable": true
+        }))
+        .is_err());
+        assert!(change_from_value(&json!({
+            "key": "Run",
+            "name": "",
+            "enable": true
+        }))
+        .is_err());
+        assert!(change_from_value(&json!({ "key": "Run", "name": "App" })).is_err());
     }
 }

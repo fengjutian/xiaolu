@@ -153,11 +153,10 @@ impl Default for AiSettings {
 
 impl AiSettings {
     pub fn sanitize(&self) -> AiSettings {
-        let base_url = self
-            .base_url
-            .trim()
-            .trim_end_matches('/')
-            .to_string();
+        let mut base_url = self.base_url.trim().trim_end_matches('/').to_string();
+        if let Some(stripped) = base_url.strip_suffix("/chat/completions") {
+            base_url = stripped.trim_end_matches('/').to_string();
+        }
         let base_url = if base_url.is_empty() {
             AiSettings::default().base_url
         } else {

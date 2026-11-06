@@ -75,7 +75,7 @@ pub fn list(app: &AppHandle) -> Vec<AiSessionRecord> {
     };
     let mut sessions = read_sessions(app);
     sessions.sort_by(|left, right| right.saved_at_unix_ms.cmp(&left.saved_at_unix_ms));
-    sessions.truncate(30);
+    sessions.truncate(MAX_SESSIONS);
     sessions
 }
 

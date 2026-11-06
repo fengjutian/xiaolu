@@ -16,6 +16,8 @@ software_pm.exe --stdio
 |---|---|---|
 | `preview` | 否 | 采集各类视图，并返回当前用户 Run/RunOnce 启动项与确认令牌 |
 | `toggle_startup` | 是 | 校验令牌后停用或恢复一个当前用户启动项 |
+| `toggle_startups` | 是 | 批量启停，逐项执行、逐项回读，单项失败不中断其他项 |
+| `restore_all` | 是 | 恢复所有已停用的当前用户启动项 |
 
 `toggle_startup` 参数：
 
@@ -23,13 +25,27 @@ software_pm.exe --stdio
 { "key": "Run", "name": "OneDrive", "enable": false }
 ```
 
+`toggle_startups` 参数：
+
+```json
+{
+  "changes": [
+    { "key": "Run", "name": "OneDrive", "enable": false },
+    { "key": "Run", "name": "Steam", "enable": true }
+  ]
+}
+```
+
+`restore_all` 不需要参数。
+
 ## 启动项启停机制
 
 - 只处理 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 与 `RunOnce`
 - 停用：读取原命令 → 写入 `HKCU\Software\SystemLens\DisabledStartup`（值名 `Run::<名称>`）→ 删除 Run 值
 - 启用：从备份读回命令 → 写回 Run → 删除备份值
 - 删除失败时自动回滚刚写入的备份，避免“两处都存在/都不存在”的不一致
-- 写入后重新读取注册表校验状态；不一致直接报错
+- 每个启动项写入后直接回读注册表校验；不一致标记为“失败”，不影响其余项
+- 每次执行生成快照：`%LOCALAPPDATA%\SystemLens\software_pm\startup-<时间戳>-<进程号>.json`
 
 ## 安全机制
 
@@ -40,8 +56,9 @@ software_pm.exe --stdio
 
 ## 回滚
 
-- 停用后可在同一界面点击“启用（还原）”
+- 停用后可在同一界面点击“启用（还原）”，或点击“恢复全部停用项”一次还原
 - 若工具不可用，可手动把 `HKCU\Software\SystemLens\DisabledStartup` 中对应值写回 Run 键
+- 执行结果写入操作日志与 `software_pm/startup-*.json` 快照，可核对原命令与结果
 
 ## 数据来源
 

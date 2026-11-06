@@ -62,8 +62,12 @@ pub fn validate_base_url(base_url: &str) -> Result<(), String> {
         "https" => Ok(()),
         "http" => {
             let host = parsed.host_str().unwrap_or_default();
-            let loopback = matches!(host, "127.0.0.1" | "localhost" | "::1")
-                || host.starts_with("127.");
+            let host = host.trim_start_matches('[').trim_end_matches(']');
+            let loopback = host.eq_ignore_ascii_case("localhost")
+                || host
+                    .parse::<std::net::IpAddr>()
+                    .map(|address| address.is_loopback())
+                    .unwrap_or(false);
             if loopback {
                 Ok(())
             } else {
@@ -256,6 +260,13 @@ mod tests {
         assert_eq!(settings.model, AiSettings::default().model);
         assert_eq!(settings.max_output_tokens, 4096);
         assert_eq!(settings.timeout_seconds, 10);
+
+        let full_endpoint = AiSettings {
+            base_url: "https://api.example.com/v1/chat/completions/".into(),
+            ..AiSettings::default()
+        }
+        .sanitize();
+        assert_eq!(full_endpoint.base_url, "https://api.example.com/v1");
     }
 
     #[cfg(windows)]

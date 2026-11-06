@@ -4881,6 +4881,31 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
     }
   };
 
+  const restoreAllStartups = async (tool: ToolDescriptor) => {
+    const token = generic?.data.confirmationToken;
+    if (!token) {
+      setApplyError("确认令牌缺失或已使用，请重新运行预览。");
+      return;
+    }
+    if (!window.confirm("确认恢复全部已停用的当前用户启动项？")) return;
+    setApplying(`${tool.id}:restore_all`);
+    setApplyError(null);
+    try {
+      const data = (await runToolAction(
+        tool.id,
+        "restore_all",
+        token,
+        {},
+      )) as ToolResult;
+      setGeneric({ tool, data });
+      setGenericSuccess("已恢复全部停用启动项");
+    } catch (reason) {
+      setApplyError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setApplying(null);
+    }
+  };
+
   const scan = async () => {
     setScanning(true);
     setScanError(null);
@@ -5235,6 +5260,20 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                 <Text size="xs" c="dimmed" mt={4}>
                   停用项会保存到 HKCU\Software\SystemLens\DisabledStartup，可随时还原
                 </Text>
+                {(generic.data.startupItems ?? []).some(
+                  (item) => !item.enabled,
+                ) && (
+                  <Button
+                    size="xs"
+                    mt="xs"
+                    color="teal"
+                    variant="light"
+                    loading={applying === `${generic.tool.id}:restore_all`}
+                    onClick={() => void restoreAllStartups(generic.tool)}
+                  >
+                    恢复全部停用项
+                  </Button>
+                )}
                 <ScrollArea type="auto" mt="xs">
                   <Table miw={760} verticalSpacing="xs">
                     <Table.Thead>
