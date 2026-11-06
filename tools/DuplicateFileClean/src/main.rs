@@ -1,4 +1,4 @@
-use serde_json::{json, Value};
+﻿use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::ffi::c_void;
 use std::fs::File;
@@ -305,7 +305,7 @@ fn preview() -> Result<Value, ToolError> {
         ]),
     );
     if let Value::Object(map) = &mut data {
-        map.insert("duplicateGroups".into(), groups_json(&scan.groups));
+        map.insert("duplicateFileGroups".into(), groups_json(&scan.groups));
     }
     attach_token(&mut data, token);
     Ok(data)

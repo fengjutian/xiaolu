@@ -92,11 +92,11 @@ impl Default for EventLogParams {
 
 impl EventLogParams {
     fn normalized(self) -> EventLogParams {
-        let log_name = match self.log_name.as_str() {
+        let log_name = match self.log_name.trim() {
             "Application" | "application" => "Application",
             _ => "System",
         };
-        let level = match self.level.to_ascii_lowercase().as_str() {
+        let level = match self.level.trim().to_ascii_lowercase().as_str() {
             "critical" => "critical",
             "warning" => "warning",
             "all" => "all",

@@ -15,6 +15,7 @@ import {
   NumberInput,
   Paper,
   Progress,
+  Radio,
   ScrollArea,
   SegmentedControl,
   Slider,
@@ -4763,6 +4764,7 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
   };
 
   const [winoptDraft, setWinoptDraft] = useState<Record<string, number>>({});
+  const [dupKeep, setDupKeep] = useState<Record<string, string>>({});
 
   const updateWinoptValue = (id: string, value: number | string) => {
     const parsed = typeof value === "number" ? value : Number.parseInt(value, 10);
@@ -4810,6 +4812,16 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
       }
       if (tool.id === "winopt_assistant") {
         setWinoptDraft({});
+      }
+      if (tool.id === "DuplicateFileClean") {
+        const groups = (data as ToolResult).duplicateFileGroups ?? [];
+        setDupKeep(
+          Object.fromEntries(
+            groups
+              .filter((group) => group.files.length > 0)
+              .map((group) => [group.id, group.files[0]]),
+          ),
+        );
       }
     } catch (reason) {
       setGenericError(reason instanceof Error ? reason.message : String(reason));
@@ -5257,6 +5269,7 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                 generic.tool.id !== "omni_zip" &&
                 generic.tool.id !== "master_pdf" &&
                 generic.tool.id !== "winopt_assistant" &&
+                generic.tool.id !== "DuplicateFileClean" &&
                 (generic.tool.actions ?? [])
                   .filter((action) => action.write)
                   .map((action) => (
@@ -5300,6 +5313,78 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                   ))}
             </Group>
           )}
+          {generic.tool.id === "DuplicateFileClean" &&
+            (generic.data.duplicateFileGroups?.length ?? 0) > 0 && (
+              <Box mt="md">
+                <Text size="sm" fw={700}>
+                  重复组（选择每组要保留的文件）
+                </Text>
+                <Text size="xs" c="dimmed" mt={4}>
+                  删除前会做完整内容哈希复核；文件移入回收站可还原
+                </Text>
+                <Stack gap="sm" mt="sm">
+                  {(generic.data.duplicateFileGroups ?? []).map(
+                    (group, index) => {
+                      const keep = dupKeep[group.id] ?? group.files[0] ?? "";
+                      return (
+                        <Card key={group.id} withBorder padding="sm">
+                          <Group justify="space-between" align="center">
+                            <Text size="sm" fw={600}>
+                              组 {index + 1} · 单个 {group.size} · 可释放{" "}
+                              {group.reclaim}
+                            </Text>
+                            <Button
+                              size="xs"
+                              color="orange"
+                              variant="light"
+                              loading={
+                                applying ===
+                                `${generic.tool.id}:clean_group`
+                              }
+                              onClick={() =>
+                                void runApply(
+                                  generic.tool,
+                                  {
+                                    id: "clean_group",
+                                    label: "清理该组其余文件",
+                                    write: true,
+                                  },
+                                  { groupId: group.id, keepPath: keep },
+                                )
+                              }
+                            >
+                              清理其余 {group.files.length - 1} 个
+                            </Button>
+                          </Group>
+                          <Stack gap={4} mt="xs">
+                            {group.files.map((file) => (
+                              <Group key={file} gap="xs" wrap="nowrap">
+                                <Radio
+                                  value={file}
+                                  checked={keep === file}
+                                  onChange={() =>
+                                    setDupKeep((current) => ({
+                                      ...current,
+                                      [group.id]: file,
+                                    }))
+                                  }
+                                />
+                                <Text
+                                  size="xs"
+                                  style={{ wordBreak: "break-all" }}
+                                >
+                                  {file}
+                                </Text>
+                              </Group>
+                            ))}
+                          </Stack>
+                        </Card>
+                      );
+                    },
+                  )}
+                </Stack>
+              </Box>
+            )}
           {generic.tool.id === "clean_master" &&
             (generic.data.rows ?? []).some(
               (row) => typeof row.id === "string",

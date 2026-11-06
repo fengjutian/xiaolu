@@ -412,6 +412,15 @@ export interface WinoptSetting {
   requiresAdmin?: boolean;
 }
 
+export interface DuplicateToolGroup {
+  id: string;
+  sizeBytes: number;
+  size: string;
+  reclaimBytes: number;
+  reclaim: string;
+  files: string[];
+}
+
 export interface ServiceItem {
   name: string;
   display: string;
@@ -434,6 +443,7 @@ export interface ToolResult {
   startupItems?: StartupToolItem[];
   systemStartupItems?: StartupToolItem[];
   serviceItems?: ServiceItem[];
+  duplicateFileGroups?: DuplicateToolGroup[];
   journalPath?: string;
   journalDir?: string;
   startupRegistryError?: string;
