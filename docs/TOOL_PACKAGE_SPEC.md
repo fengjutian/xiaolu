@@ -263,7 +263,7 @@ dist-tools/
 | 工具 | 动作 | 回滚方式 |
 |---|---|---|
 | `lockscreen` | `lock` | 无状态变更，解锁即恢复 |
-| `pc_optimizer` | `apply`（切换电源计划） | 日志记录原计划 GUID，重新预览后切回 |
+| `pc_optimizer` | `apply`（切换电源计划）、`apply_settings`（逐项电源设置） | 日志记录原计划 GUID 或每项原值，重新预览后可切回/改回 |
 | `clean_master` | `apply`（勾选固定白名单位置） | 回收站（`FOF_ALLOWUNDO`），可还原到原位置；日志记录每个位置结果 |
 
 ### 尚未实现

@@ -64,7 +64,7 @@ pub fn tools() -> Vec<ToolDescriptor> {
         tool("driver_manager", "驱动管理", "驱动", "驱动检测、更新预检与安装（规划）", "system", true, "partial", "已具备检测与只读预检"),
         tool("gpu_opt", "显卡性能优化", "优化", "显卡电源与游戏配置建议（规划）", "system", true, "planned", "仅建议，不自动改"),
         tool("ai_cooling", "AI 智能降温", "优化", "温度趋势与降频建议（规划）", "read_only", false, "planned", "依赖传感器覆盖"),
-        tool("pc_optimizer", "电脑性能优化", "优化", "预览并切换 Windows 活动电源计划", "system", false, "planned", "工具包未安装"),
+        tool("pc_optimizer", "电脑性能优化", "优化", "预览并调整电源计划与逐项电源设置", "system", false, "planned", "工具包未安装"),
         tool("proc_opt", "电脑智能防卡顿", "优化", "高占用进程识别与建议（规划）", "read_only", false, "planned", "不结束进程"),
         tool("memopt_pro", "内存优化 Pro", "优化", "只读诊断内存占用、提交量与进程排行", "read_only", false, "planned", "工具包未安装"),
         tool("sys_boost", "系统优化大师", "优化", "一键优化候选（规划）", "write", true, "planned", "需回滚与确认"),

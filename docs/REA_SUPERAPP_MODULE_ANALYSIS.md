@@ -108,7 +108,7 @@
 
 其余已登记但未复刻的模块保持在工具箱“规划中”状态，按 P1–P3 顺序逐项评审后再实现：
 
-- P1 低风险写操作：`lockscreen`（会话锁定）、`pc_optimizer`（活动电源计划切换）与 `clean_master`（白名单清理、回收站回滚）已实现确认令牌、审计日志与原值/回滚记录；`winopt_assistant` 已提供 11 项设置的只读体检与手动建议；逐项电源设置、用户确认的启动项修改与 `eye_care` 待实现。
+- P1 低风险写操作：`lockscreen`（会话锁定）、`pc_optimizer`（电源计划切换 + 逐项电源设置）与 `clean_master`（白名单清理、回收站回滚）已实现确认令牌、审计日志与原值/回滚记录；`winopt_assistant` 已提供 11 项设置的只读体检与手动建议；用户确认的启动项修改与 `eye_care` 待实现。
 - P2 独立工具：`omni_zip`、`master_pdf`、`start_menu_pro`、`desktop_quick`。
 - P3 高风险能力：`c_expand`、`adblock_master`、`intercept_bs`、服务批量修改。
 - 暂缓：`multi_wechat`、`push_accelerator`、`push_open_claw`。

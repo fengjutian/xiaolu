@@ -51,9 +51,9 @@ const SETTINGS: [PowerSetting; 5] = [
         setting: "3c0bc021-c8a8-4e07-a973-6b14cbcb2b7e",
         unit: "分钟",
         min: 0,
-        max: 120,
+        max: 300,
         scale: 60,
-        note: "0 表示永不关闭。",
+        note: "0 表示永不关闭；Windows 最长支持 5 小时。",
     },
     PowerSetting {
         id: "sleep",
@@ -879,6 +879,8 @@ mod tests {
         let display = setting_by_id("display-off").expect("display setting");
         assert_eq!(raw_value(display, 10), 600);
         assert_eq!(display_value(display, Some(600)), Some(10));
+        assert!(validate_value(display, 300).is_ok());
+        assert!(validate_value(display, 301).is_err());
     }
 
     #[test]

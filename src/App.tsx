@@ -148,6 +148,7 @@ import type {
   StartupItem,
   SystemHistorySeries,
   SystemSnapshot,
+  PowerSettingOption,
   ToolActionDescriptor,
   ToolDescriptor,
   ToolResult,
@@ -3937,6 +3938,25 @@ function ToolboxPanel() {
   const [applying, setApplying] = useState<string | null>(null);
   const [applyError, setApplyError] = useState<string | null>(null);
   const [selection, setSelection] = useState<string[]>([]);
+  const [powerDraft, setPowerDraft] = useState<
+    Record<string, { ac: number | null; dc: number | null }>
+  >({});
+
+  const updatePowerValue = (
+    id: string,
+    field: "ac" | "dc",
+    value: number | string,
+  ) => {
+    const parsed = typeof value === "number" ? value : Number.parseFloat(value);
+    if (!Number.isFinite(parsed)) return;
+    setPowerDraft((current) => ({
+      ...current,
+      [id]: {
+        ...(current[id] ?? { ac: null, dc: null }),
+        [field]: Math.round(parsed),
+      },
+    }));
+  };
 
   useEffect(() => {
     void listToolboxTools()
@@ -3963,6 +3983,17 @@ function ToolboxPanel() {
                 row.requiresAdmin !== true,
             )
             .map((row) => String(row.id)),
+        );
+      }
+      if (tool.id === "pc_optimizer") {
+        const settings = (data as ToolResult).powerSettings ?? [];
+        setPowerDraft(
+          Object.fromEntries(
+            settings.map((setting) => [
+              setting.id,
+              { ac: setting.ac, dc: setting.dc },
+            ]),
+          ),
         );
       }
     } catch (reason) {
@@ -4038,6 +4069,23 @@ function ToolboxPanel() {
   const usedBytes = slim
     ? Math.max(0, slim.driveTotalBytes - slim.driveFreeBytes)
     : 0;
+  const powerSettings: PowerSettingOption[] = generic?.data.powerSettings ?? [];
+  const powerChanges = powerSettings.flatMap((setting) => {
+    const draft = powerDraft[setting.id];
+    if (
+      !draft ||
+      setting.ac == null ||
+      setting.dc == null ||
+      draft.ac == null ||
+      draft.dc == null
+    ) {
+      return [] as { id: string; ac: number; dc: number }[];
+    }
+    if (draft.ac === setting.ac && draft.dc === setting.dc) {
+      return [] as { id: string; ac: number; dc: number }[];
+    }
+    return [{ id: setting.id, ac: draft.ac, dc: draft.dc }];
+  });
 
   return (
     <Stack gap="md">
@@ -4303,6 +4351,113 @@ function ToolboxPanel() {
                 </Group>
               </Box>
             )}
+          {generic.tool.id === "pc_optimizer" && powerSettings.length > 0 && (
+            <Box mt="md">
+              <Text size="sm" fw={700}>
+                逐项电源设置（当前计划 · 交流 / 电池）
+              </Text>
+              <ScrollArea type="auto" mt="xs">
+                <Table miw={760} verticalSpacing="xs">
+                  <Table.Thead>
+                    <Table.Tr>
+                      <Table.Th>设置项</Table.Th>
+                      <Table.Th>交流电</Table.Th>
+                      <Table.Th>电池</Table.Th>
+                      <Table.Th>范围</Table.Th>
+                      <Table.Th>说明</Table.Th>
+                    </Table.Tr>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {powerSettings.map((setting) => {
+                      const draft = powerDraft[setting.id] ?? {
+                        ac: setting.ac,
+                        dc: setting.dc,
+                      };
+                      const unavailable =
+                        setting.ac == null || setting.dc == null;
+                      return (
+                        <Table.Tr key={setting.id}>
+                          <Table.Td>
+                            <Text size="sm" fw={600}>
+                              {setting.label}
+                            </Text>
+                            {unavailable && (
+                              <Text size="xs" c="orange">
+                                当前计划不可读
+                              </Text>
+                            )}
+                          </Table.Td>
+                          <Table.Td>
+                            <NumberInput
+                              size="xs"
+                              w={110}
+                              min={setting.min}
+                              max={setting.max}
+                              disabled={unavailable}
+                              value={draft.ac ?? ""}
+                              onChange={(value) =>
+                                updatePowerValue(setting.id, "ac", value)
+                              }
+                            />
+                          </Table.Td>
+                          <Table.Td>
+                            <NumberInput
+                              size="xs"
+                              w={110}
+                              min={setting.min}
+                              max={setting.max}
+                              disabled={unavailable}
+                              value={draft.dc ?? ""}
+                              onChange={(value) =>
+                                updatePowerValue(setting.id, "dc", value)
+                              }
+                            />
+                          </Table.Td>
+                          <Table.Td>
+                            <Text size="xs" c="dimmed">
+                              {setting.min}–{setting.max} {setting.unit}
+                            </Text>
+                          </Table.Td>
+                          <Table.Td>
+                            <Text size="xs" c="dimmed">
+                              {setting.note}
+                            </Text>
+                          </Table.Td>
+                        </Table.Tr>
+                      );
+                    })}
+                  </Table.Tbody>
+                </Table>
+              </ScrollArea>
+              <Group mt="sm" align="center">
+                <Button
+                  size="xs"
+                  color="orange"
+                  variant="light"
+                  disabled={powerChanges.length === 0}
+                  loading={applying === `${generic.tool.id}:apply_settings`}
+                  onClick={() =>
+                    void runApply(
+                      generic.tool,
+                      {
+                        id: "apply_settings",
+                        label: "应用电源设置",
+                        write: true,
+                      },
+                      { changes: powerChanges },
+                    )
+                  }
+                >
+                  应用电源设置
+                </Button>
+                <Text size="xs" c="dimmed">
+                  {powerChanges.length > 0
+                    ? `将提交 ${powerChanges.length} 项修改；原值写入本地操作日志`
+                    : "修改数值后可应用；0 表示永不"}
+                </Text>
+              </Group>
+            </Box>
+          )}
           {applyError && (
             <Alert color="red" mt="sm" icon={<IconAlertCircle />}>
               {applyError}
@@ -4752,7 +4907,7 @@ export default function App() {
           </Text>
         </Paper>
         <Text size="xs" c="dimmed">
-          v0.37.0 · 18 个工具 · Windows 优化助手
+          v0.38.0 · 18 个工具 · 逐项电源设置
         </Text>
       </aside>
       <main className="content">

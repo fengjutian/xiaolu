@@ -37,7 +37,7 @@ pc_optimizer.exe --stdio
 |---|---|---|---|
 | `processor-min` | 处理器最小状态 | 0–100 | % |
 | `processor-max` | 处理器最大状态 | 0–100 | % |
-| `display-off` | 关闭显示器 | 0–120 | 分钟 |
+| `display-off` | 关闭显示器 | 0–300 | 分钟 |
 | `sleep` | 睡眠 | 0–1440 | 分钟 |
 | `disk-off` | 关闭硬盘 | 0–1440 | 分钟 |
 
