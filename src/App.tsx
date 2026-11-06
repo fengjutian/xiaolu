@@ -3219,7 +3219,7 @@ function ToolboxPanel() {
     <Stack gap="md">
       <Alert color="blue" icon={<IconShieldCheck />}>
         工具箱按“只读预览 → 逐项确认 → 可回滚执行”推进。当前有 {runnable}{" "}
-        个可运行工具，预览均不会删除或修改任何文件。
+        个可运行工具；只读工具仅预览，写操作会先预览、二次确认并写入本地操作日志。
       </Alert>
       {error && (
         <Alert color="red" icon={<IconAlertCircle />}>

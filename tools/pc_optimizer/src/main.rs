@@ -343,7 +343,7 @@ fn apply(request: &Request) -> Result<Value, ToolError> {
 
     Ok(table(
         json!([
-            item("已切换到", target_name),
+            item("已切换到", target_name.clone()),
             item("原计划", previous_name),
         ]),
         json!([

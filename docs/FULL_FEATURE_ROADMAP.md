@@ -1,7 +1,7 @@
 # 小鲁 System Lens：完整功能规划
 
 版本：0.3 规划稿  
-状态：实施中（0.33.0 十四个只读工具）
+状态：实施中（0.34.0 十六个工具：十四只读 + 二写操作）
 目标平台：Windows 10/11 x64  
 桌面框架：Tauri 2 + React + Rust
 
@@ -230,6 +230,20 @@ v0.33.0 新增（完成 REA 分析的 P0 只读诊断）：
 - 对照 [REA 模块分析](REA_SUPERAPP_MODULE_ANALYSIS.md) 的 P0 清单，
   `defrag`、`gpu_opt`、`ai_cooling`、`memopt_pro`、`software_pm` 五项只读诊断已全部落地
 - 仍只有 preview；写操作、确认令牌、哈希校验与安装包集成未实现
+
+v0.34.0 新增（P1 写操作框架与首批写工具）：
+
+- 确认令牌框架落地：预览签发 HMAC-SHA256 令牌，绑定动作 + 对象摘要 + 5 分钟有效期；
+  密钥由宿主每次启动随机生成并经环境变量下发，前端无法伪造
+- 宿主侧：写动作必须清单声明 `write: true`、非只读、携带令牌；令牌一次性使用；
+  新增参数透传；动作与写标记随工具清单暴露给前端
+- `lockscreen`：预览后确认调用 `LockWorkStation` 锁定当前会话
+- `pc_optimizer`：枚举电源计划（`PowerEnumerate`/`PowerGetActiveScheme`），
+  预览后确认切换活动计划（`PowerSetActiveScheme`），原计划写入操作日志
+- 操作审计：`%LOCALAPPDATA%\SystemLens\tool-actions.jsonl`，只记录工具、动作、
+  对象标识、时间与结果，不记录用户内容
+- 工具箱累计 **16 个可运行工具**（14 只读 + 2 写），规划中 **15 项**
+- 缓存清理、逐项电源设置、启动项修改与哈希校验仍待后续版本
 
 现有代码入口：
 
