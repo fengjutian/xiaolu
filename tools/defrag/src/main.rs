@@ -134,6 +134,15 @@ fn media_kind(media: &str) -> &'static str {
     }
 }
 
+fn mode_allowed(media: &str, mode: &str) -> bool {
+    match mode {
+        "analyze" => true,
+        "optimize" => media == "HDD",
+        "trim" => media == "SSD",
+        _ => false,
+    }
+}
+
 fn volumes_from(payload: &Value) -> Vec<Volume> {
     let mut volumes = Vec::new();
     if let Some(entries) = payload.get("rows").and_then(Value::as_array) {
@@ -324,17 +333,13 @@ fn optimize_disk(request: &Request) -> Result<Value, ToolError> {
         .find(|volume| volume.drive.eq_ignore_ascii_case(drive))
         .ok_or_else(|| ToolError::new("CONFLICT", "卷不存在或不是固定卷。"))?;
     let kind = media_kind(&volume.media);
-    if mode == "optimize" && kind != "HDD" {
-        return Err(ToolError::new(
-            "CONFLICT",
-            "只有 HDD 允许执行传统优化；SSD 请使用 TRIM。",
-        ));
-    }
-    if mode == "trim" && kind != "SSD" {
-        return Err(ToolError::new(
-            "CONFLICT",
-            "TRIM 只适用于 SSD。",
-        ));
+    if !mode_allowed(kind, mode) {
+        let message = if mode == "optimize" {
+            "只有 HDD 允许执行传统优化；SSD 请使用 TRIM。"
+        } else {
+            "TRIM 只适用于 SSD。"
+        };
+        return Err(ToolError::new("CONFLICT", message));
     }
 
     let result = run_elevated(json!({
@@ -424,5 +429,30 @@ mod tests {
             free: 1,
         }];
         assert_ne!(volume_digest(&first), volume_digest(&second));
+    }
+
+    #[test]
+    fn mode_is_limited_by_media() {
+        assert!(mode_allowed("HDD", "optimize"));
+        assert!(!mode_allowed("SSD", "optimize"));
+        assert!(mode_allowed("SSD", "trim"));
+        assert!(!mode_allowed("HDD", "trim"));
+        assert!(mode_allowed("其他", "analyze"));
+        assert!(!mode_allowed("其他", "optimize"));
+    }
+
+    #[test]
+    fn parses_only_volume_rows() {
+        let payload = json!({
+            "rows": [
+                {"kind": "卷", "name": "C:", "fs": "NTFS", "size": 100u64, "free": 40u64, "media": "SSD"},
+                {"kind": "物理磁盘", "name": "Disk 0", "fs": "", "size": 100u64, "free": 0u64, "media": "SSD"}
+            ],
+            "trim": ""
+        });
+        let volumes = volumes_from(&payload);
+        assert_eq!(volumes.len(), 1);
+        assert_eq!(volumes[0].drive, "C");
+        assert_eq!(media_kind(&volumes[0].media), "SSD");
     }
 }

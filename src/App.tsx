@@ -5418,6 +5418,7 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                 generic.tool.id !== "DuplicateFileClean" &&
                 generic.tool.id !== "privacy_protection" &&
                 generic.tool.id !== "proc_opt" &&
+                generic.tool.id !== "defrag" &&
                 (generic.tool.actions ?? [])
                   .filter((action) => action.write)
                   .map((action) => (
@@ -5966,6 +5967,109 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                     </ScrollArea>
                   </Box>
                 )}
+              </Box>
+            )}
+          {generic.tool.id === "defrag" &&
+            (generic.data.volumeItems?.length ?? 0) > 0 && (
+              <Box mt="md">
+                <Text size="sm" fw={700}>
+                  磁盘操作
+                </Text>
+                <Text size="xs" c="dimmed" mt={4}>
+                  分析/优化/TRIM 需要管理员授权；SSD 只允许分析与 TRIM
+                </Text>
+                <Table miw={760} mt="xs" verticalSpacing="xs">
+                  <Table.Thead>
+                    <Table.Tr>
+                      <Table.Th>卷</Table.Th>
+                      <Table.Th>介质</Table.Th>
+                      <Table.Th>容量</Table.Th>
+                      <Table.Th>可用</Table.Th>
+                      <Table.Th>操作</Table.Th>
+                    </Table.Tr>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {(generic.data.volumeItems ?? []).map((volume) => (
+                      <Table.Tr key={volume.drive}>
+                        <Table.Td>
+                          <Text size="sm" fw={600}>
+                            {volume.name}
+                          </Text>
+                        </Table.Td>
+                        <Table.Td>
+                          <Badge size="xs" variant="light">
+                            {volume.media}
+                          </Badge>
+                        </Table.Td>
+                        <Table.Td>{volume.size}</Table.Td>
+                        <Table.Td>{volume.free}</Table.Td>
+                        <Table.Td>
+                          <Group gap={4}>
+                            <Button
+                              size="xs"
+                              variant="light"
+                              loading={
+                                applying ===
+                                `${generic.tool.id}:optimize_disk`
+                              }
+                              onClick={() =>
+                                void runApply(
+                                  generic.tool,
+                                  {
+                                    id: "optimize_disk",
+                                    label: `分析 ${volume.name}`,
+                                    write: true,
+                                  },
+                                  { drive: volume.drive, mode: "analyze" },
+                                )
+                              }
+                            >
+                              分析
+                            </Button>
+                            <Button
+                              size="xs"
+                              variant="light"
+                              color="teal"
+                              disabled={!volume.canOptimize}
+                              onClick={() =>
+                                void runApply(
+                                  generic.tool,
+                                  {
+                                    id: "optimize_disk",
+                                    label: `优化 ${volume.name}`,
+                                    write: true,
+                                  },
+                                  { drive: volume.drive, mode: "optimize" },
+                                )
+                              }
+                            >
+                              优化
+                            </Button>
+                            <Button
+                              size="xs"
+                              variant="light"
+                              color="blue"
+                              disabled={!volume.canTrim}
+                              onClick={() =>
+                                void runApply(
+                                  generic.tool,
+                                  {
+                                    id: "optimize_disk",
+                                    label: `TRIM ${volume.name}`,
+                                    write: true,
+                                  },
+                                  { drive: volume.drive, mode: "trim" },
+                                )
+                              }
+                            >
+                              TRIM
+                            </Button>
+                          </Group>
+                        </Table.Td>
+                      </Table.Tr>
+                    ))}
+                  </Table.Tbody>
+                </Table>
               </Box>
             )}
           {generic.tool.id === "ai_cooling" && (
