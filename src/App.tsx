@@ -5478,6 +5478,7 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                 generic.tool.id !== "privacy_protection" &&
                 generic.tool.id !== "proc_opt" &&
                 generic.tool.id !== "defrag" &&
+                generic.tool.id !== "adblock_master" &&
                 (generic.tool.actions ?? [])
                   .filter((action) => action.write)
                   .map((action) => (
@@ -6028,6 +6029,52 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                 )}
               </Box>
             )}
+          {generic.tool.id === "adblock_master" && (
+            <Box mt="md">
+              <Text size="sm" fw={700}>
+                SystemLens Hosts 规则
+              </Text>
+              <Text size="xs" c="dimmed" mt={4}>
+                每行一个域名；写入需要管理员授权，自动备份，只改标记之间的内容
+              </Text>
+              <Textarea
+                mt="xs"
+                minRows={4}
+                placeholder={"ads.example.com\ntracker.example.com"}
+                value={adblockDomains}
+                onChange={(event) =>
+                  setAdblockDomains(event.currentTarget.value)
+                }
+              />
+              <Group mt="sm" align="center">
+                <Button
+                  size="xs"
+                  color="orange"
+                  variant="light"
+                  loading={applying === `${generic.tool.id}:apply_hosts`}
+                  onClick={() => void applyAdblockHosts(generic.tool)}
+                >
+                  写入 Hosts
+                </Button>
+                <Button
+                  size="xs"
+                  variant="light"
+                  color="red"
+                  loading={applying === `${generic.tool.id}:restore_hosts`}
+                  disabled={
+                    !generic.data.hostsManagedDomains ||
+                    generic.data.hostsManagedDomains === 0
+                  }
+                  onClick={() => void restoreAdblockHosts(generic.tool)}
+                >
+                  移除 SystemLens 规则
+                </Button>
+                <Text size="xs" c="dimmed">
+                  当前管理段：{generic.data.hostsManagedDomains ?? 0} 条
+                </Text>
+              </Group>
+            </Box>
+          )}
           {generic.tool.id === "defrag" &&
             (generic.data.volumeItems?.length ?? 0) > 0 && (
               <Box mt="md">

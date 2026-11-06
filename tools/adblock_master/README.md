@@ -1,6 +1,6 @@
-# adblock_master · 广告拦截（只读审计首版）
+# adblock_master · 广告拦截
 
-首版只做 Hosts / DNS / 浏览器扩展 / 防火墙状态审计，不安装过滤驱动、不注入浏览器。
+审计 Hosts、DNS、浏览器扩展与防火墙状态；可经管理员授权写入或移除 SystemLens 管理的 Hosts 规则段。不安装 WFP/内核过滤驱动。
 
 ## 运行方式
 
@@ -12,31 +12,53 @@ adblock_master.exe --stdio
 
 ## 支持的动作
 
-| 动作 | 说明 |
-|---|---|
-| `preview` | 只读审计并返回表格 |
-| `apply` | 未实现，返回 `UNSUPPORTED_ACTION` |
+| 动作 | 写操作 | 说明 |
+|---|---|---|
+| `preview` | 否 | 审计 Hosts/DNS/扩展/防火墙，返回确认令牌与当前管理段条数 |
+| `apply_hosts` | 是 | UAC 启动 helper，写入 `0.0.0.0 <域名>` 到 SystemLens 管理段 |
+| `restore_hosts` | 是 | UAC 启动 helper，移除 SystemLens 管理段 |
 
-## 检查内容
+`apply_hosts` 参数：
 
-| 项目 | 数据来源 |
-|---|---|
-| Hosts 文件 | `%WINDIR%\System32\drivers\etc\hosts`（阻止/本机/重定向/重复/无效分类） |
-| DNS 服务器 | `Get-DnsClientServerAddress`（IPv4，去重） |
-| 浏览器扩展 | Edge / Chrome 扩展目录数量、Firefox 配置目录数量 |
-| Windows 防火墙 | `Get-NetFirewallProfile` 启用配置文件数量 |
+```json
+{ "domains": ["ads.example.com", "tracker.example.com"] }
+```
+
+## Hosts 管理段
+
+写入内容位于固定标记之间：
+
+```text
+# BEGIN SystemLens AdBlock
+0.0.0.0 ads.example.com
+# END SystemLens AdBlock
+```
+
+- 只替换标记之间的内容，其他 hosts 行原样保留；
+- 首次写入前备份到 `%LOCALAPPDATA%\SystemLens\adblock\hosts.backup`；
+- 写入后尝试 `ipconfig /flushdns`；
+- `restore_hosts` 只移除管理段，不恢复整份备份。
+
+## 安全机制
+
+- 域名逐条校验：长度、标签、字符集，拒绝空格、`..`、首尾连字符；
+- 单次最多 500 个域名，自动去重并转小写；
+- 令牌绑定 Hosts 写操作；取消 UAC 不修改文件；
+- 助手只写固定路径 `%WINDIR%\System32\drivers\etc\hosts`，只操作标记段。
 
 ## 边界
 
-- 只读：不修改 hosts、不新增防火墙/WFP 规则、不安装内核过滤驱动
-- 不注入浏览器、不读取浏览历史或扩展内容
-- 修改 hosts 前请备份；本工具不提供自动写入 hosts
+- 不做内核/WFP 过滤、不注入浏览器、不修改 DNS 服务器；
+- 不内置广告域名列表，规则由用户提供；
+- Hosts 拦截对使用 DoH/代理的浏览器可能无效；
+- 不处理 IPv6 专用规则（统一写 `0.0.0.0`）。
 
 ## 构建与测试
 
 ```powershell
 cargo build --release --manifest-path tools/adblock_master/Cargo.toml
+cargo build --release --manifest-path tools/lens_helper/Cargo.toml
 cargo test --manifest-path tools/adblock_master/Cargo.toml
 ```
 
-测试覆盖 hosts 分类解析、重复域名与空文件。
+打包时把 `lens_helper.exe` 与 `adblock_master.exe` 放在同一目录。
