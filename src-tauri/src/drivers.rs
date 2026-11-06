@@ -1,7 +1,12 @@
 use serde::{Deserialize, Serialize};
 use std::process::Command;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
-#[derive(Debug, Deserialize, Serialize)]
+const INVENTORY_CACHE_TTL: Duration = Duration::from_secs(300);
+static INVENTORY_CACHE: OnceLock<Mutex<Option<(Instant, DriverInventory)>>> = OnceLock::new();
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DriverInfo {
     device_name: String,
@@ -19,7 +24,7 @@ pub struct DriverInfo {
     missing_driver: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DriverInventory {
     captured_at_unix_ms: u128,
@@ -86,11 +91,10 @@ pub fn collect() -> Result<DriverInventory, String> {
 [Console]::OutputEncoding=[Text.Encoding]::UTF8
 $map=@{}
 Get-CimInstance Win32_PnPSignedDriver -ErrorAction SilentlyContinue | ForEach-Object {$map[$_.DeviceID]=$_}
-$items=@()
-Get-CimInstance Win32_PnPEntity -ErrorAction Stop | ForEach-Object {
+$items=@(Get-CimInstance Win32_PnPEntity -ErrorAction Stop | ForEach-Object {
   $e=$_;$d=$map[$e.DeviceID];$missing=$null -eq $d
-  $items+=@{deviceName=if($e.Name){[string]$e.Name}else{'未知设备'};deviceClass=if($e.PNPClass){[string]$e.PNPClass}else{''};manufacturer=if($e.Manufacturer){[string]$e.Manufacturer}else{''};driverProvider=if($d.DriverProviderName){[string]$d.DriverProviderName}else{''};driverVersion=if($d.DriverVersion){[string]$d.DriverVersion}else{''};driverDate=if($d.DriverDate){[string]$d.DriverDate}else{''};infName=if($d.InfName){[string]$d.InfName}else{''};signer=if($d.Signer){[string]$d.Signer}else{''};signed=if($d){[bool]$d.IsSigned}else{$false};deviceId=[string]$e.DeviceID;status=if($e.Status){[string]$e.Status}else{'Unknown'};errorCode=[uint32]$e.ConfigManagerErrorCode;missingDriver=$missing}
-}
+  @{deviceName=if($e.Name){[string]$e.Name}else{'未知设备'};deviceClass=if($e.PNPClass){[string]$e.PNPClass}else{''};manufacturer=if($e.Manufacturer){[string]$e.Manufacturer}else{''};driverProvider=if($d.DriverProviderName){[string]$d.DriverProviderName}else{''};driverVersion=if($d.DriverVersion){[string]$d.DriverVersion}else{''};driverDate=if($d.DriverDate){[string]$d.DriverDate}else{''};infName=if($d.InfName){[string]$d.InfName}else{''};signer=if($d.Signer){[string]$d.Signer}else{''};signed=if($d){[bool]$d.IsSigned}else{$false};deviceId=[string]$e.DeviceID;status=if($e.Status){[string]$e.Status}else{'Unknown'};errorCode=[uint32]$e.ConfigManagerErrorCode;missingDriver=$missing}
+})
 @{items=@($items)}|ConvertTo-Json -Depth 4 -Compress
 "#;
     let output = Command::new("powershell.exe").creation_flags(CREATE_NO_WINDOW)
@@ -119,8 +123,28 @@ pub fn collect() -> Result<DriverInventory, String> {
     Ok(DriverInventory { captured_at_unix_ms: 0, total: 0, signed: 0, unsigned: 0, missing: 0, problems: 0, items: vec![], source: "unsupported".into() })
 }
 
+fn collect_cached() -> Result<DriverInventory, String> {
+    let cache = INVENTORY_CACHE.get_or_init(|| Mutex::new(None));
+    if let Some((captured, inventory)) = cache
+        .lock()
+        .map_err(|_| "驱动清单缓存不可用".to_string())?
+        .as_ref()
+    {
+        if captured.elapsed() < INVENTORY_CACHE_TTL {
+            return Ok(inventory.clone());
+        }
+    }
+
+    let inventory = collect()?;
+    *cache
+        .lock()
+        .map_err(|_| "驱动清单缓存不可用".to_string())? =
+        Some((Instant::now(), inventory.clone()));
+    Ok(inventory)
+}
+
 #[tauri::command]
-pub fn get_driver_inventory() -> Result<DriverInventory, String> { collect() }
+pub fn get_driver_inventory() -> Result<DriverInventory, String> { collect_cached() }
 
 #[cfg(windows)]
 fn scan_updates() -> Result<Vec<DriverUpdate>, String> {
@@ -131,11 +155,10 @@ fn scan_updates() -> Result<Vec<DriverUpdate>, String> {
 $session=New-Object -ComObject Microsoft.Update.Session
 $searcher=$session.CreateUpdateSearcher()
 $result=$searcher.Search("IsInstalled=0 and Type='Driver'")
-$items=@()
-foreach($u in $result.Updates){
-  $categories=@();foreach($c in $u.Categories){$categories+=[string]$c.Name}
-  $items+=@{title=[string]$u.Title;description=[string]$u.Description;updateId=[string]$u.Identity.UpdateID;revisionNumber=[int]$u.Identity.RevisionNumber;driverClass=if($u.DriverClass){[string]$u.DriverClass}else{''};driverManufacturer=if($u.DriverManufacturer){[string]$u.DriverManufacturer}else{''};driverModel=if($u.DriverModel){[string]$u.DriverModel}else{''};driverProvider=if($u.DriverProvider){[string]$u.DriverProvider}else{''};driverVersion=if($u.DriverVerVersion){[string]$u.DriverVerVersion}else{''};driverDate=if($u.DriverVerDate){[string]$u.DriverVerDate}else{''};categories=@($categories);downloaded=[bool]$u.IsDownloaded;driverHardwareId=if($u.DriverHardwareID){[string]$u.DriverHardwareID}else{''};signed=if($null -eq $u.IsSigned){$null}else{[bool]$u.IsSigned}}
-}
+$items=@(foreach($u in $result.Updates){
+  $categories=@($u.Categories | ForEach-Object {[string]$_.Name})
+  @{title=[string]$u.Title;description=[string]$u.Description;updateId=[string]$u.Identity.UpdateID;revisionNumber=[int]$u.Identity.RevisionNumber;driverClass=if($u.DriverClass){[string]$u.DriverClass}else{''};driverManufacturer=if($u.DriverManufacturer){[string]$u.DriverManufacturer}else{''};driverModel=if($u.DriverModel){[string]$u.DriverModel}else{''};driverProvider=if($u.DriverProvider){[string]$u.DriverProvider}else{''};driverVersion=if($u.DriverVerVersion){[string]$u.DriverVerVersion}else{''};driverDate=if($u.DriverVerDate){[string]$u.DriverVerDate}else{''};categories=@($categories);downloaded=[bool]$u.IsDownloaded;driverHardwareId=if($u.DriverHardwareID){[string]$u.DriverHardwareID}else{''};signed=if($null -eq $u.IsSigned){$null}else{[bool]$u.IsSigned}}
+})
 @{items=@($items)}|ConvertTo-Json -Depth 5 -Compress
 "#;
     let output = Command::new("powershell.exe").creation_flags(CREATE_NO_WINDOW)
@@ -274,7 +297,7 @@ fn assess_update(update: &DriverUpdate, inventory: &[DriverInfo]) -> DriverUpdat
 #[tauri::command]
 pub async fn assess_driver_updates() -> Result<DriverAssessmentReport, String> {
     tauri::async_runtime::spawn_blocking(|| {
-        let inventory = collect()?;
+        let inventory = collect_cached()?;
         let updates = scan_updates()?;
         let assessments = updates
             .iter()

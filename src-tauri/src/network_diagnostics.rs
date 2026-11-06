@@ -52,12 +52,12 @@ fn collect() -> Result<NetworkDiagnosticReport, String> {
     const CREATE_NO_WINDOW: u32 = 0x08000000;
     let script = r#"
 [Console]::OutputEncoding=[Text.Encoding]::UTF8
-$gateways=@();Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue|Sort-Object RouteMetric|ForEach-Object{if($_.NextHop -and $_.NextHop -ne '0.0.0.0'){$gateways+=[string]$_.NextHop}}
-$dns=@();Get-DnsClientServerAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue|Where-Object{$_.ServerAddresses.Count -gt 0}|ForEach-Object{$dns+=@{alias=[string]$_.InterfaceAlias;servers=@($_.ServerAddresses|ForEach-Object{[string]$_})}}
+$gateways=@(Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue|Sort-Object RouteMetric|ForEach-Object{if($_.NextHop -and $_.NextHop -ne '0.0.0.0'){[string]$_.NextHop}})
+$dns=@(Get-DnsClientServerAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue|Where-Object{$_.ServerAddresses.Count -gt 0}|ForEach-Object{@{alias=[string]$_.InterfaceAlias;servers=@($_.ServerAddresses|ForEach-Object{[string]$_})}})
 $internet=Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' -ErrorAction SilentlyContinue
 $hostsPath=Join-Path $env:SystemRoot 'System32\drivers\etc\hosts';$hostsCount=0;if(Test-Path $hostsPath){$hostsCount=@(Get-Content $hostsPath -ErrorAction SilentlyContinue|Where-Object{$_.Trim() -and -not $_.Trim().StartsWith('#')}).Count}
 $processNames=@{};Get-Process -ErrorAction SilentlyContinue|ForEach-Object{$processNames[[uint32]$_.Id]=[string]$_.ProcessName}
-$connections=@();Get-NetTCPConnection -State Established -ErrorAction SilentlyContinue|Sort-Object OwningProcess,RemoteAddress,RemotePort|Select-Object -First 200|ForEach-Object{$pidValue=[uint32]$_.OwningProcess;$connections+=@{processName=if($processNames.ContainsKey($pidValue)){$processNames[$pidValue]}else{'未知进程'};pid=$pidValue;localAddress=[string]$_.LocalAddress;localPort=[uint16]$_.LocalPort;remoteAddress=[string]$_.RemoteAddress;remotePort=[uint16]$_.RemotePort;state=[string]$_.State}}
+$connections=@(Get-NetTCPConnection -State Established -ErrorAction SilentlyContinue|Sort-Object OwningProcess,RemoteAddress,RemotePort|Select-Object -First 200|ForEach-Object{$pidValue=[uint32]$_.OwningProcess;@{processName=if($processNames.ContainsKey($pidValue)){$processNames[$pidValue]}else{'未知进程'};pid=$pidValue;localAddress=[string]$_.LocalAddress;localPort=[uint16]$_.LocalPort;remoteAddress=[string]$_.RemoteAddress;remotePort=[uint16]$_.RemotePort;state=[string]$_.State}})
 @{defaultGateways=@($gateways|Select-Object -Unique);dns=@($dns);proxyEnabled=([bool]$internet.ProxyEnable);proxyServer=if($internet.ProxyServer){[string]$internet.ProxyServer}else{''};autoConfigUrl=if($internet.AutoConfigURL){[string]$internet.AutoConfigURL}else{''};hostsCustomEntries=[int]$hostsCount;connections=@($connections)}|ConvertTo-Json -Depth 5 -Compress
 "#;
     let output = Command::new("powershell.exe").creation_flags(CREATE_NO_WINDOW)

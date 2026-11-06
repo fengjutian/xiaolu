@@ -39,11 +39,11 @@ $targets=@(
   @{path='HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*';scope='所有用户';arch='32-bit'},
   @{path='HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*';scope='当前用户';arch='当前用户'}
 )
-$seen=@{};$items=@()
+$seen=@{};$items=[System.Collections.Generic.List[object]]::new()
 foreach($target in $targets){Get-ItemProperty $target.path -ErrorAction SilentlyContinue|ForEach-Object{
   if($_.DisplayName -and -not $_.SystemComponent -and -not $_.ParentKeyName){
     $key=([string]$_.DisplayName+'|'+[string]$_.DisplayVersion+'|'+$target.scope).ToLowerInvariant()
-    if(-not $seen.ContainsKey($key)){$seen[$key]=$true;$items+=@{name=[string]$_.DisplayName;version=if($_.DisplayVersion){[string]$_.DisplayVersion}else{''};publisher=if($_.Publisher){[string]$_.Publisher}else{''};installDate=if($_.InstallDate){[string]$_.InstallDate}else{''};installLocation=if($_.InstallLocation){[string]$_.InstallLocation}else{''};estimatedSizeBytes=if($_.EstimatedSize){[uint64]$_.EstimatedSize*1024}else{0};scope=$target.scope;architecture=$target.arch;uninstallAvailable=([bool]($_.UninstallString -or $_.QuietUninstallString))}}
+    if(-not $seen.ContainsKey($key)){$seen[$key]=$true;$items.Add(@{name=[string]$_.DisplayName;version=if($_.DisplayVersion){[string]$_.DisplayVersion}else{''};publisher=if($_.Publisher){[string]$_.Publisher}else{''};installDate=if($_.InstallDate){[string]$_.InstallDate}else{''};installLocation=if($_.InstallLocation){[string]$_.InstallLocation}else{''};estimatedSizeBytes=if($_.EstimatedSize){[uint64]$_.EstimatedSize*1024}else{0};scope=$target.scope;architecture=$target.arch;uninstallAvailable=([bool]($_.UninstallString -or $_.QuietUninstallString))})}
   }
 }}
 @{items=@($items|Sort-Object name)}|ConvertTo-Json -Depth 4 -Compress
