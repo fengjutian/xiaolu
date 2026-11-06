@@ -21,6 +21,8 @@ export const DEFAULT_AI_SETTINGS: AiSettings = {
   maxOutputTokens: 1200,
   timeoutSeconds: 60,
   nativeTools: false,
+  inputPricePerMillion: 0,
+  outputPricePerMillion: 0,
 };
 
 export async function getAiSettings(): Promise<AiSettingsView> {
@@ -106,6 +108,14 @@ export async function deleteAiSession(sessionId: string): Promise<void> {
 export async function clearAiSessions(): Promise<void> {
   if (!isTauri()) return;
   await invoke("clear_ai_sessions");
+}
+
+export async function setAiSessionFeedback(
+  requestId: string,
+  feedback: "helpful" | "not_helpful" | "inaccurate" | "clear",
+): Promise<void> {
+  if (!isTauri()) return;
+  await invoke("set_ai_session_feedback", { requestId, feedback });
 }
 
 export async function getAiToolAudit(limit = 50): Promise<AiToolAuditEntry[]> {

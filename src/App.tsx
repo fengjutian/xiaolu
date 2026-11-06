@@ -180,6 +180,7 @@ import type {
   WinoptSetting,
   PrivacySetting,
   ProcessItem,
+  ScheduledTaskItem,
   ToolActionDescriptor,
   ToolDescriptor,
   ToolResult,
@@ -5027,6 +5028,39 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
     }
   };
 
+  const setScheduledTaskEnabled = async (
+    tool: ToolDescriptor,
+    item: ScheduledTaskItem,
+  ) => {
+    const token = generic?.data.taskToken;
+    if (!token) {
+      setApplyError("任务令牌缺失或已使用，请重新预览。");
+      return;
+    }
+    const label = item.enabled
+      ? `禁用「${item.name}」`
+      : `启用「${item.name}」`;
+    if (
+      !window.confirm(`确认${label}？将弹出管理员授权（UAC）。`)
+    )
+      return;
+    setApplying(`${tool.id}:set_task_enabled`);
+    setApplyError(null);
+    try {
+      await runToolAction(tool.id, "set_task_enabled", token, {
+        taskPath: item.path,
+        name: item.name,
+        enable: !item.enabled,
+      });
+      setGenericSuccess(`${label}完成，正在刷新…`);
+      await runGeneric(tool);
+    } catch (reason) {
+      setApplyError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setApplying(null);
+    }
+  };
+
   const readElevatedSensors = async (tool: ToolDescriptor) => {
     setApplying(`${tool.id}:read_elevated`);
     setApplyError(null);
@@ -5858,6 +5892,72 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                                     </Button>
                                   ))}
                                 </Group>
+                              </Table.Td>
+                            </Table.Tr>
+                          ))}
+                        </Table.Tbody>
+                      </Table>
+                    </ScrollArea>
+                  </Box>
+                )}
+                {(generic.data.taskItems?.length ?? 0) > 0 && (
+                  <Box mt="lg">
+                    <Text size="sm" fw={700}>
+                      计划任务（非 Microsoft）
+                    </Text>
+                    <Text size="xs" c="dimmed" mt={4}>
+                      启用/禁用需要管理员授权（UAC），由独立助手调用系统 schtasks 执行
+                    </Text>
+                    <ScrollArea type="auto" mt="xs">
+                      <Table miw={820} verticalSpacing="xs">
+                        <Table.Thead>
+                          <Table.Tr>
+                            <Table.Th>任务</Table.Th>
+                            <Table.Th>路径</Table.Th>
+                            <Table.Th>状态</Table.Th>
+                            <Table.Th>操作</Table.Th>
+                          </Table.Tr>
+                        </Table.Thead>
+                        <Table.Tbody>
+                          {(generic.data.taskItems ?? []).map((item) => (
+                            <Table.Tr key={item.path}>
+                              <Table.Td>
+                                <Text size="sm" fw={600}>
+                                  {item.name}
+                                </Text>
+                              </Table.Td>
+                              <Table.Td>
+                                <Text size="xs" c="dimmed">
+                                  {item.path}
+                                </Text>
+                              </Table.Td>
+                              <Table.Td>
+                                <Badge
+                                  size="xs"
+                                  variant="light"
+                                  color={item.enabled ? "teal" : "gray"}
+                                >
+                                  {item.state}
+                                </Badge>
+                              </Table.Td>
+                              <Table.Td>
+                                <Button
+                                  size="xs"
+                                  variant="light"
+                                  color={item.enabled ? "orange" : "teal"}
+                                  loading={
+                                    applying ===
+                                    `${generic.tool.id}:set_task_enabled`
+                                  }
+                                  onClick={() =>
+                                    void setScheduledTaskEnabled(
+                                      generic.tool,
+                                      item,
+                                    )
+                                  }
+                                >
+                                  {item.enabled ? "禁用" : "启用"}
+                                </Button>
                               </Table.Td>
                             </Table.Tr>
                           ))}
@@ -7045,7 +7145,7 @@ export default function App() {
           </Text>
         </Paper>
         <Text size="xs" c="dimmed">
-          v0.55.0 · 25 个工具 · AI 解读
+          v0.56.0 · 25 个工具 · AI 解读
         </Text>
       </aside>
       <main className="content">

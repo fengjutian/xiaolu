@@ -61,6 +61,7 @@ import {
   previewAiPayload,
   probeAiCapabilities,
   saveAiSettings,
+  setAiSessionFeedback,
 } from "./aiApi";
 import type {
   AiAnswer,
@@ -275,6 +276,33 @@ export default function AiPanel() {
   const [capability, setCapability] = useState<AiCapabilityReport | null>(null);
   const [probing, setProbing] = useState(false);
   const [sessionDetail, setSessionDetail] = useState<AiSessionRecord | null>(null);
+  const [feedbackMap, setFeedbackMap] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    const next: Record<string, string> = {};
+    for (const session of sessions) {
+      if (session.feedback) next[session.answer.requestId] = session.feedback;
+    }
+    setFeedbackMap(next);
+  }, [sessions]);
+
+  const submitFeedback = async (
+    requestId: string,
+    feedback: "helpful" | "not_helpful" | "inaccurate" | "clear",
+  ) => {
+    setFeedbackMap((previous) => {
+      const next = { ...previous };
+      if (feedback === "clear") delete next[requestId];
+      else next[requestId] = feedback;
+      return next;
+    });
+    try {
+      await setAiSessionFeedback(requestId, feedback);
+      void getAiSessions().then(setSessions).catch(() => undefined);
+    } catch (reason) {
+      setAnalysisError(reason instanceof Error ? reason.message : String(reason));
+    }
+  };
 
   const refreshAudits = useCallback(async () => {
     try {
@@ -850,6 +878,61 @@ export default function AiPanel() {
                             {entry.answer.usage.completionTokens ?? "—"}）
                           </Text>
                         )}
+                        {entry.answer.estimatedCost != null && (
+                          <Text size="xs" c="dimmed">
+                            估算费用：{entry.answer.estimatedCost.toFixed(4)}（按设置单价）
+                          </Text>
+                        )}
+                      </Group>
+                      <Group mt="xs" gap="xs">
+                        <Text size="xs" c="dimmed">
+                          这个结论有帮助吗？
+                        </Text>
+                        <Button
+                          size="compact-xs"
+                          color="teal"
+                          variant={
+                            feedbackMap[entry.answer.requestId] === "helpful"
+                              ? "filled"
+                              : "subtle"
+                          }
+                          disabled={!desktop}
+                          onClick={() =>
+                            void submitFeedback(entry.answer.requestId, "helpful")
+                          }
+                        >
+                          有帮助
+                        </Button>
+                        <Button
+                          size="compact-xs"
+                          color="gray"
+                          variant={
+                            feedbackMap[entry.answer.requestId] === "not_helpful"
+                              ? "filled"
+                              : "subtle"
+                          }
+                          disabled={!desktop}
+                          onClick={() =>
+                            void submitFeedback(entry.answer.requestId, "not_helpful")
+                          }
+                        >
+                          无帮助
+                        </Button>
+                        <Button
+                          size="compact-xs"
+                          color="orange"
+                          variant={
+                            feedbackMap[entry.answer.requestId] === "inaccurate"
+                              ? "filled"
+                              : "subtle"
+                          }
+                          disabled={!desktop}
+                          onClick={() =>
+                            void submitFeedback(entry.answer.requestId, "inaccurate")
+                          }
+                        >
+                          不准确
+                        </Button>
                       </Group>
                     </Card>
                   );
@@ -1111,6 +1194,40 @@ export default function AiPanel() {
                   }
                   disabled={!desktop}
                 />
+                <NumberInput
+                  label="输入价格 / 1M tokens（可选）"
+                  description="仅用于本地费用估算，不进行计费核对"
+                  min={0}
+                  max={1000}
+                  step={0.01}
+                  decimalScale={4}
+                  value={form.inputPricePerMillion}
+                  onChange={(value) =>
+                    setForm({
+                      ...form,
+                      inputPricePerMillion:
+                        typeof value === "number" ? value : Number(value) || 0,
+                    })
+                  }
+                  disabled={!desktop}
+                />
+                <NumberInput
+                  label="输出价格 / 1M tokens（可选）"
+                  description="按所选服务商单价填写，仅作估算"
+                  min={0}
+                  max={1000}
+                  step={0.01}
+                  decimalScale={4}
+                  value={form.outputPricePerMillion}
+                  onChange={(value) =>
+                    setForm({
+                      ...form,
+                      outputPricePerMillion:
+                        typeof value === "number" ? value : Number(value) || 0,
+                    })
+                  }
+                  disabled={!desktop}
+                />
               </SimpleGrid>
 
               <Switch
@@ -1359,6 +1476,23 @@ export default function AiPanel() {
               {formatTime(sessionDetail.savedAtUnixMs)} · {sessionDetail.answer.provider} ·{" "}
               {sessionDetail.answer.model} · 快照 {sessionDetail.answer.snapshotId}
             </Text>
+            <Group gap="xs">
+              <Badge variant="light" color="gray">
+                反馈：
+                {sessionDetail.feedback === "helpful"
+                  ? "有帮助"
+                  : sessionDetail.feedback === "not_helpful"
+                    ? "无帮助"
+                    : sessionDetail.feedback === "inaccurate"
+                      ? "不准确"
+                      : "未反馈"}
+              </Badge>
+              {sessionDetail.answer.estimatedCost != null && (
+                <Badge variant="light" color="blue">
+                  估算费用 {sessionDetail.answer.estimatedCost.toFixed(4)}
+                </Badge>
+              )}
+            </Group>
             <Text fw={700}>{sessionDetail.question ?? "本机健康解读"}</Text>
             {sessionDetail.answer.degraded ? (
               <Alert color="orange" icon={<IconAlertCircle />} title="已降级">

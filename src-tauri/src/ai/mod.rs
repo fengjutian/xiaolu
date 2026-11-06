@@ -100,6 +100,18 @@ fn now_unix_ms() -> u64 {
         .as_millis() as u64
 }
 
+fn estimate_cost(settings: &AiSettings, usage: Option<&AiUsage>) -> Option<f64> {
+    let usage = usage?;
+    if settings.input_price_per_million <= 0.0 && settings.output_price_per_million <= 0.0 {
+        return None;
+    }
+    let input = usage.prompt_tokens.unwrap_or(0) as f64;
+    let output = usage.completion_tokens.unwrap_or(0) as f64;
+    let cost = input / 1_000_000.0 * settings.input_price_per_million
+        + output / 1_000_000.0 * settings.output_price_per_million;
+    Some((cost * 10_000.0).round() / 10_000.0)
+}
+
 fn validate_request_id(request_id: &str) -> Result<(), String> {
     if request_id.len() < 6 || request_id.len() > 64 {
         return Err("请求标识长度无效。".to_string());
@@ -248,6 +260,7 @@ fn fallback_answer(
         local_findings: snapshot.local_findings.clone(),
         usage: None,
         checks: Vec::new(),
+        estimated_cost: None,
     }
 }
 
@@ -556,8 +569,9 @@ async fn run_model_analysis(
         findings: turn.validated.findings,
         limitations: turn.validated.limitations,
         local_findings: snapshot.local_findings.clone(),
-        usage,
+        usage: usage.clone(),
         checks,
+        estimated_cost: estimate_cost(&settings, usage.as_ref()),
     })
 }
 
@@ -629,6 +643,23 @@ pub async fn delete_ai_session(app: AppHandle, session_id: String) -> Result<(),
 #[tauri::command]
 pub async fn clear_ai_sessions(app: AppHandle) -> Result<(), String> {
     store::clear(&app)
+}
+
+#[tauri::command]
+pub async fn set_ai_session_feedback(
+    app: AppHandle,
+    request_id: String,
+    feedback: String,
+) -> Result<(), String> {
+    validate_request_id(&request_id)?;
+    let value = match feedback.as_str() {
+        "helpful" => Some("helpful"),
+        "not_helpful" => Some("not_helpful"),
+        "inaccurate" => Some("inaccurate"),
+        "clear" => None,
+        _ => return Err("不支持的反馈类型。".to_string()),
+    };
+    store::set_feedback(&app, &request_id, value)
 }
 
 #[tauri::command]
@@ -819,5 +850,24 @@ mod tests {
         assert!(is_json_object_text("```json\n{\"ok\":true}\n```"));
         assert!(!is_json_object_text("OK"));
         assert!(!is_json_object_text("[1,2,3]"));
+    }
+
+    #[test]
+    fn estimates_cost_only_when_prices_are_configured() {
+        let usage = AiUsage {
+            prompt_tokens: Some(1_000_000),
+            completion_tokens: Some(500_000),
+            total_tokens: Some(1_500_000),
+        };
+        let free = AiSettings::default();
+        assert_eq!(estimate_cost(&free, Some(&usage)), None);
+
+        let priced = AiSettings {
+            input_price_per_million: 10.0,
+            output_price_per_million: 20.0,
+            ..AiSettings::default()
+        };
+        assert_eq!(estimate_cost(&priced, Some(&usage)), Some(20.0));
+        assert_eq!(estimate_cost(&priced, None), None);
     }
 }

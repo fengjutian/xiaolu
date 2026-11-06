@@ -20,6 +20,8 @@ pub struct AiSessionRecord {
     pub saved_at_unix_ms: u64,
     pub question: Option<String>,
     pub answer: AiAnswer,
+    #[serde(default)]
+    pub feedback: Option<String>,
 }
 
 fn sessions_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -59,6 +61,7 @@ pub fn append(app: &AppHandle, question: Option<String>, answer: &AiAnswer) -> R
         saved_at_unix_ms: saved_at,
         question,
         answer: answer.clone(),
+        feedback: None,
     });
     if sessions.len() > MAX_SESSIONS {
         sessions.sort_by_key(|record| record.saved_at_unix_ms);
@@ -79,8 +82,30 @@ pub fn list(app: &AppHandle) -> Vec<AiSessionRecord> {
     sessions
 }
 
-pub fn delete(app: &AppHandle, session_id: &str) -> Result<(), String> {
+pub fn set_feedback(
+    app: &AppHandle,
+    request_id: &str,
+    feedback: Option<&str>,
+) -> Result<(), String> {
     let _guard = match STORE_LOCK.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let mut sessions = read_sessions(app);
+    let mut changed = false;
+    for record in sessions.iter_mut() {
+        if record.answer.request_id == request_id {
+            record.feedback = feedback.map(str::to_string);
+            changed = true;
+        }
+    }
+    if !changed {
+        return Ok(());
+    }
+    write_sessions(app, &sessions)
+}
+
+pub fn delete(app: &AppHandle, session_id: &str) -> Result<(), String> {    let _guard = match STORE_LOCK.lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
     };

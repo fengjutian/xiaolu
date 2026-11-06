@@ -262,6 +262,15 @@ mod tests {
         assert_eq!(settings.max_output_tokens, 4096);
         assert_eq!(settings.timeout_seconds, 10);
 
+        let prices = AiSettings {
+            input_price_per_million: -1.0,
+            output_price_per_million: f64::NAN,
+            ..AiSettings::default()
+        }
+        .sanitize();
+        assert_eq!(prices.input_price_per_million, 0.0);
+        assert_eq!(prices.output_price_per_million, 0.0);
+
         let full_endpoint = AiSettings {
             base_url: "https://api.example.com/v1/chat/completions/".into(),
             ..AiSettings::default()

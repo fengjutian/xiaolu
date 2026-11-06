@@ -137,6 +137,8 @@ pub struct AiSettings {
     pub max_output_tokens: u32,
     pub timeout_seconds: u32,
     pub native_tools: bool,
+    pub input_price_per_million: f64,
+    pub output_price_per_million: f64,
 }
 
 impl Default for AiSettings {
@@ -149,6 +151,8 @@ impl Default for AiSettings {
             max_output_tokens: 1200,
             timeout_seconds: 60,
             native_tools: false,
+            input_price_per_million: 0.0,
+            output_price_per_million: 0.0,
         }
     }
 }
@@ -177,7 +181,17 @@ impl AiSettings {
             max_output_tokens: self.max_output_tokens.clamp(128, 4096),
             timeout_seconds: self.timeout_seconds.clamp(10, 180),
             native_tools: self.native_tools,
+            input_price_per_million: sanitize_price(self.input_price_per_million),
+            output_price_per_million: sanitize_price(self.output_price_per_million),
         }
+    }
+}
+
+fn sanitize_price(value: f64) -> f64 {
+    if value.is_finite() {
+        value.clamp(0.0, 1000.0)
+    } else {
+        0.0
     }
 }
 
@@ -278,6 +292,8 @@ pub struct AiAnswer {
     pub usage: Option<AiUsage>,
     #[serde(default)]
     pub checks: Vec<AiToolRun>,
+    #[serde(default)]
+    pub estimated_cost: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

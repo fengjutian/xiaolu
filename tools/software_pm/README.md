@@ -20,6 +20,7 @@ software_pm.exe --stdio
 | `restore_all` | 是 | 恢复所有已停用的当前用户启动项 |
 | `toggle_system_startup` | 是 | 通过 UAC 启动 `lens_helper.exe` 启停一个系统级（HKLM）启动项 |
 | `set_service_start` | 是 | 通过 UAC 修改第三方 Win32 服务的启动类型（自动/手动/禁用） |
+| `set_task_enabled` | 是 | 通过 UAC 调用系统 `schtasks` 启用/禁用非 Microsoft 计划任务 |
 
 `toggle_startup` 参数：
 
@@ -68,11 +69,19 @@ software_pm.exe --stdio
 - 修改由 `lens_helper.exe` 的 `service_set_start` 操作完成，逐次 UAC；只改 Start 值，不停止正在运行的服务，重启后完全生效。
 - 写入后回读校验，不一致会返回错误，不会假装成功。
 
+## 计划任务
+
+- 列表只包含非 `\Microsoft\*` 的任务，包含已禁用任务；状态来自 `Get-ScheduledTask`。
+- 启用/禁用由 `lens_helper.exe` 的 `task_set_enabled` 操作完成，逐次 UAC。
+- 助手只调用系统 `schtasks.exe /Change /TN <路径> /ENABLE|/DISABLE`，参数以数组传入，不经过 cmd/shell。
+- 任务路径必须是 `\` 开头的绝对路径，拒绝空段、`..`、引号和控制字符。
+- 执行后重新读取任务列表确认状态；不一致会返回错误。
+
 ## 安全机制
 
 - 令牌绑定“当前用户启动项集合（键、名称、命令、启用状态）”；集合变化后旧令牌失效
 - 参数只接受 `Run`/`RunOnce` 与合法值名；值名不能包含 `::`
-- 服务、计划任务、通知与防火墙规则保持只读；系统级启动项只能经独立 helper 处理
+- 通知与防火墙规则保持只读；系统级启动项、服务启动类型、计划任务只能经独立 helper 处理
 - 操作写入 `%LOCALAPPDATA%\SystemLens\tool-actions.jsonl`（只记录键、名称、启用与否，不记录命令）
 
 ## 回滚
@@ -101,8 +110,7 @@ cargo test --manifest-path tools/lens_helper/Cargo.toml
 
 ## 限制
 
-- 服务与计划任务只读查看；服务启动类型可改，计划任务修改尚未实现。
-- 系统级启动项与服务启动类型需要用户逐次授权 UAC。
+- 服务启动类型与计划任务启停需要用户逐次授权 UAC。
 - 防火墙仅统计已启用规则数量，不列出单条明细。
 - 表格按类别截断：启动项 40、自动服务 60、计划任务 40、通知 20。
 - 部分 WMI/防火墙查询在受限权限或精简系统上可能失败，失败原因写入“说明”区。

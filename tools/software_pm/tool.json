@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "id": "software_pm",
   "name": "软件权限管理",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "apiVersion": 1,
-  "description": "查看启动项/服务/计划任务/通知；用户级/系统级启动项与第三方服务启动类型可修改",
+  "description": "查看并管理启动项、第三方服务启动类型与非 Microsoft 计划任务",
   "category": "工具箱",
   "risk": "write",
   "entry": "software_pm.exe",
@@ -31,7 +31,8 @@
     { "id": "toggle_startups", "label": "批量启停启动项", "write": true, "requiresConfirmation": true },
     { "id": "restore_all", "label": "恢复全部停用项", "write": true, "requiresConfirmation": true },
     { "id": "toggle_system_startup", "label": "启停系统级启动项（需 UAC）", "write": true, "requiresConfirmation": true },
-    { "id": "set_service_start", "label": "修改服务启动类型（需 UAC）", "write": true, "requiresConfirmation": true }
+    { "id": "set_service_start", "label": "修改服务启动类型（需 UAC）", "write": true, "requiresConfirmation": true },
+    { "id": "set_task_enabled", "label": "启用/禁用计划任务（需 UAC）", "write": true, "requiresConfirmation": true }
   ],
   "limits": { "timeoutMs": 120000, "maxOutputBytes": 4194304 },
   "ui": { "kind": "table" },

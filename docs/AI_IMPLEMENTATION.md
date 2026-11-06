@@ -1,7 +1,7 @@
 # AI 健康解读：实现说明与安全边界
 
 - 状态：AI-0、AI-1 已实现；AI-2 只读工具网关与 AI-3 能力探测首版已实现
-- 版本：0.55.0
+- 版本：0.56.0
 - 关联文档：[AI 能力需求](AI_REQUIREMENTS.md)、[项目需求](../PROJECT_REQUIREMENTS.md)
 
 ## 1. 已实现范围
@@ -19,6 +19,7 @@
 | 密钥保护 | Windows DPAPI（当前用户）加密到独立凭据文件；设置 JSON/日志/回答中不出现密钥 |
 | 发送预览 | `preview_ai_payload` 返回脱敏后的完整诊断载荷、估算输入 token 和脱敏摘要 |
 | 本地会话 | 回答自动保存到 app data 的 `ai-sessions.json`（最多 50 条）；支持逐条删除和全部清除，不保存原始事实和 API 密钥 |
+| 反馈与费用 | 每条回答可标记“有帮助/无帮助/不准确”，写入本地会话；可配置输入/输出单价，按 token 用量在本地估算费用 |
 | 会话绑定 | 历史追问按 `snapshotId` 过滤；快照变化后旧回答在界面标记为历史结果 |
 | 只读检查编排（AI-2） | 模型可请求白名单只读检查；每轮最多 3 项、最多 2 轮、总上限 6 项；宿主校验参数、限制超时、顺序执行、脱敏并截断结果，再发起最终解读 |
 | 多轮与原生工具调用 | 支持 OpenAI `tools` / `tool_calls` 流式协议，最多 2 轮、共 6 项只读检查；也可使用受控 `requestedChecks` JSON 计划协议（最多 2 轮） |
@@ -79,7 +80,7 @@ AiAnswer（含 checks、证据、限制、token 用量）
 
 设置与凭据位置（Tauri 配置目录）：
 
-- `ai-settings.json`：启用状态、Provider、HTTPS 地址、模型名、token 上限、超时；
+- `ai-settings.json`：启用状态、Provider、HTTPS 地址、模型名、token 上限、超时；可选输入/输出单价仅用于本地费用估算；
 - `ai-credentials.bin`：`SLK1` + DPAPI 密文；
 - `ai-sessions.json`：最近 50 条 AI 回答与追问（应用数据目录，不含原始事实、载荷或密钥），可在页面逐条删除或全部清除；
 - `ai-tool-audit.jsonl`：只读检查审计元数据（应用数据目录），不含结果正文。

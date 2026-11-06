@@ -1,6 +1,6 @@
 import type { AiFinding, AiSessionRecord, DiagnosticFact, DiagnosticSnapshot } from "./types";
 
-const APP_VERSION = "0.55.0";
+const APP_VERSION = "0.56.0";
 
 const factMap = (snapshot?: DiagnosticSnapshot | null) => {
   const map = new Map<string, DiagnosticFact>();
@@ -16,6 +16,15 @@ const compact = (value: unknown, max = 300) => {
     return String(value);
   }
 };
+
+const feedbackLabel = (feedback?: string | null) =>
+  feedback === "helpful"
+    ? "有帮助"
+    : feedback === "not_helpful"
+      ? "无帮助"
+      : feedback === "inaccurate"
+        ? "不准确"
+        : "未反馈";
 
 const findingLines = (finding: AiFinding, facts: Map<string, DiagnosticFact>) => {
   const lines: string[] = [];
@@ -65,6 +74,10 @@ export function buildAiSectionMarkdown(records: AiSessionRecord[]): string[] {
       `- 提示词版本：${answer.promptVersion}`,
       `- 快照：${answer.snapshotId}`,
       `- 状态：${answer.degraded ? "已降级（使用本地规则）" : "AI 正常输出"}`,
+      `- 用户反馈：${feedbackLabel(record.feedback)}`,
+      ...(answer.estimatedCost != null
+        ? [`- 估算费用：${answer.estimatedCost.toFixed(4)}（按设置单价）`]
+        : []),
       "",
     );
     if (answer.degraded) {
@@ -140,6 +153,10 @@ export function buildAiReportMarkdown(
       `- 提示词版本：${answer.promptVersion}`,
       `- 快照：${answer.snapshotId}`,
       `- 状态：${answer.degraded ? "已降级（使用本地规则）" : "AI 正常输出"}`,
+      `- 用户反馈：${feedbackLabel(record.feedback)}`,
+      ...(answer.estimatedCost != null
+        ? [`- 估算费用：${answer.estimatedCost.toFixed(4)}（按设置单价）`]
+        : []),
       "",
     );
     if (answer.degraded) {

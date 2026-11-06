@@ -437,6 +437,13 @@ export interface ServiceItem {
   path: string;
 }
 
+export interface ScheduledTaskItem {
+  path: string;
+  name: string;
+  state: string;
+  enabled: boolean;
+}
+
 export interface ProcessItem {
   name: string;
   pid: number;
@@ -468,6 +475,8 @@ export interface ToolResult {
   privacySettings?: PrivacySetting[];
   privacyUndo?: { id: string; value: string }[];
   processItems?: ProcessItem[];
+  taskItems?: ScheduledTaskItem[];
+  taskToken?: string;
   journalPath?: string;
   journalDir?: string;
   startupRegistryError?: string;
@@ -896,6 +905,8 @@ export interface AiSettings {
   maxOutputTokens: number;
   timeoutSeconds: number;
   nativeTools: boolean;
+  inputPricePerMillion: number;
+  outputPricePerMillion: number;
 }
 
 export interface AiCapabilityReport {
@@ -965,6 +976,7 @@ export interface AiAnswer {
   localFindings: AiFinding[];
   usage: AiUsage | null;
   checks?: AiToolRun[];
+  estimatedCost?: number | null;
 }
 
 export interface AiTurn {
@@ -986,6 +998,7 @@ export interface AiSessionRecord {
   savedAtUnixMs: number;
   question: string | null;
   answer: AiAnswer;
+  feedback?: string | null;
 }
 
 export interface AiToolAuditEntry {

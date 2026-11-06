@@ -397,6 +397,11 @@ fn set_task_enabled(task_path: &str, enable: bool) -> Result<String, String> {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
         let detail = if stderr.is_empty() { stdout } else { stderr };
+        let detail = if detail.contains('\u{fffd}') || detail.is_empty() {
+            format!("退出码 {:?}", output.status.code())
+        } else {
+            detail
+        };
         return Err(format!("schtasks 执行失败：{detail}"));
     }
     Ok(if enable {
