@@ -21,6 +21,7 @@ import {
   Stack,
   Switch,
   Table,
+  Tabs,
   Text,
   TextInput,
   ThemeIcon,
@@ -835,6 +836,21 @@ function SensorsPanel({ data }: { data: SensorSnapshot | null }) {
         </Alert>
       ))}
 
+      <Tabs defaultValue="sensors" className="sensor-tabs" keepMounted={false}>
+        <Tabs.List className="sensor-tabs-list">
+          <Tabs.Tab value="sensors" leftSection={<IconActivity size={17} />}>
+            实时与趋势
+          </Tabs.Tab>
+          <Tabs.Tab value="storage" leftSection={<IconServer size={17} />}>
+            磁盘健康
+          </Tabs.Tab>
+          <Tabs.Tab value="settings" leftSection={<IconTool size={17} />}>
+            告警设置
+          </Tabs.Tab>
+        </Tabs.List>
+
+        <Tabs.Panel value="sensors" pt="md">
+          <Stack gap="md">
       <Card className="glass-card history-card" radius="lg">
         <Group className="history-toolbar" justify="space-between" align="flex-start" wrap="wrap">
           <Box className="history-heading">
@@ -1035,6 +1051,12 @@ function SensorsPanel({ data }: { data: SensorSnapshot | null }) {
           ))}
         </Group>
       </Card>
+
+          </Stack>
+        </Tabs.Panel>
+
+        <Tabs.Panel value="storage" pt="md">
+          <Stack gap="md">
 
       <Title order={3} mt="sm">
         物理磁盘健康
@@ -1314,6 +1336,12 @@ function SensorsPanel({ data }: { data: SensorSnapshot | null }) {
         )}
       </Card>
 
+          </Stack>
+        </Tabs.Panel>
+
+        <Tabs.Panel value="settings" pt="md">
+          <Stack gap="md">
+
       {draft && (
         <Card className="glass-card" radius="lg">
           <Group justify="space-between" align="flex-start">
@@ -1492,6 +1520,13 @@ function SensorsPanel({ data }: { data: SensorSnapshot | null }) {
           )}
         </Card>
       )}
+
+          {!draft && !notifySettings && (
+            <Alert color="gray">设置正在加载，请稍候。</Alert>
+          )}
+          </Stack>
+        </Tabs.Panel>
+      </Tabs>
     </Stack>
   );
 }
