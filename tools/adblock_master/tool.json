@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "adblock_master",
+  "name": "广告拦截",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "description": "只读审计 Hosts、DNS、浏览器扩展与防火墙状态（不安装过滤驱动）",
+  "category": "工具箱",
+  "risk": "read_only",
+  "entry": "adblock_master.exe",
+  "arguments": ["--stdio"],
+  "permissions": {
+    "readPaths": ["%WINDIR%\\System32\\drivers\\etc\\hosts"],
+    "writePaths": [],
+    "registry": [],
+    "network": false,
+    "elevation": "none"
+  },
+  "actions": [{ "id": "preview", "label": "审计", "write": false }],
+  "limits": { "timeoutMs": 60000, "maxOutputBytes": 1048576 },
+  "ui": { "kind": "table" },
+  "rollback": "none",
+  "hash": "",
+  "signature": null
+}

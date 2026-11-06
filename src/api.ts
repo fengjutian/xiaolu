@@ -1,5 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import type { BenchmarkPreflight, BenchmarkRecord, BenchmarkResult, CleanupPreview, DeviceDetails, DiagnosticReport, DirectoryListing, DriverAssessmentReport, DriverInventory, DriverUpdate, DuplicateScan, AppSettings, AppPaths, EventLogResult, EyeCareSettings, EyeCareStatus, HardwareDetails, LargeFileScan, NetworkDiagnosticReport, NotificationOutcome, NotificationSettings, ProcessInfo, NvmeHealthReport, ScheduledTaskInventory, SensorHistorySeries, SensorSettings, SensorSnapshot, SensorValue, SlimScan, SoftwareInventory, StartupItem, StorageDrive, StorageKind, StorageScan, SystemHistorySeries, SystemSnapshot, ToolDescriptor } from "./types";
+import type { BenchmarkPreflight, BenchmarkRecord, BenchmarkResult, CleanupPreview, DesktopOverview, DeviceDetails, DiagnosticReport, DirectoryListing, DriverAssessmentReport, DriverInventory, DriverUpdate, DuplicateScan, AppSettings, AppPaths, EventLogResult, EyeCareSettings, EyeCareStatus, HardwareDetails, LargeFileScan, LaunchEntry, NetworkDiagnosticReport, NotificationOutcome, NotificationSettings, ProcessInfo, NvmeHealthReport, ScheduledTaskInventory, SensorHistorySeries, SensorSettings, SensorSnapshot, SensorValue, SlimScan, SoftwareInventory, StartupItem, StorageDrive, StorageKind, StorageScan, SystemHistorySeries, SystemSnapshot, ToolDescriptor } from "./types";
 
 const gib = 1024 ** 3;
 
@@ -413,6 +413,45 @@ export async function sendBreakReminder(): Promise<NotificationOutcome> {
     return { status: "disabled", message: "浏览器演示不发送系统通知。" };
   }
   return invoke<NotificationOutcome>("send_break_reminder");
+}
+export async function getDesktopOverview(): Promise<DesktopOverview> {
+  if (!isTauri()) {
+    return {
+      desktopPath: "C:\\Users\\Demo\\Desktop",
+      documentsPath: "C:\\Users\\Demo\\Documents",
+      downloadsPath: "C:\\Users\\Demo\\Downloads",
+      total: 2,
+      errorCount: 0,
+      items: [
+        { name: "报告.docx", path: "C:\\Users\\Demo\\Desktop\\报告.docx", isDir: false, extension: "docx", bytes: 2_048_000, modifiedUnixMs: Date.now() - 86_400_000 },
+        { name: "项目", path: "C:\\Users\\Demo\\Desktop\\项目", isDir: true, extension: "", bytes: 0, modifiedUnixMs: Date.now() - 3_600_000 },
+      ],
+    };
+  }
+  return invoke<DesktopOverview>("get_desktop_overview");
+}
+
+export async function openDesktopItem(path: string): Promise<string> {
+  if (!isTauri()) return "浏览器演示不打开文件。";
+  return invoke<string>("open_desktop_item", { path });
+}
+export async function listStartMenuApps(): Promise<LaunchEntry[]> {
+  if (!isTauri()) {
+    return [
+      { name: "记事本", source: "开始菜单", target: "C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\Accessories\\notepad.lnk", appId: "", targetPath: "C:\\Windows\\notepad.exe", arguments: "" },
+      { name: "计算器", source: "应用", target: "", appId: "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App", targetPath: "", arguments: "" },
+    ];
+  }
+  return invoke<LaunchEntry[]>("list_start_menu_apps");
+}
+
+export async function launchStartMenuEntry(
+  kind: "shortcut" | "app",
+  target: string,
+  appId: string,
+): Promise<string> {
+  if (!isTauri()) return "浏览器演示不启动程序。";
+  return invoke<string>("launch_start_menu_entry", { kind, target, appId });
 }
 export async function getStorageDrives(): Promise<StorageDrive[]> {
   if (!isTauri()) {

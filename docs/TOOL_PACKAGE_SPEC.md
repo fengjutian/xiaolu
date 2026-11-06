@@ -3,7 +3,7 @@
 - 文档状态：规范稿，待评审
 - 版本：0.1
 - 日期：2026-11-05
-- 适用：小鲁 System Lens 工具箱（31 项 SuperApp 工具）
+- 适用：小鲁 System Lens 工具箱（29 项 SuperApp 工具）
 - 关联：[功能需求 v2](FEATURE_REQUIREMENTS_V2.md)
 
 ## 1. 目标
@@ -266,6 +266,8 @@ dist-tools/
 | `pc_optimizer` | `apply`（切换电源计划）、`apply_settings`（逐项电源设置） | 日志记录原计划 GUID 或每项原值，重新预览后可切回/改回 |
 | `clean_master` | `apply`（勾选固定白名单位置） | 回收站（`FOF_ALLOWUNDO`），可还原到原位置；日志记录每个位置结果 |
 | `software_pm` | `toggle_startup`（当前用户 Run/RunOnce） | 停用项暂存 `HKCU\Software\SystemLens\DisabledStartup`，可一键还原 |
+| `omni_zip` | `apply`（压缩/解压） | 不修改源文件；默认拒绝覆盖，解压跳过已存在文件 |
+| `master_pdf` | `apply`（合并/拆分/旋转） | 输出新 PDF，输入不变；默认拒绝覆盖 |
 
 > `eye_care` 为应用内页面而非独立工具进程：Gamma Ramp 色温滤镜 + 定时休息提醒，
 > 不经过工具箱 stdio 协议，也不参与工具签名/哈希校验。

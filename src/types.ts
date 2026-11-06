@@ -358,6 +358,31 @@ export interface AppPaths {
   dataDir: string;
   configDir: string;
 }
+export interface DesktopItem {
+  name: string;
+  path: string;
+  isDir: boolean;
+  extension: string;
+  bytes: number;
+  modifiedUnixMs: number | null;
+}
+
+export interface DesktopOverview {
+  desktopPath: string;
+  documentsPath: string;
+  downloadsPath: string;
+  items: DesktopItem[];
+  total: number;
+  errorCount: number;
+}
+export interface LaunchEntry {
+  name: string;
+  source: string;
+  target: string;
+  appId: string;
+  targetPath: string;
+  arguments: string;
+}
 export interface PowerSettingOption {
   id: string;
   label: string;

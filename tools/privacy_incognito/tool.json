@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "id": "privacy_incognito",
+  "name": "无痕模式",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "description": "只读扫描浏览器数据、最近文件、跳转列表、剪贴板与 DNS 痕迹",
+  "category": "隐私",
+  "risk": "read_only",
+  "entry": "privacy_incognito.exe",
+  "arguments": ["--stdio"],
+  "permissions": {
+    "readPaths": [
+      "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\Default",
+      "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default",
+      "%APPDATA%\\Mozilla\\Firefox\\Profiles",
+      "%APPDATA%\\Microsoft\\Windows\\Recent"
+    ],
+    "writePaths": [],
+    "registry": [],
+    "network": false,
+    "elevation": "none"
+  },
+  "actions": [{ "id": "preview", "label": "扫描", "write": false }],
+  "limits": { "timeoutMs": 120000, "maxOutputBytes": 1048576 },
+  "ui": { "kind": "table" },
+  "rollback": "none",
+  "hash": "",
+  "signature": null
+}

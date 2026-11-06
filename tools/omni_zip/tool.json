@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "id": "omni_zip",
+  "name": "Windows 压缩工具",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "description": "压缩、解压与查看 ZIP；路径校验、Zip-Slip 防护与覆盖保护",
+  "category": "工具箱",
+  "risk": "write",
+  "entry": "omni_zip.exe",
+  "arguments": ["--stdio"],
+  "permissions": {
+    "readPaths": ["用户选择的绝对路径"],
+    "writePaths": ["用户选择的压缩包与解压目录"],
+    "registry": [],
+    "network": false,
+    "elevation": "none"
+  },
+  "actions": [
+    { "id": "preview", "label": "预览", "write": false },
+    { "id": "apply", "label": "压缩/解压", "write": true, "requiresConfirmation": true },
+    { "id": "list", "label": "查看列表", "write": false }
+  ],
+  "limits": { "timeoutMs": 300000, "maxOutputBytes": 4194304 },
+  "ui": { "kind": "table" },
+  "rollback": "none",
+  "hash": "",
+  "signature": null
+}

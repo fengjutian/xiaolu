@@ -26,6 +26,7 @@ import {
   Tabs,
   Text,
   TextInput,
+  Textarea,
   ThemeIcon,
   Title,
   Tooltip,
@@ -38,6 +39,7 @@ import {
   IconArrowUp,
   IconApps,
   IconBolt,
+  IconLayoutSidebar,
   IconCalendarTime,
   IconCamera,
   IconCpu,
@@ -89,6 +91,8 @@ import {
   getDriverInventory,
   getDiagnosticReport,
   getDeviceDetails,
+  getDesktopOverview,
+  openDesktopItem,
   getAppSettings,
   saveAppSettings,
   getAppPaths,
@@ -114,6 +118,8 @@ import {
   getScheduledTasks,
   saveSensorSettings,
   getSoftwareInventory,
+  listStartMenuApps,
+  launchStartMenuEntry,
   launchSoftwareUninstall,
   getStartupItems,
   getSystemSnapshot,
@@ -138,6 +144,8 @@ import type {
   DriverUpdateAssessment,
   DriverUpdate,
   DiagnosticReport,
+  DesktopItem,
+  DesktopOverview,
   DeviceDetails,
   DirectoryListing,
   DuplicateScan,
@@ -148,6 +156,7 @@ import type {
   HardwareDetails,
   HealthLevel,
   LargeFileScan,
+  LaunchEntry,
   NetworkDiagnosticReport,
   NvmeHealthReport,
   NotificationSettings,
@@ -190,6 +199,8 @@ type Tab =
   | "startup"
   | "tasks"
   | "settings"
+  | "desktop"
+  | "launcher"
   | "toolbox"
   | "report";
 type Sample = {
@@ -218,6 +229,8 @@ const nav = [
   ["startup", "启动项管理", IconRocket],
   ["tasks", "计划任务", IconCalendarTime],
   ["settings", "设置", IconSettings],
+  ["desktop", "桌面助手", IconLayoutSidebar],
+  ["launcher", "快捷启动", IconBolt],
   ["toolbox", "工具箱", IconPackage],
   ["report", "诊断报告", IconShieldCheck],
 ] as const;
@@ -3975,6 +3988,286 @@ const slimCategoryLabel = (category: string) =>
 const slimCategoryColor = (category: string) =>
   category === "safe" ? "teal" : category === "caution" ? "orange" : "gray";
 
+function DesktopPanel() {
+  const [overview, setOverview] = useState<DesktopOverview | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [status, setStatus] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      setOverview(await getDesktopOverview());
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const openItem = async (item: DesktopItem) => {
+    try {
+      setStatus(await openDesktopItem(item.path));
+      setError(null);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    }
+  };
+
+  const openFolder = async (path: string) => {
+    try {
+      await openPathInExplorer(path);
+      setError(null);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    }
+  };
+
+  if (!overview)
+    return (
+      <Center h={260}>
+        <Loader />
+      </Center>
+    );
+
+  return (
+    <Stack gap="md">
+      <Alert color="blue" icon={<IconShieldCheck />}>
+        应用内桌面助手：只读取桌面项目并交给系统打开；不常驻、不注入资源管理器、不移动或删除文件。
+      </Alert>
+      <Group justify="space-between" align="flex-start" wrap="wrap">
+        <Group>
+          <Button
+            size="xs"
+            variant="light"
+            onClick={() => void openFolder(overview.desktopPath)}
+          >
+            桌面
+          </Button>
+          <Button
+            size="xs"
+            variant="light"
+            onClick={() => void openFolder(overview.documentsPath)}
+          >
+            文档
+          </Button>
+          <Button
+            size="xs"
+            variant="light"
+            onClick={() => void openFolder(overview.downloadsPath)}
+          >
+            下载
+          </Button>
+        </Group>
+        <Button size="xs" loading={loading} onClick={() => void load()}>
+          刷新
+        </Button>
+      </Group>
+      {error && (
+        <Alert color="red" icon={<IconAlertCircle />}>
+          {error}
+        </Alert>
+      )}
+      {status && (
+        <Alert color="teal" icon={<IconShieldCheck />}>
+          {status}
+        </Alert>
+      )}
+      <Card className="glass-card" radius="lg" p={0}>
+        <ScrollArea h="calc(100vh - 380px)">
+          <Table stickyHeader highlightOnHover verticalSpacing="sm">
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>名称</Table.Th>
+                <Table.Th>类型</Table.Th>
+                <Table.Th>大小</Table.Th>
+                <Table.Th>修改时间</Table.Th>
+                <Table.Th>操作</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {overview.items.map((item) => (
+                <Table.Tr key={item.path}>
+                  <Table.Td>
+                    <Text fw={600} size="sm" truncate maw={360}>
+                      {item.name}
+                    </Text>
+                  </Table.Td>
+                  <Table.Td>
+                    <Badge size="xs" variant="light">
+                      {item.isDir ? "文件夹" : item.extension || "文件"}
+                    </Badge>
+                  </Table.Td>
+                  <Table.Td>
+                    {item.isDir ? "—" : bytes(item.bytes)}
+                  </Table.Td>
+                  <Table.Td>
+                    <Text size="xs" c="dimmed">
+                      {item.modifiedUnixMs
+                        ? new Date(item.modifiedUnixMs).toLocaleString()
+                        : "未知"}
+                    </Text>
+                  </Table.Td>
+                  <Table.Td>
+                    <Button
+                      size="xs"
+                      variant="light"
+                      onClick={() => void openItem(item)}
+                    >
+                      {item.isDir ? "打开文件夹" : "打开"}
+                    </Button>
+                  </Table.Td>
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+        </ScrollArea>
+      </Card>
+      <Text size="xs" c="dimmed">
+        共 {overview.total} 个项目
+        {overview.errorCount > 0 ? ` · ${overview.errorCount} 个读取错误` : ""}
+      </Text>
+    </Stack>
+  );
+}
+
+function StartMenuPanel() {
+  const [entries, setEntries] = useState<LaunchEntry[] | null>(null);
+  const [query, setQuery] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [status, setStatus] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      setEntries(await listStartMenuApps());
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const launch = async (entry: LaunchEntry) => {
+    setStatus(null);
+    try {
+      setStatus(
+        await launchStartMenuEntry(
+          entry.source === "应用" ? "app" : "shortcut",
+          entry.target,
+          entry.appId,
+        ),
+      );
+      setError(null);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    }
+  };
+
+  const needle = query.trim().toLowerCase();
+  const filtered = (entries ?? []).filter(
+    (entry) =>
+      !needle ||
+      [entry.name, entry.target, entry.appId, entry.targetPath].some((value) =>
+        value.toLowerCase().includes(needle),
+      ),
+  );
+
+  return (
+    <Stack gap="md">
+      <Alert color="blue" icon={<IconShieldCheck />}>
+        从开始菜单与应用列表启动程序，不注入 Explorer、不修改开始菜单；启动前请确认目标。
+      </Alert>
+      <Group>
+        <TextInput
+          style={{ flex: 1 }}
+          value={query}
+          onChange={(event) => setQuery(event.currentTarget.value)}
+          leftSection={<IconSearch size={17} />}
+          placeholder="搜索应用或快捷方式"
+        />
+        <Button variant="light" loading={loading} onClick={() => void load()}>
+          刷新列表
+        </Button>
+      </Group>
+      {error && (
+        <Alert color="red" icon={<IconAlertCircle />}>
+          {error}
+        </Alert>
+      )}
+      {status && (
+        <Alert color="teal" icon={<IconShieldCheck />}>
+          {status}
+        </Alert>
+      )}
+      {!entries ? (
+        <Center h={260}>
+          <Loader />
+        </Center>
+      ) : (
+        <Card className="glass-card" radius="lg" p={0}>
+          <ScrollArea h="calc(100vh - 360px)">
+            <Table stickyHeader highlightOnHover verticalSpacing="sm">
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>应用</Table.Th>
+                  <Table.Th>来源</Table.Th>
+                  <Table.Th>目标</Table.Th>
+                  <Table.Th>操作</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {filtered.map((entry, index) => (
+                  <Table.Tr key={`${entry.name}-${entry.target}-${entry.appId}-${index}`}>
+                    <Table.Td>
+                      <Text fw={700}>{entry.name}</Text>
+                    </Table.Td>
+                    <Table.Td>
+                      <Badge size="xs" variant="light">
+                        {entry.source}
+                      </Badge>
+                    </Table.Td>
+                    <Table.Td>
+                      <Text size="xs" c="dimmed" truncate maw={420}>
+                        {entry.source === "应用"
+                          ? entry.appId
+                          : entry.targetPath || entry.target}
+                      </Text>
+                    </Table.Td>
+                    <Table.Td>
+                      <Button
+                        size="xs"
+                        variant="light"
+                        onClick={() => void launch(entry)}
+                      >
+                        启动
+                      </Button>
+                    </Table.Td>
+                  </Table.Tr>
+                ))}
+              </Table.Tbody>
+            </Table>
+          </ScrollArea>
+        </Card>
+      )}
+      <Text size="xs" c="dimmed">
+        共 {entries?.length ?? 0} 项，显示 {filtered.length} 项；列表来自开始菜单快捷方式与系统应用列表。
+      </Text>
+    </Stack>
+  );
+}
+
 function SettingsPanel({
   settings,
   onSaved,
@@ -4334,7 +4627,7 @@ function EyeCarePanel({
   );
 }
 
-function ToolboxPanel({ onOpenEyeCare }: { onOpenEyeCare?: () => void }) {
+function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { onOpenEyeCare?: () => void; onOpenStartMenu?: () => void; onOpenDesktopQuick?: () => void }) {
   const [tools, setTools] = useState<ToolDescriptor[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [slim, setSlim] = useState<SlimScan | null>(null);
@@ -4353,6 +4646,120 @@ function ToolboxPanel({ onOpenEyeCare }: { onOpenEyeCare?: () => void }) {
   const [applying, setApplying] = useState<string | null>(null);
   const [applyError, setApplyError] = useState<string | null>(null);
   const [selection, setSelection] = useState<string[]>([]);
+  const [zipMode, setZipMode] = useState<"compress" | "extract" | "list">(
+    "compress",
+  );
+  const [zipSources, setZipSources] = useState("");
+  const [zipArchive, setZipArchive] = useState("");
+  const [zipDestination, setZipDestination] = useState("");
+  const [zipOverwrite, setZipOverwrite] = useState(false);
+  const [pdfMode, setPdfMode] = useState<"info" | "merge" | "split" | "rotate">(
+    "info",
+  );
+  const [pdfInputs, setPdfInputs] = useState("");
+  const [pdfOutput, setPdfOutput] = useState("");
+  const [pdfPages, setPdfPages] = useState("");
+  const [pdfAngle, setPdfAngle] = useState("90");
+  const [pdfOverwrite, setPdfOverwrite] = useState(false);
+
+  const runPdf = async (
+    tool: ToolDescriptor,
+    mode: "info" | "merge" | "split" | "rotate",
+  ) => {
+    const inputs = pdfInputs
+      .split("\n")
+      .map((value) => value.trim())
+      .filter(Boolean);
+    if (inputs.length === 0) {
+      setApplyError("请至少填写一个输入 PDF 的绝对路径。");
+      return;
+    }
+    const params = {
+      mode,
+      inputs,
+      output: pdfOutput.trim(),
+      pages: pdfPages.trim(),
+      angle: Number(pdfAngle),
+      overwrite: pdfOverwrite,
+    };
+    setApplying(`${tool.id}:${mode}`);
+    setApplyError(null);
+    try {
+      if (mode === "info") {
+        const data = (await runToolAction(tool.id, "info", null, {
+          path: inputs[0],
+        })) as ToolResult;
+        setGeneric({ tool, data });
+        return;
+      }
+      const preview = (await runToolAction(tool.id, "preview", null, params)) as ToolResult;
+      const summary = (preview.summary ?? [])
+        .map((entry) => `${entry.label}：${entry.value}`)
+        .join("\n");
+      if (!window.confirm(`确认执行 PDF 操作？\n\n${summary}`)) return;
+      const data = (await runToolAction(
+        tool.id,
+        "apply",
+        preview.confirmationToken ?? null,
+        params,
+      )) as ToolResult;
+      setGeneric({ tool, data });
+      setGenericSuccess("PDF 操作完成");
+    } catch (reason) {
+      setApplyError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setApplying(null);
+    }
+  };
+
+  const runZip = async (
+    tool: ToolDescriptor,
+    mode: "compress" | "extract" | "list",
+  ) => {
+    const params = {
+      mode,
+      sources: zipSources
+        .split("\n")
+        .map((value) => value.trim())
+        .filter(Boolean),
+      archive: zipArchive.trim(),
+      destination: zipDestination.trim(),
+      overwrite: zipOverwrite,
+    };
+    setApplying(`${tool.id}:${mode}`);
+    setApplyError(null);
+    try {
+      if (mode === "list") {
+        const data = (await runToolAction(tool.id, "list", null, {
+          archive: params.archive,
+        })) as ToolResult;
+        setGeneric({ tool, data });
+        return;
+      }
+      const preview = (await runToolAction(tool.id, "preview", null, params)) as ToolResult;
+      const summary = (preview.summary ?? [])
+        .map((entry) => `${entry.label}：${entry.value}`)
+        .join("\n");
+      if (
+        !window.confirm(
+          `${mode === "compress" ? "确认创建压缩包" : "确认解压"}？\n\n${summary}`,
+        )
+      )
+        return;
+      const data = (await runToolAction(
+        tool.id,
+        "apply",
+        preview.confirmationToken ?? null,
+        params,
+      )) as ToolResult;
+      setGeneric({ tool, data });
+      setGenericSuccess(mode === "compress" ? "压缩完成" : "解压完成");
+    } catch (reason) {
+      setApplyError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setApplying(null);
+    }
+  };
   const [powerDraft, setPowerDraft] = useState<
     Record<string, { ac: number | null; dc: number | null }>
   >({});
@@ -4606,6 +5013,26 @@ function ToolboxPanel({ onOpenEyeCare }: { onOpenEyeCare?: () => void }) {
                 {tool.id === "clean_master" ? "扫描清理位置" : "运行预览"}
               </Button>
             )}
+            {tool.id === "desktop_quick" && onOpenDesktopQuick && (
+              <Button
+                size="xs"
+                mt="md"
+                variant="light"
+                onClick={onOpenDesktopQuick}
+              >
+                打开桌面助手
+              </Button>
+            )}
+            {tool.id === "start_menu_pro" && onOpenStartMenu && (
+              <Button
+                size="xs"
+                mt="md"
+                variant="light"
+                onClick={onOpenStartMenu}
+              >
+                打开快捷启动
+              </Button>
+            )}
             {tool.id === "eye_care" && onOpenEyeCare && (
               <Button size="xs" mt="md" variant="light" onClick={onOpenEyeCare}>
                 打开护眼设置
@@ -4701,6 +5128,8 @@ function ToolboxPanel({ onOpenEyeCare }: { onOpenEyeCare?: () => void }) {
               {generic.tool.id !== "pc_optimizer" &&
                 generic.tool.id !== "clean_master" &&
                 generic.tool.id !== "software_pm" &&
+                generic.tool.id !== "omni_zip" &&
+                generic.tool.id !== "master_pdf" &&
                 (generic.tool.actions ?? [])
                   .filter((action) => action.write)
                   .map((action) => (
@@ -4982,6 +5411,175 @@ function ToolboxPanel({ onOpenEyeCare }: { onOpenEyeCare?: () => void }) {
                   {powerChanges.length > 0
                     ? `将提交 ${powerChanges.length} 项修改；原值写入本地操作日志`
                     : "修改数值后可应用；0 表示永不"}
+                </Text>
+              </Group>
+            </Box>
+          )}
+          {generic.tool.id === "omni_zip" && (
+            <Box mt="md">
+              <SegmentedControl
+                size="xs"
+                value={zipMode}
+                onChange={(value) =>
+                  setZipMode(value as "compress" | "extract" | "list")
+                }
+                data={[
+                  { label: "压缩", value: "compress" },
+                  { label: "解压", value: "extract" },
+                  { label: "查看列表", value: "list" },
+                ]}
+              />
+              {zipMode === "compress" && (
+                <Textarea
+                  mt="sm"
+                  size="xs"
+                  minRows={3}
+                  label="源文件或目录（每行一个绝对路径）"
+                  placeholder="C:\\Users\\me\\Documents\\report.docx"
+                  value={zipSources}
+                  onChange={(event) => setZipSources(event.currentTarget.value)}
+                />
+              )}
+              <TextInput
+                mt="sm"
+                size="xs"
+                label="压缩包路径（.zip）"
+                placeholder="C:\\Users\\me\\Desktop\\archive.zip"
+                value={zipArchive}
+                onChange={(event) => setZipArchive(event.currentTarget.value)}
+              />
+              {zipMode === "extract" && (
+                <TextInput
+                  mt="sm"
+                  size="xs"
+                  label="解压到目录"
+                  placeholder="C:\\Users\\me\\Desktop\\archive"
+                  value={zipDestination}
+                  onChange={(event) =>
+                    setZipDestination(event.currentTarget.value)
+                  }
+                />
+              )}
+              {zipMode !== "list" && (
+                <Switch
+                  mt="sm"
+                  size="xs"
+                  label="覆盖已存在的文件"
+                  checked={zipOverwrite}
+                  onChange={(event) =>
+                    setZipOverwrite(event.currentTarget.checked)
+                  }
+                />
+              )}
+              <Group mt="sm" align="center">
+                <Button
+                  size="xs"
+                  color="orange"
+                  variant="light"
+                  loading={applying === `${generic.tool.id}:${zipMode}`}
+                  onClick={() => void runZip(generic.tool, zipMode)}
+                >
+                  {zipMode === "compress"
+                    ? "预览并压缩"
+                    : zipMode === "extract"
+                      ? "预览并解压"
+                      : "查看列表"}
+                </Button>
+                <Text size="xs" c="dimmed">
+                  绝对路径；不跟随符号链接；系统目录受限
+                </Text>
+              </Group>
+            </Box>
+          )}
+          {generic.tool.id === "master_pdf" && (
+            <Box mt="md">
+              <SegmentedControl
+                size="xs"
+                value={pdfMode}
+                onChange={(value) =>
+                  setPdfMode(value as "info" | "merge" | "split" | "rotate")
+                }
+                data={[
+                  { label: "信息", value: "info" },
+                  { label: "合并", value: "merge" },
+                  { label: "拆分", value: "split" },
+                  { label: "旋转", value: "rotate" },
+                ]}
+              />
+              <Textarea
+                mt="sm"
+                size="xs"
+                minRows={2}
+                label="输入 PDF（每行一个绝对路径）"
+                placeholder="C:\\Users\\me\\a.pdf"
+                value={pdfInputs}
+                onChange={(event) => setPdfInputs(event.currentTarget.value)}
+              />
+              {pdfMode !== "info" && (
+                <TextInput
+                  mt="sm"
+                  size="xs"
+                  label="输出 PDF"
+                  placeholder="C:\\Users\\me\\output.pdf"
+                  value={pdfOutput}
+                  onChange={(event) => setPdfOutput(event.currentTarget.value)}
+                />
+              )}
+              {(pdfMode === "split" || pdfMode === "rotate") && (
+                <TextInput
+                  mt="sm"
+                  size="xs"
+                  label={pdfMode === "split" ? "保留页码" : "旋转页码（留空为全部）"}
+                  placeholder="1-3,5"
+                  value={pdfPages}
+                  onChange={(event) => setPdfPages(event.currentTarget.value)}
+                />
+              )}
+              {pdfMode === "rotate" && (
+                <Select
+                  mt="sm"
+                  size="xs"
+                  w={160}
+                  label="旋转角度"
+                  allowDeselect={false}
+                  value={pdfAngle}
+                  onChange={(value) => setPdfAngle(value ?? "90")}
+                  data={[
+                    { value: "90", label: "顺时针 90°" },
+                    { value: "180", label: "180°" },
+                    { value: "270", label: "270°" },
+                  ]}
+                />
+              )}
+              {pdfMode !== "info" && (
+                <Switch
+                  mt="sm"
+                  size="xs"
+                  label="覆盖已存在的输出文件"
+                  checked={pdfOverwrite}
+                  onChange={(event) =>
+                    setPdfOverwrite(event.currentTarget.checked)
+                  }
+                />
+              )}
+              <Group mt="sm" align="center">
+                <Button
+                  size="xs"
+                  color="orange"
+                  variant="light"
+                  loading={applying === `${generic.tool.id}:${pdfMode}`}
+                  onClick={() => void runPdf(generic.tool, pdfMode)}
+                >
+                  {pdfMode === "info"
+                    ? "查看信息"
+                    : pdfMode === "merge"
+                      ? "预览并合并"
+                      : pdfMode === "split"
+                        ? "预览并拆分"
+                        : "预览并旋转"}
+                </Button>
+                <Text size="xs" c="dimmed">
+                  输出新文件；默认不覆盖；加密 PDF 可能无法处理
                 </Text>
               </Group>
             </Box>
@@ -5512,7 +6110,7 @@ export default function App() {
           </Text>
         </Paper>
         <Text size="xs" c="dimmed">
-          v0.42.0 · 18 个工具 · 软件卸载
+          v0.49.0 · 23 个工具 · 广告审计
         </Text>
       </aside>
       <main className="content">
@@ -5738,6 +6336,8 @@ export default function App() {
         {tab === "sensors" && <SensorsPanel data={sensors} />}
         {tab === "eye-care" && <EyeCarePanel settings={eyeCare} onSaved={setEyeCare} />}
         {tab === "settings" && <SettingsPanel settings={appSettings} onSaved={setAppSettings} onNavigate={setTab} />}
+        {tab === "desktop" && <DesktopPanel />}
+        {tab === "launcher" && <StartMenuPanel />}
         {tab === "drivers" && <MemoDriversPanel data={drivers} />}
         {tab === "diagnostics" && <MemoDiagnosticsPanel data={diagnostics} />}
         {tab === "network" && <MemoNetworkPanel data={networkDiagnostics} />}
@@ -5781,7 +6381,7 @@ export default function App() {
           </Stack>
         )}
         {tab === "tasks" && <MemoScheduledTasksPanel data={scheduledTasks} />}
-        {tab === "toolbox" && <ToolboxPanel onOpenEyeCare={() => setTab("eye-care")} />}
+        {tab === "toolbox" && <ToolboxPanel onOpenEyeCare={() => setTab("eye-care")} onOpenStartMenu={() => setTab("launcher")} onOpenDesktopQuick={() => setTab("desktop")} />}
         {tab === "report" && <ReportPanel />}
       </main>
     </div>
