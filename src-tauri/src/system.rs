@@ -235,5 +235,14 @@ mod tests {
         let snapshot = collector.snapshot().expect("snapshot");
         assert!(snapshot.memory.used_bytes <= snapshot.memory.total_bytes);
         assert!((0.0..=100.0).contains(&snapshot.memory.usage_percent));
+        assert!(snapshot.processes.is_empty(), "实时快照不应携带进程清单");
+    }
+
+    #[test]
+    fn process_inventory_is_collected_separately() {
+        let mut collector = SystemCollector::new().expect("collector");
+        let processes = collector.processes();
+        assert!(processes.iter().all(|process| process.pid > 0));
+        assert!(processes.len() <= 30);
     }
 }

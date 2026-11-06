@@ -387,6 +387,20 @@ mod tests {
     }
 
     #[test]
+    fn temporary_benchmark_file_is_removed_on_drop() {
+        let path = std::env::temp_dir().join(format!(
+            "system-lens-benchmark-drop-test-{}.tmp",
+            std::process::id()
+        ));
+        std::fs::write(&path, b"cleanup-check").unwrap();
+        {
+            let _guard = TempBenchmarkFile(path.clone());
+            assert!(path.exists());
+        }
+        assert!(!path.exists());
+    }
+
+    #[test]
     #[ignore = "会在临时目录真实写入 128 MiB"]
     fn live_disk_benchmark_small() {
         let flag = AtomicBool::new(false);

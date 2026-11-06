@@ -6086,7 +6086,7 @@ export default function App() {
           </Text>
         </Paper>
         <Text size="xs" c="dimmed">
-          v0.51.0 · 25 个工具 · 扩容分析
+          v0.52.0 · 25 个工具 · HTML 报告
         </Text>
       </aside>
       <main className="content">

@@ -34,6 +34,7 @@ import {
   getProcessInventory,
   scanCleanupCandidates,
 } from "./api";
+import { escapeHtml, markdownToHtml } from "./reportHtml";
 import type {
   CleanupPreview,
   DiagnosticReport,
@@ -48,7 +49,7 @@ import type {
   SystemSnapshot,
 } from "./types";
 
-const APP_VERSION = "0.51.0";
+const APP_VERSION = "0.52.0";
 const REDACTED = "[已脱敏]";
 
 type RedactionOptions = {
@@ -623,6 +624,55 @@ function downloadFile(filename: string, content: string, type: string) {
   URL.revokeObjectURL(url);
 }
 
+export function buildHtmlReport(markdown: string, payload: ReportPayload): string {
+  const title = `小鲁 · 系统透镜 诊断报告 ${payload.generatedAt}`;
+  return `<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>${escapeHtml(title)}</title>
+<style>
+  :root { color-scheme: light; }
+  body { margin: 0; padding: 32px 16px; background: #f5f7fb; color: #1d2433;
+         font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif; line-height: 1.65; }
+  main { max-width: 1080px; margin: 0 auto; background: #fff; border-radius: 14px;
+         padding: 32px 36px; box-shadow: 0 8px 30px rgba(28, 39, 60, 0.08); }
+  h1 { font-size: 26px; margin: 0 0 18px; }
+  h2 { font-size: 20px; margin: 30px 0 12px; padding-bottom: 6px; border-bottom: 1px solid #e6eaf2; }
+  h3 { font-size: 16px; margin: 20px 0 10px; }
+  p, li { font-size: 14px; }
+  ul { padding-left: 22px; }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0 18px; font-size: 13px; }
+  th, td { border: 1px solid #e2e7f0; padding: 7px 9px; text-align: left; vertical-align: top; }
+  th { background: #f2f5fb; font-weight: 700; }
+  tr:nth-child(even) td { background: #fafbfe; }
+  code, pre { font-family: "Cascadia Code", Consolas, monospace; font-size: 12.5px; }
+  pre { background: #f4f6fa; border: 1px solid #e3e8f2; border-radius: 8px;
+        padding: 14px; overflow: auto; max-height: 460px; }
+  footer { max-width: 1080px; margin: 14px auto 0; color: #6b7488; font-size: 12px; text-align: center; }
+  @media print {
+    body { background: #fff; padding: 0; }
+    main { box-shadow: none; border-radius: 0; padding: 0; max-width: none; }
+    footer { color: #555; }
+    h2 { break-after: avoid; }
+    table { break-inside: auto; }
+    tr { break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+<main>
+${markdownToHtml(markdown)}
+</main>
+<footer>
+  由小鲁 · 系统透镜 v${escapeHtml(payload.application.version)} 在本机生成 ·
+  生成时间 ${escapeHtml(payload.generatedAt)} · 未上传任何数据
+</footer>
+</body>
+</html>`;
+}
+
 const REDACTION_LABELS: Array<[keyof RedactionOptions, string]> = [
   ["hostName", "隐藏主机名"],
   ["userName", "隐藏用户名"],
@@ -738,6 +788,14 @@ export default function ReportPanel() {
     if (!markdown) return;
     downloadFile(`system-lens-${stamp}.md`, markdown, "text/markdown");
   };
+  const exportHtml = () => {
+    if (!markdown || !payload) return;
+    downloadFile(
+      `system-lens-${stamp}.html`,
+      buildHtmlReport(markdown, payload),
+      "text/html",
+    );
+  };
 
   return (
     <Stack gap="md">
@@ -823,8 +881,20 @@ export default function ReportPanel() {
           >
             导出 Markdown
           </Button>
+          <Button
+            variant="light"
+            leftSection={<IconDownload size={18} />}
+            disabled={!markdown || !payload}
+            onClick={exportHtml}
+          >
+            导出 HTML
+          </Button>
           {loading && <Loader size="sm" />}
         </Group>
+        <Text size="xs" c="dimmed" mt="sm">
+          HTML 报告自包含样式，可直接用浏览器打开后“打印 → 另存为 PDF”；
+          导出内容与预览一致，仍在本机生成。
+        </Text>
       </Card>
 
       {error && (
