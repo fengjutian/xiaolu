@@ -267,6 +267,9 @@ dist-tools/
 | `clean_master` | `apply`（勾选固定白名单位置） | 回收站（`FOF_ALLOWUNDO`），可还原到原位置；日志记录每个位置结果 |
 | `software_pm` | `toggle_startup`（当前用户 Run/RunOnce） | 停用项暂存 `HKCU\Software\SystemLens\DisabledStartup`，可一键还原 |
 
+> `eye_care` 为应用内页面而非独立工具进程：Gamma Ramp 色温滤镜 + 定时休息提醒，
+> 不经过工具箱 stdio 协议，也不参与工具签名/哈希校验。
+
 ### 尚未实现
 
 - 逐项电源设置、启动项修改：需要逐项原值记录与恢复点。
