@@ -56,7 +56,7 @@ pub fn tools() -> Vec<ToolDescriptor> {
         tool("ai_cooling", "AI 智能降温", "优化", "温度趋势与降频建议（规划）", "read_only", false, "planned", "依赖传感器覆盖"),
         tool("pc_optimizer", "电脑性能优化", "优化", "启动项、服务与电源计划建议（规划）", "write", true, "planned", "只读建议优先"),
         tool("proc_opt", "电脑智能防卡顿", "优化", "高占用进程识别与建议（规划）", "read_only", false, "planned", "不结束进程"),
-        tool("memopt_pro", "内存优化 Pro", "优化", "内存占用分析与释放建议（规划）", "write", true, "planned", "释放内存需谨慎"),
+        tool("memopt_pro", "内存优化 Pro", "优化", "只读诊断内存占用、提交量与进程排行", "read_only", false, "planned", "工具包未安装"),
         tool("sys_boost", "系统优化大师", "优化", "一键优化候选（规划）", "write", true, "planned", "需回滚与确认"),
         tool("winopt_assistant", "Windows 优化助手", "优化", "系统设置建议（规划）", "write", true, "planned", "逐项确认"),
         tool("DuplicateFileClean", "重复文件清理", "清理", "重复文件检测与清理（规划）", "read_only", false, "partial", "已具备只读检测"),
@@ -71,7 +71,7 @@ pub fn tools() -> Vec<ToolDescriptor> {
         tool("intercept_bs", "捆绑软件拦截", "工具箱", "安装包捆绑行为提示（规划）", "system", true, "planned", "需安装监控"),
         tool("push_accelerator", "推送加速", "工具箱", "推送通道优化（规划）", "system", true, "planned", "第三方组件，暂不实现"),
         tool("push_open_claw", "OpenClaw 推送组件", "工具箱", "第三方推送组件（规划）", "system", true, "planned", "仅登记，不集成"),
-        tool("software_pm", "软件权限管理", "工具箱", "软件权限与启动行为查看（规划）", "read_only", false, "planned", "先做只读"),
+        tool("software_pm", "软件权限管理", "工具箱", "启动项、自动服务、计划任务与通知只读视图", "read_only", false, "planned", "工具包未安装"),
     ]
 }
 

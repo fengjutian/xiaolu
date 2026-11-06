@@ -98,28 +98,7 @@ fn startup_location(location: &str) -> &str {
     }
 }
 
-fn scan() -> Result<Value, ToolError> {
-    let output = Command::new("powershell.exe")
-        .creation_flags(CREATE_NO_WINDOW)
-        .args(["-NoProfile", "-NonInteractive", "-Command", script()])
-        .output()
-        .map_err(|error| ToolError::new("INTERNAL", format!("无法启动软件权限检查：{error}")))?;
-    if !output.status.success() {
-        return Err(ToolError::new(
-            "INTERNAL",
-            String::from_utf8_lossy(&output.stderr).trim().to_string(),
-        ));
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let json_line = stdout
-        .lines()
-        .map(str::trim)
-        .filter(|line| line.starts_with('{'))
-        .last()
-        .ok_or_else(|| ToolError::new("INTERNAL", "软件权限检查没有返回 JSON"))?;
-    let payload: Value = serde_json::from_str(json_line)
-        .map_err(|error| ToolError::new("INTERNAL", format!("无法解析软件权限检查：{error}")))?;
-
+fn render(payload: &Value) -> Value {
     let empty = Vec::new();
     let startup = payload
         .get("startup")
@@ -138,7 +117,7 @@ fn scan() -> Result<Value, ToolError> {
         .and_then(Value::as_array)
         .unwrap_or(&empty);
     let firewall = payload.get("firewall").cloned().unwrap_or(Value::Null);
-    let firewall_error = text(&payload, "firewallError");
+    let firewall_error = text(payload, "firewallError");
 
     let mut rows = Vec::new();
 
@@ -232,10 +211,7 @@ fn scan() -> Result<Value, ToolError> {
     let mut summary = vec![
         item("启动项", startup.len().to_string()),
         item("自动服务", services.len().to_string()),
-        item(
-            "用户计划任务",
-            task_entries.len().to_string(),
-        ),
+        item("用户计划任务", task_entries.len().to_string()),
         item("通知已关闭", disabled_notifications.to_string()),
     ];
     summary.push(item(
@@ -263,7 +239,7 @@ fn scan() -> Result<Value, ToolError> {
         }
     }
 
-    Ok(table(
+    table(
         Value::Array(summary),
         json!([
             column("kind", "类别"),
@@ -274,7 +250,31 @@ fn scan() -> Result<Value, ToolError> {
         ]),
         Value::Array(rows),
         Value::Array(notes),
-    ))
+    )
+}
+
+fn scan() -> Result<Value, ToolError> {
+    let output = Command::new("powershell.exe")
+        .creation_flags(CREATE_NO_WINDOW)
+        .args(["-NoProfile", "-NonInteractive", "-Command", script()])
+        .output()
+        .map_err(|error| ToolError::new("INTERNAL", format!("无法启动软件权限检查：{error}")))?;
+    if !output.status.success() {
+        return Err(ToolError::new(
+            "INTERNAL",
+            String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        ));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json_line = stdout
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with('{'))
+        .last()
+        .ok_or_else(|| ToolError::new("INTERNAL", "软件权限检查没有返回 JSON"))?;
+    let payload: Value = serde_json::from_str(json_line)
+        .map_err(|error| ToolError::new("INTERNAL", format!("无法解析软件权限检查：{error}")))?;
+    Ok(render(&payload))
 }
 
 fn main() {
@@ -286,6 +286,105 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn fixture() -> Value {
+        json!({
+            "startup": [
+                {"name": "OneDrive", "command": "C:\\Users\\me\\AppData\\Local\\Microsoft\\OneDrive\\OneDrive.exe /background", "location": "HKU\\S-1-5-21\\...\\Run", "user": "me"}
+            ],
+            "services": [
+                {"name": "VendorAgent", "display": "Vendor Agent", "state": "Running", "path": "C:\\Program Files\\Vendor\\agent.exe", "account": "LocalSystem"},
+                {"name": "Dnscache", "display": "DNS Client", "state": "Running", "path": "C:\\Windows\\System32\\svchost.exe -k NetworkService", "account": "NT AUTHORITY\\NetworkService"}
+            ],
+            "tasks": [
+                {"name": "VendorUpdate", "path": "\\Vendor\\", "author": "Vendor", "state": "Ready", "trigger": "Daily"}
+            ],
+            "notifications": [
+                {"app": "Vendor.App", "enabled": 0},
+                {"app": "Other.App", "enabled": 1}
+            ],
+            "firewall": {"total": 5, "inbound": 3, "outbound": 2, "block": 1},
+            "firewallError": "",
+            "errors": []
+        })
+    }
+
+    #[test]
+    fn renders_rows_in_category_order() {
+        let value = render(&fixture());
+        let rows = value.get("rows").and_then(Value::as_array).expect("rows");
+        assert_eq!(rows.len(), 7);
+        assert_eq!(rows[0].get("kind").and_then(Value::as_str), Some("启动项"));
+        assert_eq!(rows[1].get("kind").and_then(Value::as_str), Some("服务"));
+        assert_eq!(
+            rows[1].get("source").and_then(Value::as_str),
+            Some("第三方软件")
+        );
+        assert_eq!(
+            rows[2].get("source").and_then(Value::as_str),
+            Some("系统组件")
+        );
+        assert_eq!(
+            rows[3].get("kind").and_then(Value::as_str),
+            Some("计划任务")
+        );
+        assert_eq!(
+            rows[3].get("detail").and_then(Value::as_str),
+            Some("触发：Daily · 作者：Vendor")
+        );
+        assert_eq!(
+            rows[4].get("status").and_then(Value::as_str),
+            Some("已关闭")
+        );
+        assert_eq!(
+            rows[5].get("status").and_then(Value::as_str),
+            Some("已开启")
+        );
+    }
+
+    #[test]
+    fn renders_summary_and_firewall_row() {
+        let value = render(&fixture());
+        let summary = value.get("summary").and_then(Value::as_array).expect("summary");
+        assert!(summary
+            .iter()
+            .any(|item| item.get("label").and_then(Value::as_str) == Some("自动服务")
+                && item.get("value").and_then(Value::as_str) == Some("2")));
+        assert!(summary
+            .iter()
+            .any(|item| item.get("value").and_then(Value::as_str) == Some("5")));
+        let rows = value.get("rows").and_then(Value::as_array).expect("rows");
+        let firewall = rows
+            .iter()
+            .find(|row| row.get("kind").and_then(Value::as_str) == Some("防火墙"))
+            .expect("firewall row");
+        assert_eq!(
+            firewall.get("status").and_then(Value::as_str),
+            Some("5 条")
+        );
+    }
+
+    #[test]
+    fn reports_query_failures_without_panicking() {
+        let value = render(&json!({
+            "startup": [],
+            "services": [],
+            "tasks": [],
+            "notifications": [],
+            "firewall": {"total": 0, "inbound": 0, "outbound": 0, "block": 0},
+            "firewallError": "拒绝访问",
+            "errors": ["启动项查询失败：拒绝访问"]
+        }));
+        let rows = value.get("rows").and_then(Value::as_array).expect("rows");
+        assert!(rows.is_empty());
+        let notes = value.get("notes").and_then(Value::as_array).expect("notes");
+        assert!(notes
+            .iter()
+            .any(|note| note.as_str().unwrap_or("").contains("防火墙规则查询失败")));
+        assert!(notes
+            .iter()
+            .any(|note| note.as_str().unwrap_or("").contains("启动项查询失败")));
+    }
 
     #[test]
     fn classifies_system_services() {
