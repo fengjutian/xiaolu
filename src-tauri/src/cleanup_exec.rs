@@ -8,7 +8,7 @@ use crate::cleanup_preview::{measure, target_path, SAFE_CLEANUP_IDS};
 const PLAN_TTL_MS: u64 = 5 * 60 * 1000;
 
 #[derive(Default)]
-pub struct CleanupPlanState(pub Mutex<Option<PendingPlan>>);
+pub struct CleanupPlanState(Mutex<Option<PendingPlan>>);
 
 struct PendingPlan {
     token: String,

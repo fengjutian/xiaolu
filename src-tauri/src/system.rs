@@ -37,7 +37,13 @@ pub struct SystemSnapshot {
     cpu: CpuInfo, memory: MemoryInfo, network: NetworkInfo, disks: Vec<DiskInfo>, processes: Vec<ProcessInfo>,
 }
 
-pub struct SystemCollector { system: System, networks: Networks, disks: Disks, last_sample: Instant }
+pub struct SystemCollector {
+    system: System,
+    networks: Networks,
+    disks: Disks,
+    last_sample: Instant,
+    first_snapshot: bool,
+}
 
 impl SystemCollector {
     pub fn new() -> Result<Self, String> {
@@ -46,13 +52,21 @@ impl SystemCollector {
             networks: Networks::new_with_refreshed_list().map_err(|e| format!("无法读取网络信息：{e}"))?,
             disks: Disks::new_with_refreshed_list().map_err(|e| format!("无法读取磁盘信息：{e}"))?,
             last_sample: Instant::now(),
+            first_snapshot: true,
         })
     }
 
     pub fn snapshot(&mut self) -> Result<SystemSnapshot, String> {
-        self.system.refresh_all();
-        self.networks.refresh(true);
-        self.disks.refresh(true);
+        // `new_all` and the `new_with_refreshed_list` constructors already did
+        // a full collection. Repeating it for the first IPC request keeps the
+        // splash screen visible for no benefit, so reuse that initial sample.
+        if self.first_snapshot {
+            self.first_snapshot = false;
+        } else {
+            self.system.refresh_all();
+            self.networks.refresh(true);
+            self.disks.refresh(true);
+        }
         let elapsed = self.last_sample.elapsed().as_secs_f64().max(0.2);
         self.last_sample = Instant::now();
         let cpu_usage = self.system.global_cpu_usage();

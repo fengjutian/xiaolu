@@ -8,6 +8,7 @@ mod software;
 mod storage_analysis;
 mod scheduled_tasks;
 mod cleanup_preview;
+mod cleanup_exec;
 mod storage_health;
 mod event_log;
 mod nvme_health;
@@ -26,6 +27,7 @@ pub fn run() {
         .manage(std::sync::Mutex::new(system::SystemCollector::new().expect("failed to initialize system collector")))
         .manage(benchmark::BenchmarkHistoryLock(std::sync::Mutex::new(())))
         .manage(benchmark::BenchmarkCancel::default())
+        .manage(cleanup_exec::CleanupPlanState::default())
         .manage(notifications::NotificationRuntime::default())
         .setup(|app| {
             let show = MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)?;
@@ -59,7 +61,7 @@ pub fn run() {
                 let _ = window.hide();
             }
         })
-        .invoke_handler(tauri::generate_handler![system::get_system_snapshot, system::get_system_history, toolbox_host::list_toolbox_tools, toolbox_host::run_tool_action, system::get_hardware_details, system::get_startup_items, system::set_startup_enabled, sensors::get_sensor_snapshot, sensors::get_sensor_history, sensors::get_sensor_settings, sensors::save_sensor_settings, drivers::get_driver_inventory, drivers::scan_driver_updates, drivers::assess_driver_updates, benchmark::run_benchmark, benchmark::cancel_benchmark, benchmark::benchmark_preflight, benchmark::get_benchmark_history, benchmark::save_external_benchmark, diagnostics::get_diagnostic_report, network_diagnostics::get_network_diagnostics, software::get_software_inventory, storage_analysis::scan_storage, storage_analysis::scan_large_files, storage_analysis::scan_duplicates, storage_analysis::scan_directory, storage_analysis::get_storage_drives, scheduled_tasks::get_scheduled_tasks, cleanup_preview::scan_cleanup_candidates, event_log::query_event_log, nvme_health::get_nvme_health, notifications::get_notification_settings, notifications::save_notification_settings, notifications::notify_sensor_alert, notifications::send_test_notification, devices::get_device_details])
+        .invoke_handler(tauri::generate_handler![system::get_system_snapshot, system::get_system_history, toolbox_host::list_toolbox_tools, toolbox_host::run_tool_action, system::get_hardware_details, system::get_startup_items, system::set_startup_enabled, sensors::get_sensor_snapshot, sensors::get_sensor_history, sensors::get_sensor_settings, sensors::save_sensor_settings, drivers::get_driver_inventory, drivers::scan_driver_updates, drivers::assess_driver_updates, benchmark::run_benchmark, benchmark::cancel_benchmark, benchmark::benchmark_preflight, benchmark::get_benchmark_history, benchmark::save_external_benchmark, diagnostics::get_diagnostic_report, network_diagnostics::get_network_diagnostics, software::get_software_inventory, storage_analysis::scan_storage, storage_analysis::scan_large_files, storage_analysis::scan_duplicates, storage_analysis::scan_directory, storage_analysis::get_storage_drives, scheduled_tasks::get_scheduled_tasks, cleanup_preview::scan_cleanup_candidates, cleanup_exec::prepare_cleanup, cleanup_exec::execute_cleanup, event_log::query_event_log, nvme_health::get_nvme_health, notifications::get_notification_settings, notifications::save_notification_settings, notifications::notify_sensor_alert, notifications::send_test_notification, devices::get_device_details])
         .run(tauri::generate_context!())
         .expect("failed to run System Lens");
 }
