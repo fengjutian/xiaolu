@@ -798,5 +798,46 @@ mod tests {
         let encoded = serde_json::to_string(&tasks).unwrap();
         assert!(!encoded.contains("Microsoft"));
         assert!(encoded.contains("DemoTask"));
+
+        let sensors = summarize_sensors(json!({
+            "values": [{
+                "category": "temperature",
+                "availability": "ok",
+                "hardwareClass": "cpu",
+                "name": "CPU 温度",
+                "value": 81.0,
+                "source": "ACPI"
+            }],
+            "alerts": [],
+            "storage": [{
+                "name": "NVMe",
+                "healthStatus": "Healthy",
+                "wearPercent": 4.0,
+                "assessment": { "signals": [] }
+            }],
+            "smartDevices": [{
+                "instanceName": "SERIAL-SECRET-123",
+                "predictFailure": true
+            }],
+            "elevated": false,
+            "limitations": []
+        }));
+        let encoded = serde_json::to_string(&sensors).unwrap();
+        assert!(!encoded.contains("SERIAL-SECRET-123"));
+        assert_eq!(sensors["predictFailureCount"], 1);
+        assert!(encoded.contains("81.0"));
+
+        let diagnostics = summarize_diagnostics(json!({
+            "pendingReboot": true,
+            "pendingWindowsUpdateReboot": false,
+            "crashEvents": [{ "message": "C:\\Users\\alice\\secret.dmp" }],
+            "minidumpCount": 1,
+            "serviceIssues": [{ "name": "Demo" }],
+            "battery": { "present": true, "healthPercent": 71.0, "cycleCount": 120 }
+        }));
+        let encoded = serde_json::to_string(&diagnostics).unwrap();
+        assert!(!encoded.contains("secret.dmp"));
+        assert_eq!(diagnostics["crashEventCount"], 1);
+        assert_eq!(diagnostics["batteryHealthPercent"], 71.0);
     }
 }
