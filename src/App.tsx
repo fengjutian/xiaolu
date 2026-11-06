@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActionIcon,
   Alert,
@@ -19,6 +19,7 @@ import {
   ScrollArea,
   SegmentedControl,
   Slider,
+  Skeleton,
   Select,
   SimpleGrid,
   Stack,
@@ -40,7 +41,6 @@ import {
   IconArrowUp,
   IconApps,
   IconBolt,
-  IconLayoutSidebar,
   IconCalendarTime,
   IconCamera,
   IconCpu,
@@ -186,8 +186,13 @@ import type {
   ToolResult,
 } from "./types";
 import "./styles.css";
-import ReportPanel from "./report";
-import AiPanel from "./AiPanel";
+import { Stat } from "./Stat";
+
+// 诊断 / AI / 报告页面体积大且只在切换到对应标签时才需要，拆成独立 chunk，
+// 避免它们的代码进入首屏关键路径。
+const DiagnosticsPanel = lazy(() => import("./DiagnosticsPanel"));
+const AiPanel = lazy(() => import("./AiPanel"));
+const ReportPanel = lazy(() => import("./report"));
 
 const logoUrl = "/logo.png";
 
@@ -239,8 +244,6 @@ const nav = [
   ["startup", "启动项管理", IconRocket],
   ["tasks", "计划任务", IconCalendarTime],
   ["settings", "设置", IconSettings],
-  ["desktop", "桌面助手", IconLayoutSidebar],
-  ["launcher", "快捷启动", IconBolt],
   ["toolbox", "工具箱", IconPackage],
   ["report", "诊断报告", IconShieldCheck],
 ] as const;
@@ -254,41 +257,6 @@ const bytes = (value: number) =>
 const speed = (value: number) => `${bytes(value)}/s`;
 const duration = (seconds: number) =>
   `${Math.floor(seconds / 86400)} 天 ${Math.floor((seconds % 86400) / 3600)} 小时`;
-
-function Stat({
-  icon: Icon,
-  label,
-  value,
-  hint,
-  color,
-}: {
-  icon: typeof IconCpu;
-  label: string;
-  value: string;
-  hint: string;
-  color: string;
-}) {
-  return (
-    <Card className="stat-card" padding="lg" radius="lg">
-      <Group justify="space-between" align="flex-start">
-        <Box>
-          <Text size="xs" c="dimmed" fw={700}>
-            {label}
-          </Text>
-          <Title order={2} mt={6}>
-            {value}
-          </Title>
-          <Text size="xs" c="dimmed" mt={6}>
-            {hint}
-          </Text>
-        </Box>
-        <ThemeIcon size={42} radius="xl" variant="light" color={color}>
-          <Icon size={22} />
-        </ThemeIcon>
-      </Group>
-    </Card>
-  );
-}
 
 function PerformanceChart({
   data,
@@ -3023,440 +2991,6 @@ function NetworkPanel({ data }: { data: NetworkDiagnosticReport | null }) {
   );
 }
 
-function DiagnosticsPanel({ data }: { data: DiagnosticReport | null }) {
-  const [logName, setLogName] = useState("System");
-  const [logLevel, setLogLevel] = useState("error");
-  const [logHours, setLogHours] = useState("24");
-  const [logSearch, setLogSearch] = useState("");
-  const [logResult, setLogResult] = useState<EventLogResult | null>(null);
-  const [logLoading, setLogLoading] = useState(false);
-  const [logError, setLogError] = useState<string | null>(null);
-  const runLogQuery = async () => {
-    setLogLoading(true);
-    setLogError(null);
-    try {
-      setLogResult(
-        await queryEventLog(logName, logLevel, Number(logHours), logSearch, 100),
-      );
-    } catch (error) {
-      setLogError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setLogLoading(false);
-    }
-  };
-  if (!data)
-    return (
-      <Center h={260}>
-        <Loader />
-      </Center>
-    );
-  const battery = data.battery;
-  return (
-    <Stack gap="md">
-      <SimpleGrid cols={{ base: 1, md: 3 }}>
-        <Stat
-          icon={IconHeartbeat}
-          label="待重启状态"
-          value={data.pendingReboot ? "需要重启" : "无需重启"}
-          hint={
-            data.pendingWindowsUpdateReboot
-              ? "Windows Update 请求重启"
-              : "未发现更新重启标记"
-          }
-          color={data.pendingReboot ? "orange" : "teal"}
-        />
-        <Stat
-          icon={IconBolt}
-          label="电池电量"
-          value={
-            battery.present && battery.chargePercent != null
-              ? `${battery.chargePercent.toFixed(0)}%`
-              : "无电池"
-          }
-          hint={
-            battery.present
-              ? `${battery.name} · ${battery.status}`
-              : "台式机或电池接口不可用"
-          }
-          color="blue"
-        />
-        <Stat
-          icon={IconShieldCheck}
-          label="电池健康"
-          value={
-            battery.healthPercent == null
-              ? "不可用"
-              : `${battery.healthPercent.toFixed(1)}%`
-          }
-          hint={
-            battery.cycleCount == null
-              ? "循环次数不可用"
-              : `${battery.cycleCount} 次循环`
-          }
-          color={
-            battery.healthPercent != null && battery.healthPercent < 70
-              ? "red"
-              : "teal"
-          }
-        />
-      </SimpleGrid>
-      <Tabs defaultValue="errors" keepMounted={false}>
-        <Tabs.List className="module-tabs-list">
-          <Tabs.Tab value="errors" leftSection={<IconAlertCircle size={17} />}>
-            系统错误 <Badge size="xs" color={data.events.length ? "orange" : "teal"}>{data.events.length}</Badge>
-          </Tabs.Tab>
-          <Tabs.Tab value="crashes" leftSection={<IconHeartbeat size={17} />}>
-            崩溃与关机 <Badge size="xs" color={data.crashEvents.length ? "red" : "teal"}>{data.crashEvents.length}</Badge>
-          </Tabs.Tab>
-          <Tabs.Tab value="services" leftSection={<IconTool size={17} />}>
-            服务异常 <Badge size="xs" color={data.serviceIssues.length ? "orange" : "teal"}>{data.serviceIssues.length}</Badge>
-          </Tabs.Tab>
-          <Tabs.Tab value="event-log" leftSection={<IconSearch size={17} />}>
-            事件日志查询
-          </Tabs.Tab>
-          {battery.present && (
-            <Tabs.Tab value="battery" leftSection={<IconBolt size={17} />}>
-              电池详情
-            </Tabs.Tab>
-          )}
-        </Tabs.List>
-        <Tabs.Panel value="battery" pt="md">
-      {battery.present && (
-        <Card className="glass-card" radius="lg">
-          <Group justify="space-between">
-            <Box>
-              <Text fw={800}>电池容量</Text>
-              <Text size="xs" c="dimmed">
-                {data.source}
-              </Text>
-            </Box>
-            <Badge
-              color={
-                battery.healthPercent != null && battery.healthPercent < 70
-                  ? "red"
-                  : "teal"
-              }
-            >
-              {battery.status}
-            </Badge>
-          </Group>
-          <SimpleGrid cols={3} mt="lg">
-            <Box>
-              <Text size="xs" c="dimmed">
-                设计容量
-              </Text>
-              <Text fw={700}>
-                {battery.designCapacityMwh == null
-                  ? "不可用"
-                  : `${battery.designCapacityMwh} mWh`}
-              </Text>
-            </Box>
-            <Box>
-              <Text size="xs" c="dimmed">
-                满充容量
-              </Text>
-              <Text fw={700}>
-                {battery.fullChargeCapacityMwh == null
-                  ? "不可用"
-                  : `${battery.fullChargeCapacityMwh} mWh`}
-              </Text>
-            </Box>
-            <Box>
-              <Text size="xs" c="dimmed">
-                损耗率
-              </Text>
-              <Text fw={700}>
-                {battery.healthPercent == null
-                  ? "不可用"
-                  : `${Math.max(0, 100 - battery.healthPercent).toFixed(1)}%`}
-              </Text>
-            </Box>
-          </SimpleGrid>
-        </Card>
-      )}
-        </Tabs.Panel>
-        <Tabs.Panel value="errors" pt="md">
-          <Stack gap="md">
-      <Group justify="space-between" mt="sm">
-        <Title order={3}>最近 24 小时系统错误</Title>
-        <Badge variant="light" color={data.events.length ? "orange" : "teal"}>
-          {data.events.length} 条
-        </Badge>
-      </Group>
-      {data.events.length === 0 ? (
-        <Alert color="teal" icon={<IconShieldCheck />}>
-          系统日志中没有找到最近 24 小时的严重或错误事件。
-        </Alert>
-      ) : (
-        data.events.map((event, index) => (
-          <Card
-            key={`${event.timeCreated}-${event.eventId}-${index}`}
-            className="glass-card"
-            radius="lg"
-          >
-            <Group justify="space-between" align="flex-start">
-              <Box>
-                <Text fw={700}>
-                  {event.provider} · 事件 {event.eventId}
-                </Text>
-                <Text size="xs" c="dimmed">
-                  {new Date(event.timeCreated).toLocaleString()}
-                </Text>
-              </Box>
-              <Badge
-                color={
-                  event.level.includes("严重") ||
-                  event.level.toLowerCase().includes("critical")
-                    ? "red"
-                    : "orange"
-                }
-              >
-                {event.level}
-              </Badge>
-            </Group>
-            <Text size="sm" c="dimmed" mt="md" className="event-message">
-              {event.message || "事件没有提供说明。"}
-            </Text>
-          </Card>
-        ))
-      )}
-          </Stack>
-        </Tabs.Panel>
-        <Tabs.Panel value="crashes" pt="md">
-          <Stack gap="md">
-      <Group justify="space-between" mt="sm">
-        <Title order={3}>最近 7 天崩溃与意外关机</Title>
-        <Badge
-          color={data.crashEvents.length || data.minidumpCount ? "red" : "teal"}
-          variant="light"
-        >
-          {data.crashEvents.length} 个事件 · {data.minidumpCount} 个转储
-        </Badge>
-      </Group>
-      {data.latestMinidump && (
-        <Alert color="orange" icon={<IconAlertCircle />}>
-          最近蓝屏转储时间：{new Date(data.latestMinidump).toLocaleString()}
-          。应用只读取转储文件元数据，不打开转储内容。
-        </Alert>
-      )}
-      {data.crashEvents.length === 0 ? (
-        <Alert color="teal" icon={<IconShieldCheck />}>
-          没有找到最近 7 天的意外关机或应用崩溃事件。
-        </Alert>
-      ) : (
-        data.crashEvents.map((event, index) => (
-          <Card
-            key={`crash-${event.timeCreated}-${event.eventId}-${index}`}
-            className="glass-card"
-            radius="lg"
-          >
-            <Group justify="space-between">
-              <Box>
-                <Text fw={700}>
-                  {event.provider} · 事件 {event.eventId}
-                </Text>
-                <Text size="xs" c="dimmed">
-                  {new Date(event.timeCreated).toLocaleString()}
-                </Text>
-              </Box>
-              <Badge color="red">{event.level}</Badge>
-            </Group>
-            <Text size="sm" c="dimmed" mt="md">
-              {event.message || "事件没有提供说明。"}
-            </Text>
-          </Card>
-        ))
-      )}
-          </Stack>
-        </Tabs.Panel>
-        <Tabs.Panel value="services" pt="md">
-          <Stack gap="md">
-      <Group justify="space-between" mt="sm">
-        <Title order={3}>自动启动服务异常</Title>
-        <Badge
-          color={data.serviceIssues.length ? "orange" : "teal"}
-          variant="light"
-        >
-          {data.serviceIssues.length} 项
-        </Badge>
-      </Group>
-      {data.serviceIssues.length === 0 ? (
-        <Alert color="teal" icon={<IconShieldCheck />}>
-          没有发现应自动启动但当前未运行的服务。
-        </Alert>
-      ) : (
-        <Card className="glass-card" radius="lg" p={0}>
-          <Table highlightOnHover>
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th>服务</Table.Th>
-                <Table.Th>状态</Table.Th>
-                <Table.Th>启动模式</Table.Th>
-                <Table.Th>退出码</Table.Th>
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              {data.serviceIssues.map((service) => (
-                <Table.Tr key={service.name}>
-                  <Table.Td>
-                    <Text fw={700}>{service.displayName}</Text>
-                    <Text size="xs" c="dimmed">
-                      {service.name}
-                    </Text>
-                  </Table.Td>
-                  <Table.Td>
-                    <Badge color="orange">{service.state}</Badge>
-                  </Table.Td>
-                  <Table.Td>{service.startMode}</Table.Td>
-                  <Table.Td>{service.exitCode}</Table.Td>
-                </Table.Tr>
-              ))}
-            </Table.Tbody>
-          </Table>
-        </Card>
-      )}
-          </Stack>
-        </Tabs.Panel>
-
-        <Tabs.Panel value="event-log" pt="md">
-          <Stack gap="md">
-      <Group justify="space-between" mt="md">
-        <Title order={3}>事件日志查询</Title>
-        <Text size="xs" c="dimmed">
-          {logResult ? `${logResult.total} 条匹配` : "只读，不修改日志"}
-        </Text>
-      </Group>
-      <Alert color="blue" icon={<IconShieldCheck />}>
-        直接读取 Windows 事件日志；Security 日志通常需要管理员权限，普通权限下会返回空结果。
-      </Alert>
-      <Group align="flex-end" wrap="wrap">
-        <Select
-          size="xs"
-          label="日志"
-          w={150}
-          allowDeselect={false}
-          value={logName}
-          onChange={(value) => setLogName(value ?? "System")}
-          data={[
-            { value: "System", label: "System" },
-            { value: "Application", label: "Application" },
-            { value: "Setup", label: "Setup" },
-            { value: "Security", label: "Security" },
-          ]}
-        />
-        <Select
-          size="xs"
-          label="级别"
-          w={150}
-          allowDeselect={false}
-          value={logLevel}
-          onChange={(value) => setLogLevel(value ?? "error")}
-          data={[
-            { value: "all", label: "全部" },
-            { value: "critical", label: "严重" },
-            { value: "error", label: "错误" },
-            { value: "warning", label: "警告" },
-            { value: "information", label: "信息" },
-          ]}
-        />
-        <SegmentedControl
-          size="xs"
-          value={logHours}
-          onChange={setLogHours}
-          data={[
-            { label: "1 小时", value: "1" },
-            { label: "24 小时", value: "24" },
-            { label: "7 天", value: "168" },
-          ]}
-        />
-        <TextInput
-          size="xs"
-          label="关键词"
-          w={240}
-          value={logSearch}
-          onChange={(event) => setLogSearch(event.currentTarget.value)}
-          placeholder="按消息或来源过滤"
-        />
-        <Button size="xs" loading={logLoading} onClick={() => void runLogQuery()}>
-          查询
-        </Button>
-      </Group>
-      {logError && (
-        <Alert color="red" icon={<IconAlertCircle />}>
-          {logError}
-        </Alert>
-      )}
-      {logResult && (
-        <Card className="glass-card" radius="lg" p={0}>
-          <Group justify="space-between" p="md">
-            <Text fw={700} size="sm">
-              {logResult.logName} · 显示 {logResult.events.length} / 共 {logResult.total} 条
-            </Text>
-            <Group gap="xs">
-              {logResult.truncated && <Badge color="orange">已截断到 100 条</Badge>}
-              <Badge variant="light">{logResult.source}</Badge>
-            </Group>
-          </Group>
-          <ScrollArea h={420}>
-            <Table stickyHeader highlightOnHover verticalSpacing="xs">
-              <Table.Thead>
-                <Table.Tr>
-                  <Table.Th>时间</Table.Th>
-                  <Table.Th>级别</Table.Th>
-                  <Table.Th>来源</Table.Th>
-                  <Table.Th>事件</Table.Th>
-                  <Table.Th>说明</Table.Th>
-                </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                {logResult.events.map((entry, index) => (
-                  <Table.Tr key={`${entry.timeCreatedUnixMs}-${entry.eventId}-${index}`}>
-                    <Table.Td>
-                      <Text size="xs">
-                        {new Date(entry.timeCreatedUnixMs).toLocaleString()}
-                      </Text>
-                    </Table.Td>
-                    <Table.Td>
-                      <Badge
-                        size="xs"
-                        color={
-                          entry.level.includes("严重") || entry.level.includes("Critical")
-                            ? "red"
-                            : entry.level.includes("错误") || entry.level.includes("Error")
-                              ? "orange"
-                              : entry.level.includes("警告") || entry.level.includes("Warning")
-                                ? "yellow"
-                                : "gray"
-                        }
-                      >
-                        {entry.level}
-                      </Badge>
-                    </Table.Td>
-                    <Table.Td>
-                      <Text size="xs" truncate maw={160}>
-                        {entry.provider}
-                      </Text>
-                    </Table.Td>
-                    <Table.Td>{entry.eventId}</Table.Td>
-                    <Table.Td>
-                      <Text size="xs" lineClamp={3} maw={620}>
-                        {entry.message || "事件没有提供说明。"}
-                      </Text>
-                    </Table.Td>
-                  </Table.Tr>
-                ))}
-              </Table.Tbody>
-            </Table>
-          </ScrollArea>
-        </Card>
-      )}
-          </Stack>
-        </Tabs.Panel>
-      </Tabs>
-    </Stack>
-  );
-}
-
 const benchmarkKinds: Array<{
   kind: BenchmarkResult["kind"];
   label: string;
@@ -3973,6 +3507,10 @@ const slimCategoryLabel = (category: string) =>
 
 const slimCategoryColor = (category: string) =>
   category === "safe" ? "teal" : category === "caution" ? "orange" : "gray";
+
+const rowPathToolIds = new Set(["privacy_clean"]);
+
+const canOpenRowPath = (toolId: string) => rowPathToolIds.has(toolId);
 
 function DesktopPanel() {
   const [overview, setOverview] = useState<DesktopOverview | null>(null);
@@ -4621,6 +4159,7 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
   const [openPathError, setOpenPathError] = useState<string | null>(null);
+  const [rowPathError, setRowPathError] = useState<string | null>(null);
   const [generic, setGeneric] = useState<{
     tool: ToolDescriptor;
     data: ToolResult;
@@ -4767,6 +4306,9 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
   };
 
   const [winoptDraft, setWinoptDraft] = useState<Record<string, number>>({});
+  const [winoptAdminDraft, setWinoptAdminDraft] = useState<
+    Record<string, number>
+  >({});
   const [dupKeep, setDupKeep] = useState<Record<string, string>>({});
   const [privacyDraft, setPrivacyDraft] = useState<Record<string, string>>({});
   const [procPriority, setProcPriority] = useState<Record<string, string>>({});
@@ -4794,6 +4336,7 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
     setRunningTool(tool.id);
     setGenericError(null);
     setApplyError(null);
+    setRowPathError(null);
     try {
       const data = (await runToolAction(tool.id, "preview")) as ToolResult;
       setGeneric({ tool, data });
@@ -5249,6 +4792,18 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
     }
   };
 
+  const openRowPath = async (path: string) => {
+    if (!path) {
+      return;
+    }
+    setRowPathError(null);
+    try {
+      await openPathInExplorer(path);
+    } catch (reason) {
+      setRowPathError(reason instanceof Error ? reason.message : String(reason));
+    }
+  };
+
   if (!tools)
     return (
       <Center h={260}>
@@ -5428,6 +4983,11 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
       >
       {generic && (
         <Stack gap="md">
+          {rowPathError && (
+            <Alert color="red" icon={<IconAlertCircle />}>
+              {rowPathError}
+            </Alert>
+          )}
           <Alert color="teal" icon={<IconShieldCheck />}>
             {genericSuccess}
             {(generic.data.rows ?? []).length > 0
@@ -5453,6 +5013,9 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                   {(generic.data.columns ?? []).map((column) => (
                     <Table.Th key={column.key}>{column.label}</Table.Th>
                   ))}
+                  {canOpenRowPath(generic.tool.id) && (
+                    <Table.Th>操作</Table.Th>
+                  )}
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
@@ -5465,6 +5028,29 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                         )}
                       </Table.Td>
                     ))}
+                    {canOpenRowPath(generic.tool.id) && (
+                      <Table.Td>
+                        <Button
+                          size="compact-xs"
+                          variant="subtle"
+                          leftSection={<IconFolder size={14} />}
+                          disabled={
+                            !String(
+                              (row as Record<string, unknown>).path ?? "",
+                            )
+                          }
+                          onClick={() =>
+                            void openRowPath(
+                              String(
+                                (row as Record<string, unknown>).path ?? "",
+                              ),
+                            )
+                          }
+                        >
+                          打开目录
+                        </Button>
+                      </Table.Td>
+                    )}
                   </Table.Tr>
                 ))}
               </Table.Tbody>
@@ -7060,11 +6646,51 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
 const MemoHardwarePanel = memo(HardwarePanel);
 const MemoDevicePanel = memo(DevicePanel);
 const MemoDriversPanel = memo(DriversPanel);
-const MemoDiagnosticsPanel = memo(DiagnosticsPanel);
 const MemoNetworkPanel = memo(NetworkPanel);
 const MemoSoftwarePanel = memo(SoftwarePanel);
 const MemoScheduledTasksPanel = memo(ScheduledTasksPanel);
 const MemoProcessPanel = memo(ProcessPanel);
+
+function PanelFallback() {
+  return (
+    <Center h={260}>
+      <Loader />
+    </Center>
+  );
+}
+
+function OverviewSkeleton() {
+  return (
+    <Stack gap="md">
+      <SimpleGrid cols={{ base: 2, xl: 4 }}>
+        {[0, 1, 2, 3].map((index) => (
+          <Card key={index} className="stat-card" padding="lg" radius="lg">
+            <Group justify="space-between" align="flex-start">
+              <Box style={{ flex: 1 }}>
+                <Skeleton height={10} width="42%" radius="xl" />
+                <Skeleton height={30} width="58%" mt={12} radius="sm" />
+                <Skeleton height={9} width="76%" mt={12} radius="xl" />
+              </Box>
+              <Skeleton height={42} width={42} circle />
+            </Group>
+          </Card>
+        ))}
+      </SimpleGrid>
+      <SimpleGrid cols={{ base: 1, lg: 2 }}>
+        {[0, 1].map((index) => (
+          <Card key={index} className="glass-card" radius="lg">
+            <Skeleton height={13} width="28%" radius="xl" />
+            <Skeleton height={245} mt="md" radius="md" />
+          </Card>
+        ))}
+      </SimpleGrid>
+      <Card className="glass-card" radius="lg">
+        <Skeleton height={13} width="22%" radius="xl" />
+        <Skeleton height={180} mt="md" radius="md" />
+      </Card>
+    </Stack>
+  );
+}
 
 export default function App() {
   const { colorScheme, setColorScheme } = useMantineColorScheme();
@@ -7328,43 +6954,11 @@ export default function App() {
     }
   };
 
-  if (!snapshot)
-    return (
-      <div
-        className="boot-splash"
-        role="status"
-        aria-live="polite"
-        aria-label="小鲁系统透镜正在启动"
-      >
-        <div className="boot-splash__inner">
-          <div className="boot-logo-shell">
-            <img
-              className="boot-logo"
-              src={logoUrl}
-              alt="小鲁 System Lens Logo"
-              width="104"
-              height="104"
-            />
-          </div>
-          <div className="boot-title">小鲁</div>
-          <div className="boot-subtitle">SYSTEM LENS</div>
-          <div className="boot-progress" aria-hidden="true">
-            <span />
-          </div>
-          <div className="boot-status">正在建立本地系统视图…</div>
-          {error && (
-            <Alert color="red" mt="md" style={{ maxWidth: 520 }}>
-              {error}
-            </Alert>
-          )}
-        </div>
-      </div>
-    );
-  const diskRead = snapshot.disks.reduce(
+  const diskRead = (snapshot?.disks ?? []).reduce(
     (sum, x) => sum + x.readBytesPerSec,
     0,
   );
-  const diskWrite = snapshot.disks.reduce(
+  const diskWrite = (snapshot?.disks ?? []).reduce(
     (sum, x) => sum + x.writtenBytesPerSec,
     0,
   );
@@ -7448,7 +7042,9 @@ export default function App() {
         <Group justify="space-between" mb="xl">
           <Box>
             <Text size="sm" c="dimmed">
-              {snapshot.hostName} · {snapshot.osName}
+              {snapshot
+                ? `${snapshot.hostName} · ${snapshot.osName}`
+                : "正在识别本机硬件…"}
             </Text>
             <Title order={1}>{nav.find((x) => x[0] === tab)?.[1]}</Title>
           </Box>
@@ -7499,8 +7095,9 @@ export default function App() {
             {error}
           </Alert>
         )}
-        {tab === "overview" && (
-          <Stack gap="md">
+        {tab === "overview" &&
+          (snapshot ? (
+            <Stack gap="md">
             <SimpleGrid cols={{ base: 2, xl: 4 }}>
               <Stat
                 icon={IconCpu}
@@ -7646,19 +7243,29 @@ export default function App() {
                 );
               })}
             </Card>
-          </Stack>
-        )}
+            </Stack>
+          ) : (
+            <OverviewSkeleton />
+          ))}
         {tab === "benchmark" && <BenchmarkPanel />}
         {tab === "hardware" && <MemoHardwarePanel details={hardware} />}
         {tab === "devices" && <MemoDevicePanel data={deviceDetails} />}
         {tab === "sensors" && <SensorsPanel data={sensors} />}
-        {tab === "ai" && <AiPanel onOpenToolbox={() => setTab("toolbox")} />}
+        {tab === "ai" && (
+          <Suspense fallback={<PanelFallback />}>
+            <AiPanel onOpenToolbox={() => setTab("toolbox")} />
+          </Suspense>
+        )}
         {tab === "eye-care" && <EyeCarePanel settings={eyeCare} onSaved={setEyeCare} />}
         {tab === "settings" && <SettingsPanel settings={appSettings} onSaved={setAppSettings} onNavigate={setTab} />}
         {tab === "desktop" && <DesktopPanel />}
         {tab === "launcher" && <StartMenuPanel />}
         {tab === "drivers" && <MemoDriversPanel data={drivers} />}
-        {tab === "diagnostics" && <MemoDiagnosticsPanel data={diagnostics} />}
+        {tab === "diagnostics" && (
+          <Suspense fallback={<PanelFallback />}>
+            <DiagnosticsPanel data={diagnostics} />
+          </Suspense>
+        )}
         {tab === "network" && <MemoNetworkPanel data={networkDiagnostics} />}
         {tab === "software" && <MemoSoftwarePanel data={software} />}
         {tab === "storage" && <StoragePanel />}
@@ -7701,7 +7308,11 @@ export default function App() {
         )}
         {tab === "tasks" && <MemoScheduledTasksPanel data={scheduledTasks} />}
         {tab === "toolbox" && <ToolboxPanel onOpenEyeCare={() => setTab("eye-care")} onOpenStartMenu={() => setTab("launcher")} onOpenDesktopQuick={() => setTab("desktop")} />}
-        {tab === "report" && <ReportPanel />}
+        {tab === "report" && (
+          <Suspense fallback={<PanelFallback />}>
+            <ReportPanel />
+          </Suspense>
+        )}
       </main>
     </div>
   );

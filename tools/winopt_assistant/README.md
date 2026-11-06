@@ -1,6 +1,6 @@
 # winopt_assistant · Windows 优化助手
 
-系统设置体检与用户级调整：读取常见 Windows 设置项，标注正常 / 可选 / 建议调整；其中 5 项 HKCU 设置可直接应用并还原，其余设置保持只读。
+系统设置体检与调整：读取常见 Windows 设置项；5 项 HKCU 设置可直接应用并还原，5 项 HKLM 设置经 UAC 授权修改，Windows 搜索服务仍只读。
 
 ## 运行方式
 
@@ -14,8 +14,8 @@ winopt_assistant.exe --stdio
 
 | 动作 | 写操作 | 说明 |
 |---|---|---|
-| `preview` | 否 | 读取注册表与服务状态，生成建议表并返回 5 项可应用设置与确认令牌 |
-| `apply_settings` | 是 | 逐项写入 HKCU 设置、立即回读，并返回撤销令牌 |
+| `preview` | 否 | 读取注册表与服务状态，返回 5 项 HKCU + 5 项 HKLM 设置与确认令牌 |
+| `apply_settings` | 是 | 逐项写入；HKCU 直接写，HKLM 项自动转交提权助手 |
 
 `apply_settings` 参数：
 
@@ -23,7 +23,7 @@ winopt_assistant.exe --stdio
 { "changes": [{ "id": "transparency", "value": 0 }] }
 ```
 
-可应用项：`visualFx`、`transparency`、`windowAnimate`、`storageSense`、`gameMode`。其余项（休眠、快速启动、诊断数据、系统还原、长路径、Windows 搜索）需要管理员权限，保持只读。
+可应用项：`visualFx`、`transparency`、`windowAnimate`、`storageSense`、`gameMode`（HKCU，直接写）；`telemetry`、`fastStartup`、`hibernate`、`systemRestore`、`longPaths`（HKLM，逐项 UAC，由 `lens_helper.exe` 的 `winopt_set` 执行）。Windows 搜索服务状态仍只读。
 
 ## 检查项
 
@@ -43,7 +43,8 @@ winopt_assistant.exe --stdio
 
 ## 边界
 
-- 只写 `HKCU` 的 5 项设置；HKLM 项只读，不请求提权。
+- 只写 5 项 HKCU 与 5 项 HKLM 白名单设置；Windows 搜索服务仍只读。
+- HKLM 修改逐项 UAC，由独立 `lens_helper.exe` 执行；取消 UAC 不写入。
 - 每项独立写入并回读；单项失败不影响其他项。
 - 不提供“全部一键优化”；用户需选择具体项。
 - 读取失败显示“未知”，不推断、不虚构默认值。

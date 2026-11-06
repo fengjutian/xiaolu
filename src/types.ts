@@ -484,6 +484,8 @@ export interface ToolResult {
   undoChanges?: { id: string; ac: number; dc: number }[];
   winoptSettings?: WinoptSetting[];
   winoptUndo?: { id: string; value: number | null }[];
+  winoptAdminSettings?: WinoptSetting[];
+  winoptAdminToken?: string;
   startupItems?: StartupToolItem[];
   systemStartupItems?: StartupToolItem[];
   serviceItems?: ServiceItem[];

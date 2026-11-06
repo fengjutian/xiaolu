@@ -75,7 +75,12 @@ if (Test-Path $helperProject) {
         New-Item -ItemType Directory -Force -Path $bsodDir | Out-Null
     }
     Copy-Item $helperBinary (Join-Path $bsodDir "lens_helper.exe") -Force
-    Write-Host "  -> lens_helper.exe (software_pm, ai_cooling, defrag, adblock_master, bsod_repair)"
+    $winoptDir = Join-Path $outRoot "winopt_assistant"
+    if (-not (Test-Path $winoptDir)) {
+        New-Item -ItemType Directory -Force -Path $winoptDir | Out-Null
+    }
+    Copy-Item $helperBinary (Join-Path $winoptDir "lens_helper.exe") -Force
+    Write-Host "  -> lens_helper.exe (software_pm, ai_cooling, defrag, adblock_master, bsod_repair, winopt_assistant)"
 }
 
 Write-Host "Tool packaging complete: $outRoot"

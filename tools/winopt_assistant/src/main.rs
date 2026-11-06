@@ -3,11 +3,12 @@ use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command;
 use tool_protocol::{attach_token, column, digest_of, item, table, Request, ToolError};
-use winreg::enums::{HKEY_CURRENT_USER, KEY_READ, KEY_WRITE};
+use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WRITE};
 use winreg::RegKey;
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const ACTION_APPLY: &str = "apply_settings";
+const ACTION_ADMIN: &str = "apply_admin_setting";
 
 #[derive(Clone, Copy)]
 enum SettingType {
@@ -521,19 +522,251 @@ fn scan() -> Result<Value, ToolError> {
         Value::Array(rows),
         json!([
             "只读体检：只读取注册表与服务状态，不修改任何设置。",
-            "视觉效果、透明效果、窗口动画、存储感知、游戏模式 5 项支持直接应用与还原；其余项需要管理员权限，保持只读。",
+            "视觉效果、透明效果、窗口动画、存储感知、游戏模式 5 项支持直接应用与还原；其余项需要管理员授权，可在下方逐项修改。",
             "部分策略值受组织管理或需要管理员权限，读取失败会显示“未知”，不推断。",
             "修改系统设置前建议创建还原点；本工具不创建、不删除还原点。",
         ]),
     );
     let settings = settings_json();
     if let Value::Object(map) = &mut data {
-        map.insert("winoptSettings".into(), Value::Array(settings.clone()));
+        let mut all_settings = settings.clone();
+        all_settings.extend(admin_settings_json());
+        map.insert("winoptSettings".into(), Value::Array(all_settings));
+        map.insert(
+            "winoptAdminSettings".into(),
+            Value::Array(admin_settings_json()),
+        );
+        if let Ok(token) = tool_protocol::issue_token(ACTION_ADMIN, &admin_digest()) {
+            map.insert("winoptAdminToken".into(), Value::String(token));
+        }
     }
     if let Ok(token) = tool_protocol::issue_token(ACTION_APPLY, &settings_digest(&settings)) {
         attach_token(&mut data, token);
     }
     Ok(data)
+}
+
+fn hklm_dword(path: &str, name: &str) -> Option<u32> {
+    RegKey::predef(HKEY_LOCAL_MACHINE)
+        .open_subkey_with_flags(path, KEY_READ)
+        .ok()?
+        .get_value(name)
+        .ok()
+}
+
+fn is_admin_setting(id: &str) -> bool {
+    matches!(
+        id,
+        "telemetry" | "fastStartup" | "hibernate" | "systemRestore" | "longPaths"
+    )
+}
+
+fn admin_label(id: &str) -> &'static str {
+    match id {
+        "telemetry" => "诊断数据级别",
+        "fastStartup" => "快速启动",
+        "hibernate" => "休眠",
+        "systemRestore" => "系统还原",
+        "longPaths" => "长路径支持",
+        _ => "管理员设置",
+    }
+}
+
+fn admin_settings_json() -> Vec<Value> {
+    let telemetry = hklm_dword(
+        "SOFTWARE\\Policies\\Microsoft\\Windows\\DataCollection",
+        "AllowTelemetry",
+    )
+    .or_else(|| {
+        hklm_dword(
+            "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\DataCollection",
+            "AllowTelemetry",
+        )
+    });
+    let fast_startup = hklm_dword(
+        "SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Power",
+        "HiberbootEnabled",
+    );
+    let hibernate = hklm_dword("SYSTEM\\CurrentControlSet\\Control\\Power", "HibernateEnabled");
+    let restore_disabled = hklm_dword(
+        "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\SystemRestore",
+        "DisableSR",
+    );
+    let long_paths = hklm_dword(
+        "SYSTEM\\CurrentControlSet\\Control\\FileSystem",
+        "LongPathsEnabled",
+    );
+
+    vec![
+        json!({
+            "id": "telemetry",
+            "label": "诊断数据级别",
+            "current": telemetry,
+            "options": [
+                {"value": 0, "label": "仅安全"},
+                {"value": 1, "label": "基本"},
+                {"value": 2, "label": "增强"},
+                {"value": 3, "label": "完整"}
+            ],
+            "requiresAdmin": true,
+        }),
+        json!({
+            "id": "fastStartup",
+            "label": "快速启动",
+            "current": fast_startup,
+            "options": [{"value": 0, "label": "关闭"}, {"value": 1, "label": "开启"}],
+            "requiresAdmin": true,
+        }),
+        json!({
+            "id": "hibernate",
+            "label": "休眠",
+            "current": hibernate,
+            "options": [{"value": 0, "label": "关闭"}, {"value": 1, "label": "开启"}],
+            "requiresAdmin": true,
+        }),
+        json!({
+            "id": "systemRestore",
+            "label": "系统还原",
+            "current": restore_disabled,
+            "options": [{"value": 0, "label": "启用"}, {"value": 1, "label": "禁用"}],
+            "requiresAdmin": true,
+        }),
+        json!({
+            "id": "longPaths",
+            "label": "长路径支持",
+            "current": long_paths,
+            "options": [{"value": 0, "label": "关闭"}, {"value": 1, "label": "开启"}],
+            "requiresAdmin": true,
+        }),
+    ]
+}
+
+fn admin_digest() -> String {
+    digest_of(&["winopt_admin"])
+}
+
+fn elevated_dir() -> PathBuf {
+    std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_default()
+        .join("SystemLens")
+        .join("elevated")
+}
+
+fn helper_path() -> Result<PathBuf, ToolError> {
+    if let Some(path) = std::env::var_os("SYSTEM_LENS_HELPER") {
+        let path = PathBuf::from(path);
+        if path.is_file() {
+            return Ok(path);
+        }
+    }
+    let exe = std::env::current_exe()
+        .map_err(|error| ToolError::new("INTERNAL", format!("无法定位工具路径：{error}")))?;
+    let dir = exe
+        .parent()
+        .ok_or_else(|| ToolError::new("INTERNAL", "无法定位工具目录。"))?;
+    let candidates = [
+        dir.join("lens_helper.exe"),
+        dir.join("..").join("lens_helper").join("lens_helper.exe"),
+    ];
+    candidates
+        .into_iter()
+        .find(|path| path.is_file())
+        .ok_or_else(|| ToolError::new("HELPER_MISSING", "缺少提权助手 lens_helper.exe。"))
+}
+
+fn ps_quote(text: &str) -> String {
+    format!("'{}'", text.replace('\'', "''"))
+}
+
+fn run_elevated(mut payload: Value) -> Result<Value, ToolError> {
+    let dir = elevated_dir();
+    std::fs::create_dir_all(&dir)
+        .map_err(|error| ToolError::new("INTERNAL", format!("无法创建提权请求目录：{error}")))?;
+    let nonce_source = format!("{}-{}", tool_protocol::now_ms(), std::process::id());
+    let nonce_full = tool_protocol::digest_of(&[&nonce_source]);
+    let nonce = &nonce_full[..32];
+    let request_path = dir.join(format!("req-{nonce}.json"));
+    let result_path = dir.join(format!("res-{nonce}.json"));
+    if let Value::Object(map) = &mut payload {
+        map.insert("version".into(), json!(1));
+        map.insert("nonce".into(), json!(nonce));
+        map.insert("resultPath".into(), json!(result_path));
+    }
+    let serialized = serde_json::to_string(&payload)
+        .map_err(|error| ToolError::new("INTERNAL", format!("无法序列化提权请求：{error}")))?;
+    std::fs::write(&request_path, serialized)
+        .map_err(|error| ToolError::new("INTERNAL", format!("无法写入提权请求：{error}")))?;
+    let helper = helper_path()?;
+    let script = format!(
+        "$ErrorActionPreference='Stop'; try {{ $p = Start-Process -FilePath {} -ArgumentList ('--request',('\"' + {} + '\"')) -Verb RunAs -PassThru -Wait -WindowStyle Hidden; exit $p.ExitCode }} catch {{ exit 1223 }}",
+        ps_quote(&helper.to_string_lossy()),
+        ps_quote(&request_path.to_string_lossy())
+    );
+    let status = Command::new("powershell.exe")
+        .creation_flags(CREATE_NO_WINDOW)
+        .args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", &script])
+        .status()
+        .map_err(|error| ToolError::new("INTERNAL", format!("无法启动提权助手：{error}")))?;
+    let result_text = std::fs::read_to_string(&result_path).ok();
+    let _ = std::fs::remove_file(&request_path);
+    let _ = std::fs::remove_file(&result_path);
+    if !status.success() {
+        if status.code() == Some(1223) {
+            return Err(ToolError::new("ELEVATION_CANCELLED", "已取消管理员授权，未修改设置。"));
+        }
+        return Err(ToolError::new("ELEVATION_FAILED", format!("提权助手执行失败（退出码 {:?}）。", status.code())));
+    }
+    let text = result_text.ok_or_else(|| ToolError::new("HELPER_FAILED", "提权助手没有返回结果。"))?;
+    let value: Value = serde_json::from_str(&text)
+        .map_err(|error| ToolError::new("HELPER_FAILED", format!("无法解析助手结果：{error}")))?;
+    if value.get("ok").and_then(Value::as_bool) != Some(true) {
+        let message = value.get("error").and_then(Value::as_str).unwrap_or("提权助手返回失败。");
+        return Err(ToolError::new("HELPER_FAILED", message.to_string()));
+    }
+    Ok(value)
+}
+
+fn apply_admin_setting(request: &Request) -> Result<Value, ToolError> {
+    let token = request.confirmation.as_deref().ok_or_else(|| {
+        ToolError::new("CONFIRMATION_REQUIRED", "修改系统设置需要确认令牌，请先体检。")
+    })?;
+    tool_protocol::verify_token(token, ACTION_ADMIN, &admin_digest())?;
+    let id = request.parameters.get("id").and_then(Value::as_str)
+        .ok_or_else(|| ToolError::new("INVALID_INPUT", "缺少参数 id。"))?;
+    let value = request.parameters.get("value").and_then(Value::as_u64)
+        .ok_or_else(|| ToolError::new("INVALID_INPUT", "缺少参数 value。"))?;
+    run_elevated(json!({"op": "winopt_set", "setting": id, "value": value}))?;
+    let settings = admin_settings_json();
+    let entry = settings.iter().find(|setting| setting.get("id").and_then(Value::as_str) == Some(id))
+        .cloned().unwrap_or(Value::Null);
+    let _ = tool_protocol::append_audit_log(json!({
+        "tool": "winopt_assistant",
+        "action": ACTION_ADMIN,
+        "setting": id,
+        "value": value,
+        "at": tool_protocol::now_ms(),
+    }));
+    let mut data = table(
+        json!([item("设置", id), item("新值", value.to_string())]),
+        json!([column("item", "项目"), column("value", "结果")]),
+        json!([{"item": id, "value": value.to_string()}]),
+        json!(["系统设置已由独立提权助手修改，并已回读确认。", "再次操作需要重新预览获取新令牌。"]),
+    );
+    if let Value::Object(map) = &mut data {
+        map.insert("winoptAdminSettings".into(), Value::Array(settings.clone()));
+        map.insert("winoptAdminChanged".into(), entry);
+    }
+    if let Ok(new_token) = tool_protocol::issue_token(ACTION_ADMIN, &admin_digest()) {
+        map_insert_token(&mut data, new_token);
+    }
+    Ok(data)
+}
+
+fn map_insert_token(data: &mut Value, token: String) {
+    if let Value::Object(map) = data {
+        map.insert("winoptAdminToken".into(), Value::String(token));
+    }
 }
 
 fn apply_settings(request: &Request) -> Result<Value, ToolError> {
@@ -568,6 +801,24 @@ fn apply_settings(request: &Request) -> Result<Value, ToolError> {
             .get("id")
             .and_then(Value::as_str)
             .ok_or_else(|| ToolError::new("INVALID_INPUT", "设置项缺少 id。"))?;
+        if setting_by_id(id).is_none() && is_admin_setting(id) {
+            let value = change
+                .get("value")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| {
+                    ToolError::new("INVALID_INPUT", "管理员设置缺少整数 value。")
+                })?;
+            run_elevated(json!({"op": "winopt_set", "setting": id, "value": value}))?;
+            applied += 1;
+            rows.push(json!({
+                "label": admin_label(id),
+                "before": "需管理员",
+                "after": value.to_string(),
+                "status": "已应用（管理员）",
+                "reason": "",
+            }));
+            continue;
+        }
         let setting = setting_by_id(id).ok_or_else(|| {
             ToolError::new("INVALID_INPUT", format!("不支持或需要管理员的设置：{id}"))
         })?;
@@ -691,7 +942,9 @@ fn apply_settings(request: &Request) -> Result<Value, ToolError> {
         ]),
     );
     if let Value::Object(map) = &mut data {
-        map.insert("winoptSettings".into(), Value::Array(after_settings.clone()));
+        let mut all_after = after_settings.clone();
+        all_after.extend(admin_settings_json());
+        map.insert("winoptSettings".into(), Value::Array(all_after));
         map.insert("winoptUndo".into(), Value::Array(undo));
     }
     if let Ok(token) = tool_protocol::issue_token(ACTION_APPLY, &settings_digest(&after_settings)) {
@@ -704,10 +957,11 @@ fn main() {
     tool_protocol::serve_with_request(
         "winopt_assistant",
         env!("CARGO_PKG_VERSION"),
-        &["preview", ACTION_APPLY],
+        &["preview", ACTION_APPLY, ACTION_ADMIN],
         |request| match request.action.as_str() {
             "preview" => scan(),
             ACTION_APPLY => apply_settings(request),
+            ACTION_ADMIN => apply_admin_setting(request),
             other => Err(ToolError::unsupported(other)),
         },
     );

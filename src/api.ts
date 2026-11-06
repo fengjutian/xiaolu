@@ -990,11 +990,20 @@ export async function runToolAction(
         summary: [{ label: "合计占用", value: "1.8 GB" }],
         columns: [
           { key: "label", label: "位置" },
+          { key: "path", label: "路径" },
           { key: "size", label: "占用" },
         ],
         rows: [
-          { label: "Edge 缓存", size: "820.0 MB" },
-          { label: "最近使用文件", size: "12.0 MB" },
+          {
+            label: "Edge 缓存",
+            path: "C:\\Users\\演示\\AppData\\Local\\Microsoft\\Edge\\User Data\\Default\\Cache",
+            size: "820.0 MB",
+          },
+          {
+            label: "最近使用文件",
+            path: "C:\\Users\\演示\\AppData\\Roaming\\Microsoft\\Windows\\Recent",
+            size: "12.0 MB",
+          },
         ],
         notes: ["只读统计：不读取、不上传、不删除任何浏览记录或 Cookie。"],
       };

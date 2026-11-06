@@ -16,6 +16,7 @@ const OP_DEFRAG: &str = "defrag_volume";
 const OP_HOSTS_APPLY: &str = "hosts_apply";
 const OP_HOSTS_RESTORE: &str = "hosts_restore";
 const OP_CRASH_DUMP: &str = "crash_dump_set";
+const OP_WINOPT: &str = "winopt_set";
 const HOSTS_BEGIN: &str = "# BEGIN SystemLens AdBlock";
 const HOSTS_END: &str = "# END SystemLens AdBlock";
 const SERVICE_PATH: &str = "SYSTEM\\CurrentControlSet\\Services";
@@ -334,6 +335,7 @@ fn run(request: &Value) -> Result<Outcome, String> {
         OP_HOSTS_APPLY => run_hosts_apply(request),
         OP_HOSTS_RESTORE => run_hosts_restore(),
         OP_CRASH_DUMP => run_crash_dump(request),
+        OP_WINOPT => run_winopt(request),
         _ => Err(format!("不支持的操作：{op}")),
     }
 }
@@ -617,6 +619,72 @@ fn run_hosts_restore() -> Result<Outcome, String> {
     Ok(Outcome {
         message: "Hosts 规则已移除".into(),
         data: Some(json!({"removed": removed})),
+    })
+}
+
+fn winopt_registry_spec(setting: &str) -> Option<(&'static str, &'static str, u32, u32)> {
+    match setting {
+        "telemetry" => Some(("SOFTWARE\\Policies\\Microsoft\\Windows\\DataCollection", "AllowTelemetry", 0, 3)),
+        "fastStartup" => Some(("SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Power", "HiberbootEnabled", 0, 1)),
+        "longPaths" => Some(("SYSTEM\\CurrentControlSet\\Control\\FileSystem", "LongPathsEnabled", 0, 1)),
+        "systemRestore" => Some(("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\SystemRestore", "DisableSR", 0, 1)),
+        _ => None,
+    }
+}
+
+fn read_hibernate_enabled() -> Option<u32> {
+    RegKey::predef(HKEY_LOCAL_MACHINE)
+        .open_subkey_with_flags("SYSTEM\\CurrentControlSet\\Control\\Power", KEY_READ)
+        .ok()?
+        .get_value("HibernateEnabled")
+        .ok()
+}
+
+fn run_winopt(request: &Value) -> Result<Outcome, String> {
+    let setting = request.get("setting").and_then(Value::as_str).unwrap_or_default();
+    let value = request.get("value").and_then(Value::as_u64).ok_or_else(|| "缺少 value。".to_string())?;
+    let value = u32::try_from(value).map_err(|_| "value 超出范围。".to_string())?;
+
+    if setting == "hibernate" {
+        if value > 1 {
+            return Err("hibernate 只接受 0/1。".into());
+        }
+        let flag = if value == 1 { "on" } else { "off" };
+        let output = Command::new("powercfg.exe")
+            .creation_flags(CREATE_NO_WINDOW)
+            .args(["/hibernate", flag])
+            .output()
+            .map_err(|error| format!("无法启动 powercfg：{error}"))?;
+        if !output.status.success() {
+            let text = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(format!("powercfg 执行失败：{text}"));
+        }
+        let after = read_hibernate_enabled().unwrap_or(0);
+        return Ok(Outcome {
+            message: "休眠设置已更新".into(),
+            data: Some(json!({"setting": setting, "before": null, "after": after})),
+        });
+    }
+
+    let (path, name, min, max) = winopt_registry_spec(setting)
+        .ok_or_else(|| format!("不支持的设置：{setting}"))?;
+    if value < min || value > max {
+        return Err(format!("{setting} 的取值必须在 {min}–{max} 之间。"));
+    }
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let key = hklm
+        .open_subkey_with_flags(path, KEY_READ | KEY_WRITE)
+        .map_err(|error| registry_error("打开系统设置注册表", error))?;
+    let before: u32 = key.get_value(name).unwrap_or(0);
+    key.set_value(name, &value)
+        .map_err(|error| registry_error("写入系统设置", error))?;
+    let after: u32 = key.get_value(name).map_err(|error| registry_error("回读系统设置", error))?;
+    if after != value {
+        return Err("写入后回读系统设置不一致。".into());
+    }
+    Ok(Outcome {
+        message: "系统设置已更新".into(),
+        data: Some(json!({"setting": setting, "before": before, "after": after})),
     })
 }
 
