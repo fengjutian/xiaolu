@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  ActionIcon,
   Alert,
   Badge,
   Box,
@@ -33,6 +34,7 @@ import {
   IconSend,
   IconShieldCheck,
   IconSparkles,
+  IconTrash,
   IconX,
 } from "@tabler/icons-react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
@@ -43,6 +45,9 @@ import {
   buildAiSnapshot,
   cancelAiRequest,
   clearAiApiKey,
+  clearAiSessions,
+  deleteAiSession,
+  getAiSessions,
   getAiSettings,
   listenAiStream,
   newAiRequestId,
@@ -54,6 +59,7 @@ import type {
   AiConfidence,
   AiFinding,
   AiPayloadPreview,
+  AiSessionRecord,
   AiSettings,
   AiSettingsView,
   AiTurn,
@@ -64,6 +70,7 @@ import type {
 type ConversationEntry = {
   question: string | null;
   answer: AiAnswer;
+  snapshot: DiagnosticSnapshot;
 };
 
 const severityColor = (severity: string) =>
@@ -251,6 +258,21 @@ export default function AiPanel() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
 
+  const [sessions, setSessions] = useState<AiSessionRecord[]>([]);
+  const [sessionsBusy, setSessionsBusy] = useState(false);
+
+  const refreshSessions = useCallback(async () => {
+    try {
+      setSessions(await getAiSessions());
+    } catch {
+      // 会话记录读取失败不应影响 AI 解读主流程。
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshSessions();
+  }, [refreshSessions]);
+
   useEffect(() => {
     let alive = true;
     void getAiSettings()
@@ -351,7 +373,8 @@ export default function AiPanel() {
         nextQuestion,
         buildHistory(),
       );
-      setEntries((previous) => [...previous, { question: nextQuestion, answer }]);
+      setEntries((previous) => [...previous, { question: nextQuestion, answer, snapshot }]);
+      void refreshSessions();
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : String(reason);
       if (message.includes("已取消")) {
@@ -628,6 +651,9 @@ export default function AiPanel() {
                 {entries.map((entry, index) => {
                   const historical =
                     !snapshot || entry.answer.snapshotId !== snapshot.snapshotId;
+                  const entryFacts = new Map(
+                    entry.snapshot.facts.map((fact) => [fact.id, fact]),
+                  );
                   return (
                     <Card
                       key={`${entry.answer.requestId}-${index}`}
@@ -666,7 +692,7 @@ export default function AiPanel() {
                             <Box mt="sm">
                               <FindingsList
                                 findings={entry.answer.localFindings}
-                                facts={factsById}
+                                facts={entryFacts}
                                 historical={historical}
                               />
                             </Box>
@@ -682,7 +708,7 @@ export default function AiPanel() {
                           <Box mt="md">
                             <FindingsList
                               findings={entry.answer.findings}
-                              facts={factsById}
+                              facts={entryFacts}
                               historical={historical}
                             />
                           </Box>
@@ -750,6 +776,96 @@ export default function AiPanel() {
                 </Button>
               </Group>
             </Card>
+
+            <Card className="glass-card" radius="lg">
+              <Group justify="space-between" align="flex-start">
+                <Box>
+                  <Text fw={700}>本地会话记录</Text>
+                  <Text size="xs" c="dimmed" mt={4}>
+                    AI 回答默认保存在本机数据目录（最多 50 条，不包含原始事实和 API 密钥），可逐条删除或全部清除。
+                  </Text>
+                </Box>
+                {sessions.length > 0 && (
+                  <Button
+                    size="xs"
+                    variant="light"
+                    color="red"
+                    loading={sessionsBusy}
+                    onClick={async () => {
+                      if (!window.confirm("确定要清除全部本地 AI 会话记录吗？此操作不可撤销。")) {
+                        return;
+                      }
+                      setSessionsBusy(true);
+                      try {
+                        await clearAiSessions();
+                        setSessions([]);
+                      } catch (reason) {
+                        setAnalysisError(
+                          reason instanceof Error ? reason.message : String(reason),
+                        );
+                      } finally {
+                        setSessionsBusy(false);
+                      }
+                    }}
+                  >
+                    清除全部
+                  </Button>
+                )}
+              </Group>
+              {sessions.length === 0 ? (
+                <Text size="sm" c="dimmed" mt="sm">
+                  还没有本地 AI 会话记录。完成一次解读后会自动保存。
+                </Text>
+              ) : (
+                <ScrollArea.Autosize mah={280} mt="sm">
+                  <Stack gap="xs">
+                    {sessions.map((session) => (
+                      <Group
+                        key={session.id}
+                        justify="space-between"
+                        wrap="nowrap"
+                        align="flex-start"
+                      >
+                        <Box style={{ minWidth: 0 }}>
+                          <Text size="sm" fw={600} truncate>
+                            {session.question ?? "本机健康解读"}
+                          </Text>
+                          <Text size="xs" c="dimmed" truncate>
+                            {formatTime(session.savedAtUnixMs)} · {session.answer.model} ·{" "}
+                            {session.answer.degraded ? "已降级" : "AI 结论"} · 快照{" "}
+                            {session.answer.snapshotId.slice(0, 14)}
+                          </Text>
+                        </Box>
+                        <Tooltip label="删除这条记录">
+                          <ActionIcon
+                            variant="subtle"
+                            color="red"
+                            disabled={sessionsBusy}
+                            onClick={async () => {
+                              setSessionsBusy(true);
+                              try {
+                                await deleteAiSession(session.id);
+                                setSessions((previous) =>
+                                  previous.filter((item) => item.id !== session.id),
+                                );
+                              } catch (reason) {
+                                setAnalysisError(
+                                  reason instanceof Error ? reason.message : String(reason),
+                                );
+                              } finally {
+                                setSessionsBusy(false);
+                              }
+                            }}
+                          >
+                            <IconTrash size={16} />
+                          </ActionIcon>
+                        </Tooltip>
+                      </Group>
+                    ))}
+                  </Stack>
+                </ScrollArea.Autosize>
+              )}
+            </Card>
           </Stack>
         </Tabs.Panel>
 
@@ -766,9 +882,19 @@ export default function AiPanel() {
                 </Box>
                 <Switch
                   checked={form.enabled}
-                  onChange={(event) =>
-                    setForm({ ...form, enabled: event.currentTarget.checked })
-                  }
+                  onChange={(event) => {
+                    const checked = event.currentTarget.checked;
+                    if (
+                      checked &&
+                      !form.enabled &&
+                      !window.confirm(
+                        "启用 AI 后将向所配置的模型服务发送脱敏后的系统诊断事实（系统指标、温度/SMART 摘要、驱动统计、诊断计数和 24 小时趋势），用于生成健康解读。不会发送主机名、用户名、序列号、MAC/IP、命令行或完整路径。是否启用？",
+                      )
+                    ) {
+                      return;
+                    }
+                    setForm({ ...form, enabled: checked });
+                  }}
                   label={form.enabled ? "已启用" : "默认关闭"}
                   disabled={!desktop}
                 />

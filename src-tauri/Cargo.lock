@@ -3739,6 +3739,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-notification",
  "tokio",
+ "url",
  "walkdir",
  "windows-sys 0.61.2",
  "winreg 0.55.0",

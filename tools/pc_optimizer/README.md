@@ -16,7 +16,7 @@ pc_optimizer.exe --stdio
 |---|---|---|
 | `preview` | 否 | 枚举电源计划、当前计划、供电方式与 5 项设置，并签发确认令牌 |
 | `apply` | 是 | 校验令牌后调用 `PowerSetActiveScheme` 切换计划，写入操作日志 |
-| `apply_settings` | 是 | 校验令牌后写入逐项设置并激活当前计划，记录原值 |
+| `apply_settings` | 是 | 校验令牌后逐项写入设置、逐项回读并激活当前计划；单项失败不影响其他项 |
 
 `apply` 参数：`{ "planGuid": "<计划 GUID>" }`。
 
@@ -51,18 +51,18 @@ pc_optimizer.exe --stdio
 - 不使用 `powercfg` 子进程，不接受任意命令行参数
 - 令牌绑定“计划列表 + 当前活动计划 + 设置项集合”；任一变化旧令牌失效
 - 一次性令牌由宿主记录，5 分钟过期
-- 写入后逐项回读校验；范围非法、重复项、未知设置直接拒绝
+- 逐项独立执行：单项失败只影响该项，不中断其他项
+- 写入后逐项回读；与目标不一致标记“部分应用/失败”，并在“原因”列说明
+- 范围非法、重复项、未知设置直接拒绝
 
 ## 回滚
 
-每次 `apply` / `apply_settings` 都把原值与新值写入：
+每次 `apply_settings` 写入两类记录：
 
-```text
-%LOCALAPPDATA%\SystemLens\tool-actions.jsonl
-```
+- 操作日志：`%LOCALAPPDATA%\SystemLens\tool-actions.jsonl`（计数、计划、快照路径）
+- 完整快照：`%LOCALAPPDATA%\SystemLens\pc_optimizer\run-<时间戳>-<进程号>.json`（每项原值、目标值、回读值、结果）
 
-- 计划切换：重新预览后切回原计划。
-- 单项设置：重新输入日志中的原值应用，或在“电源选项”中恢复默认。
+`apply_settings` 的结果附带新的一次性令牌与 `undoChanges`，界面可直接“撤销本次修改”；也可以重新输入快照中的原值，或在“电源选项”中恢复默认。计划切换则重新预览后切回原计划。
 
 ## 构建
 
@@ -80,4 +80,4 @@ cargo test --manifest-path tools/pc_optimizer/Cargo.toml
 
 - 不实现启动项、服务与注册表类优化。
 - 不静默提权；切换计划与写入设置通常需要普通用户权限，受限环境会返回 `PERMISSION_DENIED`。
-- 电源设置是否可见/可写取决于设备与厂商驱动；回读不一致会报错而不是假装成功。
+- 电源设置是否可见/可写取决于设备与厂商驱动；回读不一致会标记为“部分应用/失败”，不会假装成功。

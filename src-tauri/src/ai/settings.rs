@@ -50,17 +50,28 @@ pub fn save_settings(app: &AppHandle, settings: &AiSettings) -> Result<AiSetting
 }
 
 pub fn validate_base_url(base_url: &str) -> Result<(), String> {
-    let lowered = base_url.to_ascii_lowercase();
-    if lowered.starts_with("https://") {
-        return Ok(());
+    let parsed = url::Url::parse(base_url.trim())
+        .map_err(|_| "模型服务地址不是有效的 URL。".to_string())?;
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err("模型服务地址不能包含用户名或密码。".to_string());
     }
-    if lowered.starts_with("http://127.0.0.1")
-        || lowered.starts_with("http://localhost")
-        || lowered.starts_with("http://[::1]")
-    {
-        return Ok(());
+    if parsed.query().is_some() || parsed.fragment().is_some() {
+        return Err("模型服务地址不能包含查询参数或片段。".to_string());
     }
-    Err("模型服务地址必须使用 HTTPS；仅本机回环地址允许 HTTP。".to_string())
+    match parsed.scheme() {
+        "https" => Ok(()),
+        "http" => {
+            let host = parsed.host_str().unwrap_or_default();
+            let loopback = matches!(host, "127.0.0.1" | "localhost" | "::1")
+                || host.starts_with("127.");
+            if loopback {
+                Ok(())
+            } else {
+                Err("模型服务地址必须使用 HTTPS；仅本机回环地址允许 HTTP。".to_string())
+            }
+        }
+        _ => Err("模型服务地址仅支持 HTTP 或 HTTPS。".to_string()),
+    }
 }
 
 pub fn key_storage_label() -> &'static str {
@@ -216,7 +227,17 @@ mod tests {
         assert!(validate_base_url("https://api.deepseek.com/v1").is_ok());
         assert!(validate_base_url("http://127.0.0.1:11434/v1").is_ok());
         assert!(validate_base_url("http://localhost:8080").is_ok());
+        assert!(validate_base_url("http://[::1]:8080/v1").is_ok());
         assert!(validate_base_url("http://example.com/v1").is_err());
+    }
+
+    #[test]
+    fn rejects_loopback_lookalikes_and_credentials() {
+        assert!(validate_base_url("http://127.0.0.1.evil.com/v1").is_err());
+        assert!(validate_base_url("http://127.0.0.1@evil.com/v1").is_err());
+        assert!(validate_base_url("https://user:pass@api.example.com/v1").is_err());
+        assert!(validate_base_url("ftp://example.com/v1").is_err());
+        assert!(validate_base_url("https://api.example.com/v1?token=leak").is_err());
     }
 
     #[test]

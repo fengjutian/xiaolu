@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AiAnswer,
   AiPayloadPreview,
+  AiSessionRecord,
   AiSettings,
   AiSettingsView,
   AiStreamEvent,
@@ -87,6 +88,21 @@ export async function aiAnalyze(
 export async function cancelAiRequest(requestId: string): Promise<void> {
   if (!isTauri()) return;
   await invoke("cancel_ai_request", { requestId });
+}
+
+export async function getAiSessions(): Promise<AiSessionRecord[]> {
+  if (!isTauri()) return [];
+  return invoke<AiSessionRecord[]>("get_ai_sessions");
+}
+
+export async function deleteAiSession(sessionId: string): Promise<void> {
+  if (!isTauri()) return;
+  await invoke("delete_ai_session", { sessionId });
+}
+
+export async function clearAiSessions(): Promise<void> {
+  if (!isTauri()) return;
+  await invoke("clear_ai_sessions");
 }
 
 export async function listenAiStream(

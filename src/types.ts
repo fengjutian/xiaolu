@@ -410,6 +410,7 @@ export interface ToolResult {
   confirmationToken?: string;
   confirmationTokenExpiresAt?: number;
   powerSettings?: PowerSettingOption[];
+  undoChanges?: { id: string; ac: number; dc: number }[];
   startupItems?: StartupToolItem[];
   startupRegistryError?: string;
 }
@@ -893,4 +894,11 @@ export interface AiStreamEvent {
   delta: string;
   charCount: number;
   message: string;
+}
+
+export interface AiSessionRecord {
+  id: string;
+  savedAtUnixMs: number;
+  question: string | null;
+  answer: AiAnswer;
 }

@@ -10,10 +10,12 @@ mod provider;
 mod redact;
 mod rules;
 mod settings;
+mod store;
 
 pub use model::{
     AiAnswer, AiPayloadPreview, AiSettings, AiSettingsView, AiStreamEvent, AiTurn, DiagnosticSnapshot,
 };
+pub use store::AiSessionRecord;
 
 use self::answer::{parse_answer, validate};
 use self::model::{AiUsage, ChatMessage, ProviderRequest, AI_PROMPT_VERSION};
@@ -311,7 +313,8 @@ async fn run_model_analysis(
 
         let parsed = parse_answer(&response.text).and_then(|raw| validate(raw, &snapshot.facts));
         match parsed {
-            Ok(validated) => {
+            Ok(mut validated) => {
+                answer::enforce_local_priority(&snapshot.local_findings, &mut validated);
                 return Ok(AiAnswer {
                     request_id: request_id.clone(),
                     snapshot_id: snapshot.snapshot_id.clone(),
@@ -363,6 +366,7 @@ pub async fn ai_analyze(
     let question = question
         .map(|value| value.trim().chars().take(800).collect::<String>())
         .filter(|value| !value.is_empty());
+    let question_for_store = question.clone();
 
     let cancel = app.state::<AiState>().register_cancel(&request_id);
     let result = run_model_analysis(
@@ -379,10 +383,32 @@ pub async fn ai_analyze(
     app.state::<AiState>().release_cancel(&request_id);
 
     match result {
-        Ok(answer) => Ok(answer),
+        Ok(answer) => {
+            let _ = store::append(&app, question_for_store, &answer);
+            Ok(answer)
+        }
         Err(error) if error == CANCELLED => Err("AI 请求已取消。".to_string()),
-        Err(error) => Ok(fallback_answer(&snapshot, &request_id, &settings, error)),
+        Err(error) => {
+            let answer = fallback_answer(&snapshot, &request_id, &settings, error);
+            let _ = store::append(&app, question_for_store, &answer);
+            Ok(answer)
+        }
     }
+}
+
+#[tauri::command]
+pub async fn get_ai_sessions(app: AppHandle) -> Result<Vec<AiSessionRecord>, String> {
+    Ok(store::list(&app))
+}
+
+#[tauri::command]
+pub async fn delete_ai_session(app: AppHandle, session_id: String) -> Result<(), String> {
+    store::delete(&app, &session_id)
+}
+
+#[tauri::command]
+pub async fn clear_ai_sessions(app: AppHandle) -> Result<(), String> {
+    store::clear(&app)
 }
 
 #[tauri::command]

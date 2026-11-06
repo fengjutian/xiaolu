@@ -541,7 +541,7 @@ fn preview() -> Result<Value, ToolError> {
         })
         .collect::<Vec<_>>();
 
-    let settings_rows = active.map(collect_settings).unwrap_or_default();
+    let settings_rows = active.map(|plan| collect_settings(&plan)).unwrap_or_default();
 
     let mut data = table(
         json!([
@@ -676,6 +676,19 @@ struct SettingChange {
     dc: u32,
 }
 
+struct ItemResult {
+    setting: &'static PowerSetting,
+    before_ac: Option<u32>,
+    before_dc: Option<u32>,
+    target_ac: u32,
+    target_dc: u32,
+    rc_ac: u32,
+    rc_dc: u32,
+    after_ac: Option<u32>,
+    after_dc: Option<u32>,
+    status: &'static str,
+}
+
 fn apply_settings(request: &Request) -> Result<Value, ToolError> {
     let token = request.confirmation.as_deref().ok_or_else(|| {
         ToolError::new(
@@ -743,136 +756,206 @@ fn apply_settings(request: &Request) -> Result<Value, ToolError> {
         });
     }
 
-    let originals = parsed
-        .iter()
-        .map(|change| {
-            (
-                change.setting,
-                read_setting(&active, change.setting, true),
-                read_setting(&active, change.setting, false),
-            )
-        })
-        .collect::<Vec<_>>();
-
+    let started_at = tool_protocol::now_ms();
+    let mut results: Vec<ItemResult> = Vec::with_capacity(parsed.len());
     for change in &parsed {
-        for (ac, value) in [(true, change.ac), (false, change.dc)] {
-            let rc = write_setting(
-                &active,
-                change.setting,
-                ac,
-                raw_value(change.setting, value),
-            );
-            if rc != 0 {
-                let (code, message) = if rc == 5 {
-                    (
-                        "PERMISSION_DENIED",
-                        "当前进程没有写入电源设置的权限（受限账户或沙箱环境）。请在普通桌面会话中重试；仍失败时以管理员身份运行。",
-                    )
-                } else {
-                    (
-                        "INTERNAL",
-                        "写入电源设置失败，请检查设备是否支持该项目。",
-                    )
-                };
-                return Err(ToolError::new(
-                    code,
-                    format!("{}：错误码 {rc}。", message),
-                ));
-            }
-        }
+        let target_ac = raw_value(change.setting, change.ac);
+        let target_dc = raw_value(change.setting, change.dc);
+        let before_ac = read_setting(&active, change.setting, true);
+        let before_dc = read_setting(&active, change.setting, false);
+        let rc_ac = write_setting(&active, change.setting, true, target_ac);
+        let rc_dc = write_setting(&active, change.setting, false, target_dc);
+        let after_ac = read_setting(&active, change.setting, true);
+        let after_dc = read_setting(&active, change.setting, false);
+        results.push(ItemResult {
+            setting: change.setting,
+            before_ac,
+            before_dc,
+            target_ac,
+            target_dc,
+            rc_ac,
+            rc_dc,
+            after_ac,
+            after_dc,
+            status: item_status(rc_ac, rc_dc, after_ac, after_dc, target_ac, target_dc),
+        });
     }
 
-    // 写入索引后激活当前计划，让改动立即生效。
-    // SAFETY: active 来自系统返回的活动计划 GUID。
-    let rc = unsafe { PowerSetActiveScheme(std::ptr::null_mut(), &active) };
-    if rc == 5 {
-        return Err(ToolError::new(
-            "PERMISSION_DENIED",
-            "当前进程没有应用电源设置的权限，请以管理员身份重试。",
-        ));
-    }
-    if rc != 0 {
-        return Err(ToolError::new(
-            "INTERNAL",
-            format!("应用电源设置失败（错误码 {rc}）。"),
-        ));
-    }
-
-    for (change, (_, _, _)) in parsed.iter().zip(originals.iter()) {
-        let ac_after = read_setting(&active, change.setting, true);
-        let dc_after = read_setting(&active, change.setting, false);
-        if ac_after != Some(raw_value(change.setting, change.ac))
-            || dc_after != Some(raw_value(change.setting, change.dc))
-        {
-            return Err(ToolError::new(
-                "INTERNAL",
-                format!("{}写入后回读不一致。", change.setting.label),
-            ));
-        }
-    }
-
-    let audit_changes = parsed
+    // 任一项写入成功就激活当前计划；激活失败不回滚已写入项，交由用户重试。
+    let any_written = results
         .iter()
-        .zip(originals.iter())
-        .map(|(change, (_, ac_before, dc_before))| {
+        .any(|result| result.rc_ac == 0 || result.rc_dc == 0);
+    let activation_error = if any_written {
+        // SAFETY: active 来自系统返回的活动计划 GUID。
+        let rc = unsafe { PowerSetActiveScheme(std::ptr::null_mut(), &active) };
+        (rc != 0).then_some(rc)
+    } else {
+        None
+    };
+
+    let applied = results
+        .iter()
+        .filter(|result| result.status == "已应用")
+        .count();
+    let partial = results
+        .iter()
+        .filter(|result| result.status == "部分应用")
+        .count();
+    let failed = results
+        .iter()
+        .filter(|result| result.status == "失败")
+        .count();
+
+    let rows = results
+        .iter()
+        .map(|result| {
+            let status = if activation_error.is_some() && result.status != "失败" {
+                "已写入，激活失败"
+            } else {
+                result.status
+            };
             json!({
-                "id": change.setting.id,
-                "beforeAc": display_value(change.setting, *ac_before),
-                "beforeDc": display_value(change.setting, *dc_before),
-                "afterAc": change.ac,
-                "afterDc": change.dc,
+                "label": result.setting.label,
+                "before": format!(
+                    "{} / {}",
+                    format_value(result.setting, display_value(result.setting, result.before_ac)),
+                    format_value(result.setting, display_value(result.setting, result.before_dc))
+                ),
+                "after": format!(
+                    "{} / {}",
+                    format_value(result.setting, display_value(result.setting, result.after_ac)),
+                    format_value(result.setting, display_value(result.setting, result.after_dc))
+                ),
+                "status": status,
+                "reason": item_reason(
+                    result.setting,
+                    result.rc_ac,
+                    result.rc_dc,
+                    result.after_ac,
+                    result.after_dc,
+                    result.target_ac,
+                    result.target_dc,
+                ),
             })
         })
         .collect::<Vec<_>>();
+
+    let undo = results
+        .iter()
+        .filter_map(|result| {
+            let before_ac = result.before_ac?;
+            let before_dc = result.before_dc?;
+            if before_ac == result.target_ac && before_dc == result.target_dc {
+                return None;
+            }
+            Some(json!({
+                "id": result.setting.id,
+                "ac": display_value(result.setting, Some(before_ac)),
+                "dc": display_value(result.setting, Some(before_dc)),
+            }))
+        })
+        .collect::<Vec<_>>();
+
+    let finished_at = tool_protocol::now_ms();
+    let snapshot = json!({
+        "tool": "pc_optimizer",
+        "version": env!("CARGO_PKG_VERSION"),
+        "action": ACTION_SETTINGS,
+        "startedAt": started_at,
+        "finishedAt": finished_at,
+        "planGuid": active.to_text(),
+        "planName": plan_name,
+        "activationError": activation_error,
+        "counts": {"applied": applied, "partial": partial, "failed": failed},
+        "items": results
+            .iter()
+            .map(|result| json!({
+                "id": result.setting.id,
+                "label": result.setting.label,
+                "beforeAc": result.before_ac,
+                "beforeDc": result.before_dc,
+                "targetAc": result.target_ac,
+                "targetDc": result.target_dc,
+                "afterAc": result.after_ac,
+                "afterDc": result.after_dc,
+                "rcAc": result.rc_ac,
+                "rcDc": result.rc_dc,
+                "status": result.status,
+            }))
+            .collect::<Vec<_>>(),
+    });
+    let snapshot_path = write_snapshot(&snapshot);
+
     let _ = tool_protocol::append_audit_log(json!({
         "tool": "pc_optimizer",
         "action": ACTION_SETTINGS,
         "planGuid": active.to_text(),
         "planName": plan_name,
-        "changes": audit_changes,
-        "result": "ok",
-        "at": tool_protocol::now_ms(),
+        "applied": applied,
+        "partial": partial,
+        "failed": failed,
+        "activationError": activation_error,
+        "snapshot": snapshot_path.as_ref().ok().map(|path| path.to_string_lossy().to_string()),
+        "at": finished_at,
     }));
 
-    let rows = parsed
-        .iter()
-        .zip(originals.iter())
-        .map(|(change, (_, ac_before, dc_before))| {
-            json!({
-                "label": change.setting.label,
-                "before": format!(
-                    "{} / {}",
-                    format_value(change.setting, display_value(change.setting, *ac_before)),
-                    format_value(change.setting, display_value(change.setting, *dc_before))
-                ),
-                "after": format!(
-                    "{} / {}",
-                    format_value(change.setting, Some(change.ac)),
-                    format_value(change.setting, Some(change.dc))
-                ),
-                "status": "已应用",
-            })
-        })
-        .collect::<Vec<_>>();
+    let activation_label = if !any_written {
+        "未执行".to_string()
+    } else {
+        activation_error
+            .map(|rc| format!("失败（{rc}）"))
+            .unwrap_or_else(|| "正常".into())
+    };
+    let activation_note = if !any_written {
+        "所有项均未写入成功，未执行激活；请检查权限或设备是否支持这些设置。"
+    } else if activation_error.is_some() {
+        "写入已发生，但激活当前计划失败；重新预览后再次应用可重试激活。"
+    } else {
+        "当前计划已重新激活，改动立即生效。"
+    };
 
-    Ok(table(
+    let mut data = table(
         json!([
-            item("应用项", parsed.len().to_string()),
-            item("当前计划", plan_name.clone()),
+            item("成功", applied.to_string()),
+            item("部分应用", partial.to_string()),
+            item("失败", failed.to_string()),
+            item("当前计划", plan_name),
+            item("激活", activation_label),
         ]),
         json!([
             column("label", "设置项"),
             column("before", "原值（交流 / 电池）"),
-            column("after", "新值（交流 / 电池）"),
+            column("after", "回读（交流 / 电池）"),
             column("status", "结果"),
+            column("reason", "原因"),
         ]),
         Value::Array(rows),
         json!([
-            "电源设置已应用并激活当前计划。",
-            "原值已写入本地操作日志；可重新输入原值恢复，或在“电源选项”中恢复默认。",
-            "确认令牌一次性使用，继续调整需要重新预览。",
+            "每项独立执行：单项失败不会回滚或中断其他项；回读与目标不一致会写入“原因”列。",
+            "已生成新的一次性令牌，可直接点击“撤销本次修改”恢复原值。",
+            activation_note,
+            snapshot_path
+                .as_ref()
+                .map(|path| format!("本次原值与回读已写入快照：{}", path.display()))
+                .unwrap_or_else(|error| format!("快照写入失败：{error}")),
         ]),
-    ))
+    );
+    if let Value::Object(map) = &mut data {
+        map.insert(
+            "powerSettings".into(),
+            Value::Array(collect_settings(&active)),
+        );
+        map.insert("undoChanges".into(), Value::Array(undo));
+    }
+    let plans_after = enumerate_plans();
+    if let Some(current) = active_plan() {
+        if let Ok(token) =
+            tool_protocol::issue_token(ACTION_SETTINGS, &token_digest(&plans_after, Some(current)))
+        {
+            attach_token(&mut data, token);
+        }
+    }
+    Ok(data)
 }
 
 fn main() {
@@ -959,5 +1042,39 @@ mod tests {
     fn unknown_setting_ids_are_rejected() {
         assert!(setting_by_id("processor-min").is_some());
         assert!(setting_by_id("nope").is_none());
+    }
+
+    #[test]
+    fn item_status_requires_write_and_readback() {
+        assert_eq!(
+            item_status(0, 0, Some(100), Some(200), 100, 200),
+            "已应用"
+        );
+        assert_eq!(
+            item_status(0, 0, Some(99), Some(200), 100, 200),
+            "部分应用"
+        );
+        assert_eq!(item_status(5, 5, None, None, 100, 200), "失败");
+        assert_eq!(
+            item_status(0, 5, Some(100), None, 100, 200),
+            "部分应用"
+        );
+        assert_eq!(
+            item_status(0, 0, Some(100), Some(199), 100, 200),
+            "部分应用"
+        );
+    }
+
+    #[test]
+    fn item_reason_reports_per_channel_failures() {
+        let setting = setting_by_id("processor-max").expect("processor setting");
+        assert_eq!(
+            item_reason(setting, 0, 0, Some(100), Some(100), 100, 100),
+            ""
+        );
+
+        let reason = item_reason(setting, 5, 0, Some(100), Some(80), 100, 100);
+        assert!(reason.contains("交流写入错误码 5"));
+        assert!(reason.contains("电池回读"));
     }
 }

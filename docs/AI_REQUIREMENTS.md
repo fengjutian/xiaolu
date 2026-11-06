@@ -1,6 +1,7 @@
 # 小鲁 System Lens：AI 能力需求与实施规划
 
 - 文档状态：需求稿，待评审
+- 实现状态：AI-0 基础与 AI-1 MVP 已落地（0.53.0），见 [AI 实现说明](AI_IMPLEMENTATION.md)
 - 版本：0.1
 - 日期：2026-11-06
 - 适用基线：小鲁 System Lens 0.38.0

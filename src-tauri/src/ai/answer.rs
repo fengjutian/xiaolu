@@ -96,6 +96,36 @@ fn normalize_recommendations(items: Vec<AiRecommendation>) -> Vec<AiRecommendati
         .collect()
 }
 
+/// Ensures a model answer cannot quietly contradict a local warning/critical
+/// rule. The UI shows local findings separately, but the answer must say that
+/// the local rule takes precedence when it did not reference the same evidence.
+pub fn enforce_local_priority(local_findings: &[AiFinding], validated: &mut ValidatedAnswer) {
+    let ai_refs: HashSet<&str> = validated
+        .findings
+        .iter()
+        .flat_map(|finding| finding.evidence_refs.iter().map(String::as_str))
+        .collect();
+    for local in local_findings {
+        if Severity::parse(&local.severity) < Severity::Warning || local.evidence_refs.is_empty() {
+            continue;
+        }
+        if local
+            .evidence_refs
+            .iter()
+            .any(|reference| ai_refs.contains(reference.as_str()))
+        {
+            continue;
+        }
+        validated.limitations.push(format!(
+            "本地规则已将“{}”判定为{}；AI 结论未引用对应证据，请以本地规则为准。",
+            local.title,
+            Severity::parse(&local.severity).as_str()
+        ));
+    }
+    validated.limitations.dedup();
+    validated.limitations.truncate(8);
+}
+
 /// Extracts a JSON object from a model response, tolerating code fences.
 pub fn parse_answer(text: &str) -> Result<RawAnswer, String> {
     let trimmed = text.trim();
@@ -274,5 +304,29 @@ mod tests {
         .unwrap();
         let validated = validate(raw, &facts()).unwrap();
         assert!(validated.findings[0].recommendations[0].requires_confirmation);
+    }
+
+    #[test]
+    fn marks_unreferenced_local_warning_precedence() {
+        let raw = parse_answer(
+            r#"{"summary":"总体正常","findings":[{"id":"f","title":"t","severity":"info","summary":"s","confidence":"low","evidenceRefs":["memory.usage"]}]}"#,
+        )
+        .unwrap();
+        let mut validated = validate(raw, &facts()).unwrap();
+        let local = vec![AiFinding {
+            id: "rule.storage".into(),
+            title: "存储健康".into(),
+            severity: "critical".into(),
+            summary: "SMART 异常".into(),
+            confidence: "high".into(),
+            evidence_refs: vec!["storage.smart.0".into()],
+            recommendations: vec![],
+            limitations: vec![],
+        }];
+        enforce_local_priority(&local, &mut validated);
+        assert!(validated
+            .limitations
+            .iter()
+            .any(|item| item.contains("本地规则已将")));
     }
 }

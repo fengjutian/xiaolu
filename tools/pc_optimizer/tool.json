@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "pc_optimizer",
   "name": "电脑性能优化",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "apiVersion": 1,
   "description": "预览并切换 Windows 活动电源计划",
   "category": "优化",

@@ -4827,6 +4827,16 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
         parameters,
       )) as ToolResult;
       setGeneric({ tool, data });
+      if (data.powerSettings) {
+        setPowerDraft(
+          Object.fromEntries(
+            data.powerSettings.map((setting) => [
+              setting.id,
+              { ac: setting.ac, dc: setting.dc },
+            ]),
+          ),
+        );
+      }
       setGenericSuccess(`${action.label}执行完成`);
       setSelection([]);
     } catch (reason) {
@@ -5387,6 +5397,27 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                 >
                   应用电源设置
                 </Button>
+                {(generic.data.undoChanges?.length ?? 0) > 0 && (
+                  <Button
+                    size="xs"
+                    color="red"
+                    variant="light"
+                    loading={applying === `${generic.tool.id}:apply_settings`}
+                    onClick={() =>
+                      void runApply(
+                        generic.tool,
+                        {
+                          id: "apply_settings",
+                          label: "撤销本次修改",
+                          write: true,
+                        },
+                        { changes: generic.data.undoChanges },
+                      )
+                    }
+                  >
+                    撤销本次修改
+                  </Button>
+                )}
                 <Text size="xs" c="dimmed">
                   {powerChanges.length > 0
                     ? `将提交 ${powerChanges.length} 项修改；原值写入本地操作日志`
