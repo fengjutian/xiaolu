@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 
 const INVENTORY_CACHE_TTL: Duration = Duration::from_secs(300);
 static INVENTORY_CACHE: OnceLock<Mutex<Option<(Instant, DriverInventory)>>> = OnceLock::new();
+static UPDATE_SCAN_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -125,29 +126,29 @@ pub fn collect() -> Result<DriverInventory, String> {
 
 fn collect_cached() -> Result<DriverInventory, String> {
     let cache = INVENTORY_CACHE.get_or_init(|| Mutex::new(None));
-    if let Some((captured, inventory)) = cache
+    // 冷缓存期间保持锁，避免多个前端请求同时启动昂贵的 CIM 枚举。
+    let mut cache = cache
         .lock()
-        .map_err(|_| "驱动清单缓存不可用".to_string())?
-        .as_ref()
-    {
+        .map_err(|_| "驱动清单缓存不可用".to_string())?;
+    if let Some((captured, inventory)) = cache.as_ref() {
         if captured.elapsed() < INVENTORY_CACHE_TTL {
             return Ok(inventory.clone());
         }
     }
 
     let inventory = collect()?;
-    *cache
-        .lock()
-        .map_err(|_| "驱动清单缓存不可用".to_string())? =
-        Some((Instant::now(), inventory.clone()));
+    *cache = Some((Instant::now(), inventory.clone()));
     Ok(inventory)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_driver_inventory() -> Result<DriverInventory, String> { collect_cached() }
 
 #[cfg(windows)]
 fn scan_updates() -> Result<Vec<DriverUpdate>, String> {
+    let _scan_guard = UPDATE_SCAN_LOCK
+        .lock()
+        .map_err(|_| "Windows Update 扫描器正在恢复，请稍后重试".to_string())?;
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x08000000;
     let script = r#"

@@ -133,7 +133,7 @@ fn record_metrics(app: &tauri::AppHandle, snapshot: &SystemSnapshot) {
     );
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_system_snapshot(
     app: tauri::AppHandle,
     state: tauri::State<'_, std::sync::Mutex<SystemCollector>>,
@@ -161,7 +161,7 @@ pub async fn get_system_history(
     .map_err(|error| format!("指标历史任务失败：{error}"))?
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_hardware_details() -> Result<serde_json::Value, String> {
     #[cfg(windows)] {
         use std::os::windows::process::CommandExt;
@@ -207,11 +207,11 @@ mod startup {
 }
 
 #[cfg(windows)]
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_startup_items() -> Vec<startup::StartupItem> { startup::list() }
 
 #[cfg(windows)]
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_startup_enabled(name: String, enabled: bool) -> Result<(), String> { startup::set_enabled(name, enabled) }
 
 #[cfg(test)]

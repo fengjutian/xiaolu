@@ -1,5 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import type { BenchmarkPreflight, BenchmarkRecord, BenchmarkResult, CleanupPreview, DeviceDetails, DiagnosticReport, DirectoryListing, DriverAssessmentReport, DriverInventory, DriverUpdate, DuplicateScan, EventLogResult, HardwareDetails, LargeFileScan, NetworkDiagnosticReport, NotificationOutcome, NotificationSettings, NvmeHealthReport, ScheduledTaskInventory, SensorHistorySeries, SensorSettings, SensorSnapshot, SensorValue, SlimScan, SoftwareInventory, StartupItem, StorageDrive, StorageKind, StorageScan, SystemHistorySeries, SystemSnapshot, ToolDescriptor } from "./types";
+import type { BenchmarkPreflight, BenchmarkRecord, BenchmarkResult, CleanupPreview, DeviceDetails, DiagnosticReport, DirectoryListing, DriverAssessmentReport, DriverInventory, DriverUpdate, DuplicateScan, EventLogResult, EyeCareSettings, EyeCareStatus, HardwareDetails, LargeFileScan, NetworkDiagnosticReport, NotificationOutcome, NotificationSettings, NvmeHealthReport, ScheduledTaskInventory, SensorHistorySeries, SensorSettings, SensorSnapshot, SensorValue, SlimScan, SoftwareInventory, StartupItem, StorageDrive, StorageKind, StorageScan, SystemHistorySeries, SystemSnapshot, ToolDescriptor } from "./types";
 
 const gib = 1024 ** 3;
 
@@ -334,6 +334,49 @@ export async function scanStorage(kind: string): Promise<StorageScan> {
   return invoke<StorageScan>("scan_storage", { kind });
 }
 
+export async function getEyeCareSettings(): Promise<EyeCareSettings> {
+  if (!isTauri()) {
+    return {
+      enabled: false,
+      warmth: 40,
+      breakIntervalMinutes: 45,
+      breakDurationSeconds: 20,
+      scheduleEnabled: false,
+      scheduleStartHour: 20,
+      scheduleEndHour: 8,
+    };
+  }
+  return invoke<EyeCareSettings>("get_eye_care_settings");
+}
+
+export async function saveEyeCareSettings(
+  settings: EyeCareSettings,
+): Promise<EyeCareSettings> {
+  if (!isTauri()) return settings;
+  return invoke<EyeCareSettings>("save_eye_care_settings", { settings });
+}
+
+export async function setEyeCareFilter(
+  enabled: boolean,
+  warmth: number,
+): Promise<EyeCareStatus> {
+  if (!isTauri()) {
+    return {
+      applied: enabled,
+      displays: enabled ? ["演示显示器"] : [],
+      failed: [],
+      message: "浏览器演示不调整真实色温。",
+    };
+  }
+  return invoke<EyeCareStatus>("set_eye_care_filter", { enabled, warmth });
+}
+
+export async function sendBreakReminder(): Promise<NotificationOutcome> {
+  if (!isTauri()) {
+    return { status: "disabled", message: "浏览器演示不发送系统通知。" };
+  }
+  return invoke<NotificationOutcome>("send_break_reminder");
+}
 export async function getStorageDrives(): Promise<StorageDrive[]> {
   if (!isTauri()) {
     return [

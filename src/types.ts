@@ -332,6 +332,23 @@ export interface ToolDescriptor {
   actions?: ToolActionDescriptor[];
 }
 
+export interface EyeCareSettings {
+  enabled: boolean;
+  warmth: number;
+  breakIntervalMinutes: number;
+  breakDurationSeconds: number;
+  scheduleEnabled: boolean;
+  scheduleStartHour: number;
+  scheduleEndHour: number;
+}
+
+export interface EyeCareStatus {
+  applied: boolean;
+  displays: string[];
+  failed: string[];
+  message: string;
+}
+
 export interface PowerSettingOption {
   id: string;
   label: string;

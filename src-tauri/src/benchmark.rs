@@ -341,7 +341,7 @@ pub fn cancel_benchmark(cancel: tauri::State<'_, BenchmarkCancel>) {
     cancel.0.store(true, Ordering::Relaxed);
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_benchmark_history(app: tauri::AppHandle, state: tauri::State<'_, BenchmarkHistoryLock>) -> Result<Vec<BenchmarkRecord>, String> {
     let _guard = state.0.lock().map_err(|_| "跑分历史正在被占用".to_string())?;
     let mut history = load_history_file(&app)?;
@@ -349,7 +349,7 @@ pub fn get_benchmark_history(app: tauri::AppHandle, state: tauri::State<'_, Benc
     Ok(history)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_external_benchmark(app: tauri::AppHandle, state: tauri::State<'_, BenchmarkHistoryLock>, result: BenchmarkResult) -> Result<(), String> {
     if result.kind != "gpu" || !matches!(result.schema_version, 2 | 3) || !result.score.is_finite() || result.score <= 0.0 {
         return Err("GPU 跑分结果格式无效".into());

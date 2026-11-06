@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActionIcon,
   Alert,
@@ -17,6 +17,7 @@ import {
   Progress,
   ScrollArea,
   SegmentedControl,
+  Slider,
   Select,
   SimpleGrid,
   Stack,
@@ -41,6 +42,7 @@ import {
   IconCamera,
   IconCpu,
   IconDeviceDesktop,
+  IconEye,
   IconDownload,
   IconFolder,
   IconGauge,
@@ -86,6 +88,10 @@ import {
   getDriverInventory,
   getDiagnosticReport,
   getDeviceDetails,
+  getEyeCareSettings,
+  saveEyeCareSettings,
+  setEyeCareFilter,
+  sendBreakReminder,
   getNotificationSettings,
   getStorageDrives,
   getHardwareDetails,
@@ -129,6 +135,7 @@ import type {
   DirectoryListing,
   DuplicateScan,
   EventLogResult,
+  EyeCareSettings,
   HardwareDetails,
   HealthLevel,
   LargeFileScan,
@@ -162,6 +169,7 @@ type Tab =
   | "overview"
   | "benchmark"
   | "sensors"
+  | "eye-care"
   | "drivers"
   | "diagnostics"
   | "network"
@@ -188,6 +196,7 @@ const nav = [
   ["overview", "性能概览", IconGauge],
   ["benchmark", "性能跑分", IconActivity],
   ["sensors", "温度与健康", IconTemperature],
+  ["eye-care", "护眼模式", IconEye],
   ["drivers", "驱动检测", IconTool],
   ["diagnostics", "系统诊断", IconHeartbeat],
   ["network", "网络诊断", IconNetwork],
@@ -3919,7 +3928,194 @@ const slimCategoryLabel = (category: string) =>
 const slimCategoryColor = (category: string) =>
   category === "safe" ? "teal" : category === "caution" ? "orange" : "gray";
 
-function ToolboxPanel() {
+function EyeCarePanel({
+  settings,
+  onSaved,
+}: {
+  settings: EyeCareSettings | null;
+  onSaved: (settings: EyeCareSettings) => void;
+}) {
+  const [draft, setDraft] = useState<EyeCareSettings | null>(settings);
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => setDraft(settings), [settings]);
+
+  if (!draft)
+    return (
+      <Center h={260}>
+        <Loader />
+      </Center>
+    );
+
+  const apply = async () => {
+    setSaving(true);
+    setFailed(false);
+    try {
+      const saved = await saveEyeCareSettings(draft);
+      const result = await setEyeCareFilter(saved.enabled, saved.warmth);
+      setDraft(saved);
+      onSaved(saved);
+      setStatus(result.message);
+      setFailed(saved.enabled && !result.applied);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+      setFailed(true);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const swatchGreen = Math.round(255 - (draft.warmth / 100) * 30);
+  const swatchBlue = Math.round(255 - (draft.warmth / 100) * 95);
+  const numberFrom = (value: number | string) =>
+    typeof value === "number" ? value : Number.parseFloat(value);
+
+  return (
+    <Stack gap="md">
+      <Alert color="blue" icon={<IconEye />}>
+        护眼模式通过调整显示器 Gamma Ramp 降低蓝光，不覆盖屏幕内容；HDR
+        或部分驱动可能不支持。休息提醒只在应用运行时发送，系统通知失败时仍会显示应用内横幅。
+      </Alert>
+
+      <Card className="glass-card" radius="lg">
+        <Group justify="space-between" align="flex-start">
+          <Box>
+            <Text fw={800}>色温滤镜</Text>
+            <Text size="xs" c="dimmed">
+              暖色强度 {draft.warmth}%（0 为原色，100 为最暖）
+            </Text>
+          </Box>
+          <Switch
+            checked={draft.enabled}
+            onChange={(event) =>
+              setDraft({ ...draft, enabled: event.currentTarget.checked })
+            }
+            label="启用护眼模式"
+          />
+        </Group>
+        <Slider
+          mt="md"
+          min={0}
+          max={100}
+          value={draft.warmth}
+          onChange={(value) => setDraft({ ...draft, warmth: value })}
+          marks={[
+            { value: 0, label: "原色" },
+            { value: 50, label: "适中" },
+            { value: 100, label: "最暖" },
+          ]}
+        />
+        <Group mt="lg" gap="sm" align="center">
+          <Box
+            w={120}
+            h={48}
+            style={{
+              borderRadius: 10,
+              border: "1px solid rgba(255,255,255,0.15)",
+              background: `rgb(255, ${swatchGreen}, ${swatchBlue})`,
+            }}
+          />
+          <Text size="xs" c="dimmed">
+            近似效果预览；实际效果取决于显示器与色彩配置。
+          </Text>
+        </Group>
+      </Card>
+
+      <Card className="glass-card" radius="lg">
+        <Text fw={800}>休息提醒</Text>
+        <Text size="xs" c="dimmed">
+          按间隔弹出应用内横幅并发送系统通知；应用在后台或全屏时跳过
+        </Text>
+        <Group mt="md" align="flex-end" wrap="wrap">
+          <NumberInput
+            size="xs"
+            label="间隔（分钟）"
+            min={5}
+            max={180}
+            w={150}
+            value={draft.breakIntervalMinutes}
+            onChange={(value) => {
+              const parsed = numberFrom(value);
+              if (Number.isFinite(parsed)) {
+                setDraft({ ...draft, breakIntervalMinutes: Math.round(parsed) });
+              }
+            }}
+          />
+          <NumberInput
+            size="xs"
+            label="提醒时长（秒）"
+            min={5}
+            max={300}
+            w={150}
+            value={draft.breakDurationSeconds}
+            onChange={(value) => {
+              const parsed = numberFrom(value);
+              if (Number.isFinite(parsed)) {
+                setDraft({ ...draft, breakDurationSeconds: Math.round(parsed) });
+              }
+            }}
+          />
+          <Switch
+            checked={draft.scheduleEnabled}
+            onChange={(event) =>
+              setDraft({
+                ...draft,
+                scheduleEnabled: event.currentTarget.checked,
+              })
+            }
+            label="仅在时间段内生效"
+          />
+          <NumberInput
+            size="xs"
+            label="开始（时）"
+            min={0}
+            max={23}
+            w={120}
+            value={draft.scheduleStartHour}
+            onChange={(value) => {
+              const parsed = numberFrom(value);
+              if (Number.isFinite(parsed)) {
+                setDraft({ ...draft, scheduleStartHour: Math.round(parsed) });
+              }
+            }}
+          />
+          <NumberInput
+            size="xs"
+            label="结束（时）"
+            min={0}
+            max={23}
+            w={120}
+            value={draft.scheduleEndHour}
+            onChange={(value) => {
+              const parsed = numberFrom(value);
+              if (Number.isFinite(parsed)) {
+                setDraft({ ...draft, scheduleEndHour: Math.round(parsed) });
+              }
+            }}
+          />
+        </Group>
+        <Text size="xs" c="dimmed" mt="sm">
+          起止小时相同表示全天生效；跨零点按环形时间段计算。
+        </Text>
+      </Card>
+
+      <Group align="center">
+        <Button loading={saving} onClick={() => void apply()}>
+          保存并应用
+        </Button>
+        {status && (
+          <Text size="sm" c={failed ? "red" : "teal"}>
+            {status}
+          </Text>
+        )}
+      </Group>
+    </Stack>
+  );
+}
+
+function ToolboxPanel({ onOpenEyeCare }: { onOpenEyeCare?: () => void }) {
   const [tools, setTools] = useState<ToolDescriptor[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [slim, setSlim] = useState<SlimScan | null>(null);
@@ -4189,6 +4385,11 @@ function ToolboxPanel() {
                 onClick={() => void runGeneric(tool)}
               >
                 {tool.id === "clean_master" ? "扫描清理位置" : "运行预览"}
+              </Button>
+            )}
+            {tool.id === "eye_care" && onOpenEyeCare && (
+              <Button size="xs" mt="md" variant="light" onClick={onOpenEyeCare}>
+                打开护眼设置
               </Button>
             )}
             {tool.id === "clean_master" && tool.uiKind === "table" && (
@@ -4735,9 +4936,53 @@ function ToolboxPanel() {
   );
 }
 
+// 隔离静态重型页面，避免传感器或其他全局状态更新时重建数百行表格。
+const MemoHardwarePanel = memo(HardwarePanel);
+const MemoDevicePanel = memo(DevicePanel);
+const MemoDriversPanel = memo(DriversPanel);
+const MemoDiagnosticsPanel = memo(DiagnosticsPanel);
+const MemoNetworkPanel = memo(NetworkPanel);
+const MemoSoftwarePanel = memo(SoftwarePanel);
+const MemoScheduledTasksPanel = memo(ScheduledTasksPanel);
+const MemoProcessPanel = memo(ProcessPanel);
+
 export default function App() {
   const { colorScheme, setColorScheme } = useMantineColorScheme();
   const [tab, setTab] = useState<Tab>("overview");
+  const [eyeCare, setEyeCare] = useState<EyeCareSettings | null>(null);
+  const [eyeBreak, setEyeBreak] = useState(false);
+
+  useEffect(() => {
+    void getEyeCareSettings()
+      .then(setEyeCare)
+      .catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    if (!eyeCare?.enabled) {
+      setEyeBreak(false);
+      return;
+    }
+    const hour = new Date().getHours();
+    const inSchedule =
+      !eyeCare.scheduleEnabled ||
+      eyeCare.scheduleStartHour === eyeCare.scheduleEndHour ||
+      (eyeCare.scheduleStartHour < eyeCare.scheduleEndHour
+        ? hour >= eyeCare.scheduleStartHour && hour < eyeCare.scheduleEndHour
+        : hour >= eyeCare.scheduleStartHour || hour < eyeCare.scheduleEndHour);
+    if (!inSchedule) return;
+    const timer = window.setInterval(() => {
+      if (document.hidden || document.fullscreenElement) return;
+      setEyeBreak(true);
+      void sendBreakReminder().catch(() => undefined);
+      window.setTimeout(
+        () => setEyeBreak(false),
+        Math.max(5, eyeCare.breakDurationSeconds) * 1000,
+      );
+    }, Math.max(5, eyeCare.breakIntervalMinutes) * 60_000);
+    return () => window.clearInterval(timer);
+  }, [eyeCare]);
+
   const [snapshot, setSnapshot] = useState<SystemSnapshot | null>(null);
   const [history, setHistory] = useState<Sample[]>([]);
   const [systemHistory, setSystemHistory] = useState<SystemHistorySeries | null>(
@@ -4799,10 +5044,13 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    // 只有实时页面需要高频系统快照；静态清单页不应被两秒轮询反复重绘。
+    if (tab !== "overview" && tab !== "processes") return;
     void refresh();
-    const timer = window.setInterval(() => void refresh(), 2000);
+    const interval = tab === "overview" ? 2000 : 3000;
+    const timer = window.setInterval(() => void refresh(), interval);
     return () => clearInterval(timer);
-  }, [refresh]);
+  }, [refresh, tab]);
   useEffect(() => {
     let cancelled = false;
     const load = () => {
@@ -5015,10 +5263,23 @@ export default function App() {
           </Text>
         </Paper>
         <Text size="xs" c="dimmed">
-          v0.39.0 · 18 个工具 · 启动项启停
+          v0.40.0 · 18 个工具 · 护眼模式
         </Text>
       </aside>
       <main className="content">
+        {eyeBreak && (
+          <Alert
+            color="orange"
+            icon={<IconEye />}
+            mb="md"
+            withCloseButton
+            onClose={() => setEyeBreak(false)}
+            title="护眼提醒"
+          >
+            休息一下：看向 6 米外约 20 秒，眨眼放松。
+          </Alert>
+        )}
+
         <Group justify="space-between" mb="xl">
           <Box>
             <Text size="sm" c="dimmed">
@@ -5223,15 +5484,16 @@ export default function App() {
           </Stack>
         )}
         {tab === "benchmark" && <BenchmarkPanel />}
-        {tab === "hardware" && <HardwarePanel details={hardware} />}
-        {tab === "devices" && <DevicePanel data={deviceDetails} />}
+        {tab === "hardware" && <MemoHardwarePanel details={hardware} />}
+        {tab === "devices" && <MemoDevicePanel data={deviceDetails} />}
         {tab === "sensors" && <SensorsPanel data={sensors} />}
-        {tab === "drivers" && <DriversPanel data={drivers} />}
-        {tab === "diagnostics" && <DiagnosticsPanel data={diagnostics} />}
-        {tab === "network" && <NetworkPanel data={networkDiagnostics} />}
-        {tab === "software" && <SoftwarePanel data={software} />}
+        {tab === "eye-care" && <EyeCarePanel settings={eyeCare} onSaved={setEyeCare} />}
+        {tab === "drivers" && <MemoDriversPanel data={drivers} />}
+        {tab === "diagnostics" && <MemoDiagnosticsPanel data={diagnostics} />}
+        {tab === "network" && <MemoNetworkPanel data={networkDiagnostics} />}
+        {tab === "software" && <MemoSoftwarePanel data={software} />}
         {tab === "storage" && <StoragePanel />}
-        {tab === "processes" && <ProcessPanel processes={snapshot.processes} />}
+        {tab === "processes" && <MemoProcessPanel processes={snapshot.processes} />}
         {tab === "startup" && (
           <Stack>
             <Alert color="blue" icon={<IconPlayerPause />}>
@@ -5268,8 +5530,8 @@ export default function App() {
             ))}
           </Stack>
         )}
-        {tab === "tasks" && <ScheduledTasksPanel data={scheduledTasks} />}
-        {tab === "toolbox" && <ToolboxPanel />}
+        {tab === "tasks" && <MemoScheduledTasksPanel data={scheduledTasks} />}
+        {tab === "toolbox" && <ToolboxPanel onOpenEyeCare={() => setTab("eye-care")} />}
         {tab === "report" && <ReportPanel />}
       </main>
     </div>

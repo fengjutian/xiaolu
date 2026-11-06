@@ -236,6 +236,18 @@ pub async fn send_test_notification(app: AppHandle) -> Result<NotificationOutcom
     .or_else(|error| Ok(outcome("failed", error)))
 }
 
+/// 护眼模式的休息提醒：不参与传感器告警冷却，避免和温度告警互相挤占。
+#[tauri::command]
+pub async fn send_break_reminder(app: AppHandle) -> Result<NotificationOutcome, String> {
+    show_toast(
+        &app,
+        "小鲁 · 护眼提醒",
+        "看向 6 米外约 20 秒，眨眼放松一下。",
+    )
+    .map(|()| outcome("sent", "休息提醒已发送。"))
+    .or_else(|error| Ok(outcome("failed", error)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
