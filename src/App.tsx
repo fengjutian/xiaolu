@@ -4160,6 +4160,10 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
   const [error, setError] = useState<string | null>(null);
   const [slim, setSlim] = useState<SlimScan | null>(null);
   const [slimDrawerOpen, setSlimDrawerOpen] = useState(false);
+  const [slimSelection, setSlimSelection] = useState<string[]>([]);
+  const [slimToken, setSlimToken] = useState<string | null>(null);
+  const [slimApplying, setSlimApplying] = useState(false);
+  const [slimResult, setSlimResult] = useState<ToolResult | null>(null);
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
   const [openPathError, setOpenPathError] = useState<string | null>(null);
@@ -4358,6 +4362,7 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
           (data.rows ?? [])
             .filter(
               (row) =>
+                row.cleanable !== false &&
                 row.status === "可用" &&
                 Number(row.files) > 0 &&
                 row.requiresAdmin !== true,
@@ -5084,11 +5089,62 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
     try {
       const result = (await runToolAction("cclean", "preview")) as SlimScan;
       setSlim(result);
+      // 与清理大师共用同一份扫描结果：默认勾选可清理、占用明确且不需要提权的位置。
+      setSlimSelection(
+        result.items
+          .filter(
+            (item) =>
+              item.cleanable !== false &&
+              item.category === "safe" &&
+              item.fileCount > 0 &&
+              item.requiresAdmin !== true,
+          )
+          .map((item) => item.id),
+      );
+      setSlimToken(result.confirmationToken ?? null);
       setSlimDrawerOpen(true);
     } catch (reason) {
       setScanError(reason instanceof Error ? reason.message : String(reason));
     } finally {
       setScanning(false);
+    }
+  };
+
+  const slimApply = async () => {
+    if (!slimToken) {
+      setScanError("确认令牌缺失或已使用，请重新扫描。");
+      return;
+    }
+    if (
+      !window.confirm(
+        `确认把所选 ${slimSelection.length} 个位置的文件移入回收站？可从回收站还原。`,
+      )
+    )
+      return;
+    setSlimApplying(true);
+    setScanError(null);
+    try {
+      const data = (await runToolAction("cclean", "apply", slimToken, {
+        candidateIds: slimSelection,
+      })) as ToolResult;
+      setSlimResult(data);
+      setSlimToken(null);
+      setSlimSelection([]);
+      // 清理后刷新数字；刷新失败就保留旧数字，不影响本次结果展示。
+      try {
+        const refreshed = (await runToolAction(
+          "cclean",
+          "preview",
+        )) as SlimScan;
+        setSlim(refreshed);
+        setSlimToken(refreshed.confirmationToken ?? null);
+      } catch {
+        // 保留清理前的扫描结果。
+      }
+    } catch (reason) {
+      setScanError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setSlimApplying(false);
     }
   };
 
@@ -5519,6 +5575,7 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                         (generic.data.rows ?? [])
                           .filter(
                             (row) =>
+                              row.cleanable !== false &&
                               row.status === "可用" &&
                               Number(row.files) > 0 &&
                               row.requiresAdmin !== true,
@@ -5545,6 +5602,7 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                                 "wer-user",
                                 "edge-cache",
                               ].includes(String(row.id)) &&
+                              row.cleanable !== false &&
                               row.status === "可用" &&
                               Number(row.files) > 0,
                           )
@@ -5565,8 +5623,9 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                 <Stack gap={6} mt="xs">
                   {(generic.data.rows ?? []).map((row) => {
                     const id = String(row.id ?? "");
+                    const statOnly = row.cleanable === false;
                     const disabled =
-                      row.status === "不存在" || Number(row.files) === 0;
+                      statOnly || row.status === "不存在" || Number(row.files) === 0;
                     return (
                       <Checkbox
                         key={id}
@@ -5585,7 +5644,9 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                             : ""
                         }${row.truncated ? " · 已截断" : ""}${
                           row.requiresAdmin ? " · 需要管理员" : ""
-                        }${disabled ? ` · ${row.status}` : ""}`}
+                        }${statOnly ? " · 仅统计" : ""}${
+                          disabled && !statOnly ? ` · ${row.status}` : ""
+                        }`}
                       />
                     );
                   })}
@@ -7308,6 +7369,7 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
           <Table miw={900} highlightOnHover verticalSpacing="xs">
             <Table.Thead>
               <Table.Tr>
+                <Table.Th w={44}></Table.Th>
                 <Table.Th>位置</Table.Th>
                 <Table.Th>占用</Table.Th>
                 <Table.Th>类别</Table.Th>
@@ -7317,8 +7379,24 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
-              {slim.items.map((item) => (
+              {slim.items.map((item) => {
+                const selectable = item.cleanable !== false && item.fileCount > 0;
+                return (
                 <Table.Tr key={item.id}>
+                  <Table.Td>
+                    <Checkbox
+                      size="xs"
+                      checked={slimSelection.includes(item.id)}
+                      disabled={!selectable}
+                      onChange={(event) =>
+                        setSlimSelection((current) =>
+                          event.currentTarget.checked
+                            ? [...current, item.id]
+                            : current.filter((id) => id !== item.id),
+                        )
+                      }
+                    />
+                  </Table.Td>
                   <Table.Td>
                     <Text size="sm" fw={600}>
                       {item.label}
@@ -7346,6 +7424,11 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                     <Text size="xs" c="dimmed" maw={320}>
                       {item.note}
                     </Text>
+                    {item.cleanable === false && (
+                      <Badge size="xs" color="gray" variant="light" mt={4}>
+                        仅统计
+                      </Badge>
+                    )}
                   </Table.Td>
                   <Table.Td>
                     <Button
@@ -7358,10 +7441,37 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                     </Button>
                   </Table.Td>
                 </Table.Tr>
-              ))}
+                );
+              })}
             </Table.Tbody>
           </Table>
           </ScrollArea>
+          <Group mt="sm" gap="xs" align="center">
+            <Button
+              size="xs"
+              color="orange"
+              variant="light"
+              disabled={slimSelection.length === 0}
+              loading={slimApplying}
+              onClick={() => void slimApply()}
+            >
+              清理所选（移入回收站）
+            </Button>
+            <Button size="xs" variant="subtle" onClick={() => void scan()}>
+              重新扫描
+            </Button>
+            <Text size="xs" c="dimmed">
+              已选 {slimSelection.length} 个位置；清理后可到回收站还原
+            </Text>
+          </Group>
+          {slimResult && (
+            <Alert color="teal" icon={<IconShieldCheck />} mt="sm">
+              清理完成：
+              {(slimResult.summary ?? [])
+                .map((entry) => `${entry.label} ${entry.value}`)
+                .join(" · ")}
+            </Alert>
+          )}
           <Text size="xs" c="dimmed" mt="md">
             {slim.note}
           </Text>

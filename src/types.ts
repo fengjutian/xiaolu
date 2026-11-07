@@ -554,10 +554,15 @@ export interface SlimItem {
   label: string;
   path: string;
   bytes: number;
+  size?: string;
   fileCount: number;
+  locked?: number;
   category: "safe" | "caution" | "system" | string;
   requiresAdmin: boolean;
   truncated: boolean;
+  /** 仅统计、不支持清理的位置（回收站、系统托管文件等）。 */
+  cleanable?: boolean;
+  status?: string;
   note: string;
 }
 
@@ -572,6 +577,12 @@ export interface SlimScan {
   systemBytes: number;
   fileCount: number;
   note: string;
+  /** 与清理大师共用的确认令牌，清理前需要回传给工具。 */
+  confirmationToken?: string;
+  confirmationTokenExpiresAt?: number;
+  summary?: { label: string; value: string }[];
+  rows?: Record<string, unknown>[];
+  notes?: string[];
 }
 
 export interface DiagnosticReport {

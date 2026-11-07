@@ -948,7 +948,7 @@ export async function runGpuBenchmark(): Promise<BenchmarkResult> {
 export async function listToolboxTools(): Promise<ToolDescriptor[]> {
   if (!isTauri()) {
     return [
-      { id: "cclean", name: "C 盘瘦身", category: "清理", description: "只读统计 C 盘可清理位置与系统托管文件", risk: "read_only", requiresAdmin: false, status: "available", note: "当前仅预览，不删除", uiKind: "table" },
+      { id: "cclean", name: "C 盘瘦身", category: "清理", description: "扫描 C 盘可清理位置与系统托管文件，勾选后移入回收站", risk: "write", requiresAdmin: false, status: "available", note: "与清理大师共用同一份扫描结果", uiKind: "table" },
       { id: "sys_clean", name: "Windows 系统瘦身", category: "清理", description: "只读列出已安装应用包与系统内置候选", risk: "read_only", requiresAdmin: false, status: "available", note: "只读清单", uiKind: "table" },
       { id: "privacy_clean", name: "隐私清理", category: "隐私", description: "只读统计浏览器记录、缓存与最近使用痕迹的占用", risk: "read_only", requiresAdmin: false, status: "available", note: "只读统计", uiKind: "table" },
       { id: "dll_repair", name: "DLL 修复", category: "修复", description: "只读检查常见运行库 DLL 是否存在", risk: "read_only", requiresAdmin: false, status: "available", note: "只读检查", uiKind: "table" },
@@ -1024,10 +1024,10 @@ export async function runToolAction(
       };
     }
     const items = [
-      { id: "user-temp", label: "用户临时文件", path: "C:\\Users\\Demo\\AppData\\Local\\Temp", bytes: 3.4 * gib, fileCount: 8421, category: "safe", requiresAdmin: false, truncated: false, note: "应用运行时可能仍在写入。" },
-      { id: "windows-update", label: "Windows Update 下载缓存", path: "C:\\Windows\\SoftwareDistribution\\Download", bytes: 1.2 * gib, fileCount: 10, category: "caution", requiresAdmin: true, truncated: false, note: "更新缓存由系统管理。" },
-      { id: "recycle-bin", label: "回收站", path: "C:\\$Recycle.Bin", bytes: 900 * 1024 ** 2, fileCount: 64, category: "caution", requiresAdmin: true, truncated: false, note: "普通权限只能看到部分内容。" },
-      { id: "system-hiberfil.sys", label: "休眠文件 hiberfil.sys", path: "C:\\hiberfil.sys", bytes: 6.4 * gib, fileCount: 1, category: "system", requiresAdmin: false, truncated: false, note: "可在电源设置中关闭休眠以释放空间。" },
+      { id: "user-temp", label: "用户临时文件", path: "C:\\Users\\Demo\\AppData\\Local\\Temp", bytes: 3.4 * gib, size: "3.4 GB", fileCount: 8421, locked: 12, status: "可用", category: "safe", requiresAdmin: false, truncated: false, cleanable: true, note: "应用运行时可能仍在写入。" },
+      { id: "update-download", label: "Windows Update 下载缓存", path: "C:\\Windows\\SoftwareDistribution\\Download", bytes: 1.2 * gib, size: "1.2 GB", fileCount: 10, locked: 0, status: "可用", category: "caution", requiresAdmin: true, truncated: false, cleanable: true, note: "更新缓存由系统管理。" },
+      { id: "recycle-bin", label: "回收站", path: "C:\\$Recycle.Bin", bytes: 900 * 1024 ** 2, size: "900.0 MB", fileCount: 64, locked: 0, status: "可用", category: "caution", requiresAdmin: true, truncated: false, cleanable: false, note: "系统托管：只统计占用，需在回收站中手动清空。" },
+      { id: "system-hiberfil.sys", label: "休眠文件 hiberfil.sys", path: "C:\\hiberfil.sys", bytes: 6.4 * gib, size: "6.4 GB", fileCount: 1, locked: 0, status: "系统托管", category: "system", requiresAdmin: false, truncated: false, cleanable: false, note: "可在电源设置中关闭休眠以释放空间。" },
     ];
     return {
       capturedAtUnixMs: Date.now(),
@@ -1039,7 +1039,8 @@ export async function runToolAction(
       cautionBytes: 2.1 * gib,
       systemBytes: 6.4 * gib,
       fileCount: 8496,
-      note: "只读预览：只统计占用，不删除任何文件。",
+      note: "扫描只统计占用，不会删除任何文件；勾选位置并确认后，文件会移入回收站，可从回收站还原。",
+      confirmationToken: "mock-confirmation-token",
     };
   }
   return invoke<unknown>("run_tool_action", {

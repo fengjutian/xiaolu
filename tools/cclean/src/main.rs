@@ -101,8 +101,32 @@ fn drive_space() -> (u64, u64) {
     (total, free)
 }
 
+/// 清理位置在 C 盘视图里的呈现。与共享表格用同一份行数据。
+fn item_json(row: &clean_core::PreviewRow) -> Value {
+    json!({
+        "id": row.id,
+        "label": row.label,
+        "path": row.path,
+        "bytes": row.bytes,
+        "size": human_bytes(row.bytes),
+        "fileCount": row.files,
+        "locked": row.locked,
+        "truncated": row.truncated,
+        "status": row.status,
+        "category": row.category,
+        "requiresAdmin": row.requires_admin,
+        "cleanable": row.cleanable,
+        "note": row.note,
+    })
+}
+
 /// 只读预览：共享表格 + C 盘视图的附加信息。
 fn preview() -> Result<Value, ToolError> {
+    preview_with_rows().map(|(data, _)| data)
+}
+
+/// 只读预览，同时把共享扫描结果交给调用方（测试用同一份数据比对）。
+fn preview_with_rows() -> Result<(Value, Vec<clean_core::PreviewRow>), ToolError> {
     let preview = clean_core::scan_preview(TOOL_ID, ACTION)?;
     let (safe_bytes, caution_bytes) = clean_core::category_bytes(&preview.rows);
     let system_items = system_files();
@@ -111,27 +135,7 @@ fn preview() -> Result<Value, ToolError> {
         .iter()
         .filter_map(|item| item["bytes"].as_u64())
         .sum::<u64>();
-    let mut items: Vec<Value> = preview
-        .rows
-        .iter()
-        .map(|row| {
-            json!({
-                "id": row.id,
-                "label": row.label,
-                "path": row.path,
-                "bytes": row.bytes,
-                "size": human_bytes(row.bytes),
-                "fileCount": row.files,
-                "locked": row.locked,
-                "truncated": row.truncated,
-                "status": row.status,
-                "category": row.category,
-                "requiresAdmin": row.requires_admin,
-                "cleanable": row.cleanable,
-                "note": row.note,
-            })
-        })
-        .collect();
+    let mut items: Vec<Value> = preview.rows.iter().map(item_json).collect();
     items.extend(system_items);
     let file_count =
         preview.rows.iter().map(|row| row.files).sum::<usize>() + system_count;
@@ -153,7 +157,7 @@ fn preview() -> Result<Value, ToolError> {
             json!("扫描只统计占用，不会删除任何文件；勾选位置并确认后，文件会移入回收站，可从回收站还原。"),
         );
     }
-    Ok(data)
+    Ok((data, preview.rows))
 }
 
 #[cfg(test)]
@@ -204,30 +208,13 @@ mod tests {
             "SYSTEM_LENS_TOKEN_SECRET",
             "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
         );
-        let preview = clean_core::scan_preview(TOOL_ID, ACTION).expect("preview");
+        let (data, rows) = preview_with_rows().expect("preview");
         std::env::remove_var("SYSTEM_LENS_TOKEN_SECRET");
-        let items = preview.data["items"].as_array().expect("items");
-        let shared = preview
-            .rows
-            .iter()
-            .map(|row| {
-                json!({
-                    "id": row.id,
-                    "label": row.label,
-                    "path": row.path,
-                    "bytes": row.bytes,
-                    "size": human_bytes(row.bytes),
-                    "fileCount": row.files,
-                    "locked": row.locked,
-                    "truncated": row.truncated,
-                    "status": row.status,
-                    "category": row.category,
-                    "requiresAdmin": row.requires_admin,
-                    "cleanable": row.cleanable,
-                    "note": row.note,
-                })
-            })
-            .collect::<Vec<_>>();
+        let items = data["items"].as_array().expect("items");
+        let shared = rows.iter().map(item_json).collect::<Vec<_>>();
         assert_eq!(&items[..shared.len()], &shared[..]);
+        // 共享表格与 C 盘视图引用同一批位置。
+        let table_rows = data["rows"].as_array().expect("rows");
+        assert_eq!(table_rows.len(), rows.len());
     }
 }
