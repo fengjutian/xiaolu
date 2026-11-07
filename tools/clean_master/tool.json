@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "clean_master",
   "name": "清理大师",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "apiVersion": 1,
   "description": "扫描并勾选固定清理位置，文件移入回收站可还原",
   "category": "清理",
@@ -19,7 +19,9 @@
       "%ProgramData%\\Microsoft\\Windows\\WER",
       "%WINDIR%\\SoftwareDistribution\\Download",
       "%ProgramData%\\Microsoft\\Windows\\DeliveryOptimization\\Cache",
-      "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\Default\\Cache"
+      "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\Default\\Cache",
+      "%LOCALAPPDATA%\\Microsoft\\Windows\\INetCache",
+      "%SystemDrive%\\$Recycle.Bin"
     ],
     "writePaths": [
       "%TEMP%",

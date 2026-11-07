@@ -1,6 +1,6 @@
 [package]
 name = "clean-master-tool"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 
 [[bin]]
@@ -8,9 +8,9 @@ name = "clean_master"
 path = "src/main.rs"
 
 [dependencies]
+clean-core = { path = "../cleaner" }
 serde_json = "1"
 tool-protocol = { path = "../shared" }
-walkdir = "2.5.0"
 
 [profile.release]
 panic = "abort"

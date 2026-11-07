@@ -990,14 +990,23 @@ mod tests {
 
     #[test]
     fn result_path_must_stay_in_elevated_directory() {
-        let dir = std::env::temp_dir().join(format!("lens-helper-{}", std::process::id()));
+        // Scratch space lives next to the test binary: %TEMP% is not writable in
+        // every environment (sandboxes / CI), and a failing create_dir_all here
+        // would look like a product bug instead of an environment problem.
+        let dir = std::env::current_exe()
+            .ok()
+            .and_then(|exe| {
+                exe.parent()
+                    .map(|parent| parent.join(format!("lens-helper-{}", std::process::id())))
+            })
+            .expect("测试二进制路径");
         std::fs::create_dir_all(&dir).unwrap();
         let nonce = "0123456789abcdef0123456789abcdef";
         let inside = dir.join(format!("res-{nonce}.json"));
         let good = json!({"nonce": nonce, "resultPath": inside});
         assert!(result_path(&good, &dir).is_some());
 
-        let outside = std::env::temp_dir().join(format!("res-{nonce}.json"));
+        let outside = dir.join("..").join(format!("res-{nonce}.json"));
         let bad = json!({"nonce": nonce, "resultPath": outside});
         assert!(result_path(&bad, &dir).is_none());
 

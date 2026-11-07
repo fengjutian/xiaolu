@@ -101,8 +101,11 @@ cargo test --manifest-path src-tauri/Cargo.toml
 ```powershell
 npm run toolbox:build   # 逐个构建工具并复制到 tools-dist/，结束后自动校验
 npm run toolbox:verify  # 只校验：工具是否齐备、清单是否一致、源码是否已过期
+npm run toolbox:test    # 跑全部工具 crate 的测试（含 shared 协议库）
 npm run release         # 完整发布：重建工具箱 -> 校验 -> 前端 -> tauri build
 ```
+
+所有工具 crate 共用一个构建目录 `.cargo-target/tools/`：26 个 crate 的 release profile 完全一致（`panic=abort` / `strip` / `lto` / `opt-level=s`），依赖版本也完全锁定一致（serde_json 1.0.154、hmac 0.12.1、winreg 0.55.0），所以 `serde_json` / `hmac` / `sha2` / `winreg` 只编译一次而不是 25 次。
 
 `npm run tauri:build` 只跑快速校验（约 1 秒），校验不通过就会中止打包：
 

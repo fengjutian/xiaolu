@@ -12,7 +12,7 @@
   "permissions": {
     "readPaths": [],
     "writePaths": [],
-    "registry": [],
+    "registry": ["HKCU\\Software\\Microsoft\\DirectX\\UserGpuPreferences"],
     "network": false,
     "elevation": "none"
   },
@@ -22,7 +22,7 @@
   ],
   "limits": { "timeoutMs": 60000, "maxOutputBytes": 1048576 },
   "ui": { "kind": "table" },
-  "rollback": "none",
+  "rollback": "custom",
   "hash": "",
   "signature": null
 }

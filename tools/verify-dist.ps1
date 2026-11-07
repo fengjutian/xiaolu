@@ -17,23 +17,8 @@ if (-not (Test-Path $outRoot)) {
 
 # Fingerprint of the files that determine a tool's binary. Must match the
 # fingerprint recorded at package time, otherwise the packaged executable is
-# older than the sources and must not be shipped.
-function Get-ToolFingerprint([string]$toolDir) {
-    $files = Get-ChildItem -Path $toolDir -Recurse -File | Where-Object {
-        $relative = $_.FullName.Substring($toolDir.Length).TrimStart('\')
-        $relative -notlike "target\*" -and
-        ($_.Extension -eq ".rs" -or $_.Name -in @("Cargo.toml", "Cargo.lock", "tool.json"))
-    } | Sort-Object { $_.FullName.Substring($toolDir.Length) }
-    $builder = New-Object System.Text.StringBuilder
-    foreach ($file in $files) {
-        $relative = $file.FullName.Substring($toolDir.Length).TrimStart('\')
-        $hash = (Get-FileHash -Path $file.FullName -Algorithm SHA256).Hash
-        [void]$builder.Append("$relative|$hash`n")
-    }
-    $sha = [System.Security.Cryptography.SHA256]::Create()
-    $bytes = [System.Text.Encoding]::UTF8.GetBytes($builder.ToString())
-    return ([System.BitConverter]::ToString($sha.ComputeHash($bytes)) -replace "-", "")
-}
+# older than the sources and must not be shipped. Shared with build.ps1.
+. (Join-Path $PSScriptRoot "fingerprint.ps1")
 
 $problems = @()
 $toolCount = 0
@@ -79,7 +64,7 @@ Get-ChildItem -Path $toolsRoot -Directory | Where-Object { $_.Name -notlike "_*"
     }
 
     # The packaged executable must have been built from the current sources.
-    $current = Get-ToolFingerprint $tool.FullName
+    $current = Get-ToolFingerprint -RepoRoot $root -ToolDir $tool.FullName
     if (-not $recorded.ContainsKey($manifest.id)) {
         $problems += "$($manifest.id): no source fingerprint recorded (rebuild required)"
     } elseif ($recorded[$manifest.id] -ne $current) {
