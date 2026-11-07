@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://127.0.0.1:1420",
-    "beforeBuildCommand": "npm run toolbox:build && npm run build",
+    "beforeBuildCommand": "npm run toolbox:verify && npm run build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -29,8 +29,17 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "windows": {
+      "wix": {
+        "language": "zh-CN"
+      },
+      "nsis": {
+        "languages": ["SimpChinese", "English"],
+        "displayLanguageSelector": true
+      }
+    },
     "resources": {
-      "../tools-dist/**/*": "tools/"
+      "../tools-dist": "tools"
     },
     "icon": [
       "icons/32x32.png",

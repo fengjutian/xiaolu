@@ -15,9 +15,39 @@ if (-not (Test-Path $outRoot)) {
     throw "Tool package directory not found: $outRoot (run 'npm run toolbox:build' first)"
 }
 
+# Fingerprint of the files that determine a tool's binary. Must match the
+# fingerprint recorded at package time, otherwise the packaged executable is
+# older than the sources and must not be shipped.
+function Get-ToolFingerprint([string]$toolDir) {
+    $files = Get-ChildItem -Path $toolDir -Recurse -File | Where-Object {
+        $relative = $_.FullName.Substring($toolDir.Length).TrimStart('\')
+        $relative -notlike "target\*" -and
+        ($_.Extension -eq ".rs" -or $_.Name -in @("Cargo.toml", "Cargo.lock", "tool.json"))
+    } | Sort-Object { $_.FullName.Substring($toolDir.Length) }
+    $builder = New-Object System.Text.StringBuilder
+    foreach ($file in $files) {
+        $relative = $file.FullName.Substring($toolDir.Length).TrimStart('\')
+        $hash = (Get-FileHash -Path $file.FullName -Algorithm SHA256).Hash
+        [void]$builder.Append("$relative|$hash`n")
+    }
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($builder.ToString())
+    return ([System.BitConverter]::ToString($sha.ComputeHash($bytes)) -replace "-", "")
+}
+
 $problems = @()
 $toolCount = 0
 $elevatedTools = @()
+
+$fingerprintPath = Join-Path $outRoot ".fingerprints.json"
+$recorded = @{}
+if (Test-Path $fingerprintPath) {
+    $recordedText = [IO.File]::ReadAllText($fingerprintPath, [Text.Encoding]::UTF8)
+    if ($recordedText.Trim()) {
+        $parsed = $recordedText | ConvertFrom-Json
+        $parsed.PSObject.Properties | ForEach-Object { $recorded[$_.Name] = $_.Value }
+    }
+}
 
 Get-ChildItem -Path $toolsRoot -Directory | Where-Object { $_.Name -notlike "_*" } | ForEach-Object {
     $tool = $_
@@ -46,6 +76,14 @@ Get-ChildItem -Path $toolsRoot -Directory | Where-Object { $_.Name -notlike "_*"
         if ($packagedText -ne $manifestText) {
             $problems += "$($manifest.id): packaged tool.json differs from source (rebuild required)"
         }
+    }
+
+    # The packaged executable must have been built from the current sources.
+    $current = Get-ToolFingerprint $tool.FullName
+    if (-not $recorded.ContainsKey($manifest.id)) {
+        $problems += "$($manifest.id): no source fingerprint recorded (rebuild required)"
+    } elseif ($recorded[$manifest.id] -ne $current) {
+        $problems += "$($manifest.id): sources changed after packaging (rebuild required)"
     }
 
     # A tool that references the elevation helper must be able to reach it.

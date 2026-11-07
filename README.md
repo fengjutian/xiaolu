@@ -94,6 +94,27 @@ npm run build
 cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
+### 工具箱与打包
+
+25 个工具是独立进程，安装包必须带上它们。工具箱产物落在 `tools-dist/`（不入库），构建与校验分开：
+
+```powershell
+npm run toolbox:build   # 逐个构建工具并复制到 tools-dist/，结束后自动校验
+npm run toolbox:verify  # 只校验：工具是否齐备、清单是否一致、源码是否已过期
+npm run release         # 完整发布：重建工具箱 -> 校验 -> 前端 -> tauri build
+```
+
+`npm run tauri:build` 只跑快速校验（约 1 秒），校验不通过就会中止打包：
+
+- 工具目录 / 入口程序缺失；
+- 打包的 `tool.json` 与源码不一致；
+- **工具源码改动后没有重建**（按源码指纹比对，防止把旧二进制打进安装包）；
+- 需要提权的工具找不到 `lens_helper.exe`。
+
+提权助手只存一份在 `tools-dist/lens_helper/`，工具按 `<工具目录>/../lens_helper/lens_helper.exe` 查找。
+
+安装包把 `tools-dist/` 映射到安装目录下的 `tools/`，与宿主查找路径 `current_exe/../tools` 对应；MSI 安装器语言为 zh-CN（MSI 数据库代码页 1252 装不下中文产品名）。
+
 本项目不复用鲁大师的代码、商标或视觉资源，也不安装驱动或后台服务。
 
 ## 界面技术
