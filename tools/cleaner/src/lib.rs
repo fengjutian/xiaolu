@@ -1270,15 +1270,15 @@ mod tests {
 
     #[test]
     fn preview_rows_are_shared_by_every_tool() {
-        // 两个工具都调用 preview_rows()，因此同一位置的数字必然一致。
+        // 两个工具都调用 preview_rows()，因此同一位置必须出自同一份扫描结果。
+        // 只比较静态身份与分类字段：bytes/files/status 是对真实目录的实时测量，
+        // 两次扫描之间系统本身可能在写临时文件或回收站，数字本来就会变，
+        // 拿它们做等值断言会让这条测试随机失败（2026-11-08 实测偶发红）。
         let first = preview_rows();
         let second = preview_rows();
         assert_eq!(first.len(), second.len());
         for (left, right) in first.iter().zip(second.iter()) {
             assert_eq!(left.id, right.id);
-            assert_eq!(left.bytes, right.bytes);
-            assert_eq!(left.files, right.files);
-            assert_eq!(left.status, right.status);
             assert_eq!(left.cleanable, right.cleanable);
         }
     }

@@ -1,6 +1,6 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { BenchmarkPreflight, BenchmarkRecord, BenchmarkResult, CleanupPreview, DesktopOverview, DeviceDetails, DiagnosticReport, DirectoryListing, DriverAssessmentReport, DriverInventory, DriverUpdate, DuplicateScan, AppSettings, AppPaths, EventLogResult, EyeCareSettings, EyeCareStatus, HardwareDetails, LargeFileScan, LaunchEntry, NetworkDiagnosticReport, NotificationOutcome, NotificationSettings, ProcessInfo, NvmeHealthReport, ScheduledTaskInventory, SensorHistorySeries, SensorSettings, SensorSnapshot, SensorValue, SlimScan, SoftwareInventory, StartupItem, StorageDrive, StorageKind, StorageScan, SystemHistorySeries, SystemSnapshot, ToolDescriptor } from "./types";
+import type { BenchmarkBaseline, BenchmarkBaselineReport, BenchmarkComparison, BenchmarkPreflight, BenchmarkRecord, BenchmarkResult, CleanupPreview, DesktopOverview, DeviceDetails, DiagnosticReport, DirectoryListing, DriverAssessmentReport, DriverInventory, DriverUpdate, DuplicateScan, AppSettings, AppPaths, EventLogResult, EyeCareSettings, EyeCareStatus, HardwareDetails, LargeFileScan, LaunchEntry, NetworkDiagnosticReport, NotificationOutcome, NotificationSettings, ProcessInfo, NvmeHealthReport, ScheduledTaskInventory, SensorHistorySeries, SensorSettings, SensorSnapshot, SensorValue, SlimScan, SoftwareInventory, StartupItem, StorageDrive, StorageKind, StorageScan, SystemHistorySeries, SystemSnapshot, ToolDescriptor, ToolboxStatsReport } from "./types";
 
 const gib = 1024 ** 3;
 
@@ -318,6 +318,132 @@ export async function getBenchmarkHistory(): Promise<BenchmarkRecord[]> {
     ];
   }
   return invoke<BenchmarkRecord[]>("get_benchmark_history");
+}
+
+/**
+ * 取本机跑分基线：按项目统计基线与可信度，并与本次已跑出的结果对比。
+ * 逻辑在 Rust 侧（src-tauri/src/benchmark.rs），有单测覆盖。
+ */export async function getBenchmarkBaselines(
+  current?: BenchmarkResult[],
+): Promise<BenchmarkBaselineReport> {
+  if (!isTauri()) {
+    const baselines: BenchmarkBaseline[] = [
+      {
+        kind: "cpu-single",
+        label: "CPU 单核",
+        schemaVersion: 1,
+        appVersion: "0.57.0",
+        sampleCount: 6,
+        medianScore: 8560,
+        meanScore: 8584.5,
+        bestScore: 8700,
+        worstScore: 8480,
+        spreadPercent: 1.4,
+        confidence: "高",
+        confidenceNote: "同机波动 ±1.4%，结果稳定。",
+      },
+      {
+        kind: "disk",
+        label: "磁盘顺序读写",
+        schemaVersion: 1,
+        appVersion: "0.57.0",
+        sampleCount: 2,
+        medianScore: 2200,
+        meanScore: 2200,
+        bestScore: 2300,
+        worstScore: 2100,
+        spreadPercent: 4.5,
+        confidence: "样本不足",
+        confidenceNote: "同版本样本只有 2 次，至少需要 3 次才能判断波动。",
+      },
+    ];
+    const comparisons: BenchmarkComparison[] = baselines
+      .filter((baseline) => baseline.sampleCount >= 3)
+      .map((baseline) => ({
+        kind: baseline.kind,
+        score: baseline.medianScore,
+        baselineScore: baseline.medianScore,
+        deltaPercent: 0,
+        withinBaselineBand: true,
+        bandLow: baseline.medianScore * 0.98,
+        bandHigh: baseline.medianScore * 1.02,
+        note: "落在基线 ±2.0% 波动带内，与本机常态一致。",
+      }));
+    return {
+      baselines,
+      comparisons,
+      notes: [
+        "基线只统计本机同项目、同工作负载版本、同应用版本的最近若干次记录；换机器或换版本不通用。",
+        "可信度按同机波动判定：≤5% 为高，≤12% 为中，更大为低；样本少于 3 次时无法判断。",
+        "基线会随新记录滚动更新（取最近若干次的中位数）。",
+        "分数受电源模式、后台负载与温度影响；复检前请关闭其他高负载程序。",
+      ],
+    };
+  }
+  return invoke<BenchmarkBaselineReport>("get_benchmark_baselines", {
+    current: current ?? null,
+  });
+}
+
+/**
+ * 工具执行统计：握手成功率、超时率与耗时 P95。
+ * 由宿主在每次工具执行后记账并落盘，统计逻辑在 src-tauri/src/toolbox_host.rs。
+ */
+export async function getToolboxStats(): Promise<ToolboxStatsReport> {
+  if (!isTauri()) {
+    return {
+      attempts: 128,
+      handshakeAttempts: 128,
+      handshakes: 127,
+      handshakeSuccessPercent: 99.21875,
+      timeouts: 1,
+      timeoutPercent: 0.78125,
+      durationP95Ms: 1420,
+      toolCount: 3,
+      tools: [
+        {
+          toolId: "cclean",
+          attempts: 64,
+          handshakeAttempts: 64,
+          handshakes: 64,
+          completed: 64,
+          timeouts: 0,
+          cancelled: 0,
+          failed: 0,
+          handshakeSuccessPercent: 100,
+          timeoutPercent: 0,
+          durationP95Ms: 980,
+        },
+        {
+          toolId: "omni_zip",
+          attempts: 40,
+          handshakeAttempts: 40,
+          handshakes: 40,
+          completed: 39,
+          timeouts: 1,
+          cancelled: 0,
+          failed: 0,
+          handshakeSuccessPercent: 100,
+          timeoutPercent: 2.5,
+          durationP95Ms: 2100,
+        },
+        {
+          toolId: "master_pdf",
+          attempts: 24,
+          handshakeAttempts: 24,
+          handshakes: 23,
+          completed: 24,
+          timeouts: 0,
+          cancelled: 0,
+          failed: 0,
+          handshakeSuccessPercent: 95.8333,
+          timeoutPercent: 0,
+          durationP95Ms: 320,
+        },
+      ],
+    };
+  }
+  return invoke<ToolboxStatsReport>("get_toolbox_stats");
 }
 
 export async function getDiagnosticReport(): Promise<DiagnosticReport> {

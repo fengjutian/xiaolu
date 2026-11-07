@@ -289,6 +289,69 @@ export interface BenchmarkEnvironment {
   osVersion: string;
 }
 
+/** 单项测试的本机基线统计（Rust 侧计算）。 */
+export interface BenchmarkBaseline {
+  kind: string;
+  label: string;
+  schemaVersion: number;
+  appVersion: string;
+  sampleCount: number;
+  medianScore: number;
+  meanScore: number;
+  bestScore: number;
+  worstScore: number;
+  spreadPercent: number;
+  confidence: string;
+  confidenceNote: string;
+}
+
+/** 一次新结果与基线的对比。 */
+export interface BenchmarkComparison {
+  kind: string;
+  score: number;
+  baselineScore: number;
+  deltaPercent: number;
+  withinBaselineBand: boolean;
+  bandLow: number;
+  bandHigh: number;
+  note: string;
+}
+
+export interface BenchmarkBaselineReport {
+  baselines: BenchmarkBaseline[];
+  comparisons: BenchmarkComparison[];
+  notes: string[];
+}
+
+/** 逐工具执行统计。 */
+export interface ToolRunStatEntry {
+  toolId: string;
+  attempts: number;
+  handshakeAttempts: number;
+  handshakes: number;
+  completed: number;
+  timeouts: number;
+  cancelled: number;
+  failed: number;
+  /** 没有握手样本时为 null —— 没有数据不等于 100% 成功。 */
+  handshakeSuccessPercent: number | null;
+  timeoutPercent: number | null;
+  durationP95Ms: number | null;
+}
+
+/** 工具执行统计汇总（握手成功率、超时率、耗时 P95）。 */
+export interface ToolboxStatsReport {
+  attempts: number;
+  handshakeAttempts: number;
+  handshakes: number;
+  handshakeSuccessPercent: number | null;
+  timeouts: number;
+  timeoutPercent: number | null;
+  durationP95Ms: number | null;
+  toolCount: number;
+  tools: ToolRunStatEntry[];
+}
+
 export interface BenchmarkPreflight {
   maxTemperatureC: number | null;
   onBattery: boolean | null;

@@ -87,6 +87,7 @@ import {
 } from "recharts";
 import {
   getBenchmarkHistory,
+  getBenchmarkBaselines,
   benchmarkPreflight,
   cancelBenchmark,
   cancelGpuBenchmark,
@@ -115,6 +116,7 @@ import {
   openRecycleBin,
   runToolAction,
   listenToolProgress,
+  getToolboxStats,
   cancelToolAction,
   newToolJobId,
   sendTestNotification,
@@ -193,6 +195,8 @@ import type {
   ToolActionDescriptor,
   ToolDescriptor,
   ToolResult,
+  BenchmarkBaselineReport,
+  ToolboxStatsReport,
 } from "./types";
 import "./styles.css";
 import { Stat } from "./Stat";
@@ -3062,11 +3066,28 @@ function BenchmarkPanel() {
   const [diskSize, setDiskSize] = useState("1024");
   const [cancelling, setCancelling] = useState(false);
   const [cancelError, setCancelError] = useState<string | null>(null);
+  const [baselineReport, setBaselineReport] =
+    useState<BenchmarkBaselineReport | null>(null);
+  const [baselineError, setBaselineError] = useState<string | null>(null);
+  // 基线与可信度由 Rust 侧按本机历史计算，前端只负责展示与对比。
+  const refreshBaselines = useCallback(
+    async (current: Record<string, BenchmarkResult>) => {
+      try {
+        const report = await getBenchmarkBaselines(Object.values(current));
+        setBaselineReport(report);
+        setBaselineError(null);
+      } catch (error) {
+        setBaselineError(error instanceof Error ? error.message : String(error));
+      }
+    },
+    [],
+  );
   useEffect(() => {
     void getBenchmarkHistory()
       .then(setBenchmarkHistory)
       .catch((error) => setFailure(String(error)));
-  }, []);
+    void refreshBaselines({});
+  }, [refreshBaselines]);
   const run = async (kind: BenchmarkResult["kind"]) => {
     setRunning(kind);
     setFailure(null);
@@ -3086,8 +3107,10 @@ function BenchmarkPanel() {
         kind,
         kind === "disk" ? Number(diskSize) : undefined,
       );
-      setResults((old) => ({ ...old, [kind]: result }));
+      const merged = { ...results, [kind]: result };
+      setResults(merged);
       setBenchmarkHistory(await getBenchmarkHistory());
+      await refreshBaselines(merged);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setFailure(
@@ -3209,10 +3232,104 @@ function BenchmarkPanel() {
           </Text>
         </Card>
       )}
+      {baselineError && (
+        <Alert color="red" icon={<IconAlertCircle />}>
+          基线读取失败：{baselineError}
+        </Alert>
+      )}
+      {baselineReport && (
+        <Card className="glass-card" radius="lg" p={0}>
+          <Box p="md" pb="xs">
+            <Text size="xs" c="dimmed" fw={800}>
+              本机基线与可信度
+            </Text>
+            <Text size="sm" c="dimmed">
+              只统计本机同项目、同工作负载版本、同应用版本的历史记录；样本够了才会给可信度。
+            </Text>
+          </Box>
+          {baselineReport.baselines.length === 0 ? (
+            <Box p="md" pt={0}>
+              <Alert color="gray">
+                还没有可用于基线的历史记录。同一项目跑满 3 次后，这里会给出基线与可信度。
+              </Alert>
+            </Box>
+          ) : (
+            <ScrollArea type="auto">
+              <Table miw={720} highlightOnHover verticalSpacing="xs">
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>项目</Table.Th>
+                    <Table.Th>样本</Table.Th>
+                    <Table.Th>基线（中位数）</Table.Th>
+                    <Table.Th>波动</Table.Th>
+                    <Table.Th>可信度</Table.Th>
+                    <Table.Th>说明</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {baselineReport.baselines.map((baseline) => (
+                    <Table.Tr
+                      key={`${baseline.kind}-${baseline.schemaVersion}`}
+                    >
+                      <Table.Td>{baseline.label}</Table.Td>
+                      <Table.Td>{baseline.sampleCount} 次</Table.Td>
+                      <Table.Td>{baseline.medianScore.toFixed(0)} 分</Table.Td>
+                      <Table.Td>±{baseline.spreadPercent.toFixed(1)}%</Table.Td>
+                      <Table.Td>
+                        <Badge
+                          size="xs"
+                          variant="light"
+                          color={
+                            baseline.confidence === "高"
+                              ? "teal"
+                              : baseline.confidence === "中"
+                                ? "yellow"
+                                : baseline.confidence === "低"
+                                  ? "red"
+                                  : "gray"
+                          }
+                        >
+                          {baseline.confidence}
+                        </Badge>
+                      </Table.Td>
+                      <Table.Td>
+                        <Text size="xs" c="dimmed">
+                          {baseline.confidenceNote}
+                        </Text>
+                      </Table.Td>
+                    </Table.Tr>
+                  ))}
+                </Table.Tbody>
+              </Table>
+            </ScrollArea>
+          )}
+          {baselineReport.notes.length > 0 && (
+            <Box p="md" pt="xs">
+              {baselineReport.notes.map((note) => (
+                <Text key={note} size="xs" c="dimmed">
+                  · {note}
+                </Text>
+              ))}
+            </Box>
+          )}
+        </Card>
+      )}
       {benchmarkTab !== "history" && (
       <SimpleGrid cols={{ base: 1, md: 2 }}>
         {visibleBenchmarkKinds.map((item) => {
           const result = results[item.kind];
+          const baselineForKind = result
+            ? baselineReport?.baselines.find(
+                (baseline) =>
+                  baseline.kind === result.kind &&
+                  baseline.schemaVersion === result.schemaVersion,
+              )
+            : undefined;
+          const comparisonForKind = result
+            ? baselineReport?.comparisons.find(
+                (comparison) => comparison.kind === result.kind,
+              )
+            : undefined;
           return (
             <Card key={item.kind} className="glass-card" radius="lg">
               <Group justify="space-between" align="flex-start">
@@ -3251,6 +3368,34 @@ function BenchmarkPanel() {
                   <Text size="xs" c="dimmed" mt="md">
                     耗时 {result.durationMs} ms · {result.note}
                   </Text>
+                  {comparisonForKind ? (
+                    <Alert
+                      mt="md"
+                      color={
+                        comparisonForKind.withinBaselineBand ? "teal" : "orange"
+                      }
+                      icon={
+                        comparisonForKind.withinBaselineBand ? (
+                          <IconShieldCheck />
+                        ) : (
+                          <IconAlertCircle />
+                        )
+                      }
+                      title={`对比本机基线 ${comparisonForKind.baselineScore.toFixed(0)} 分`}
+                    >
+                      {comparisonForKind.deltaPercent >= 0 ? "+" : ""}
+                      {comparisonForKind.deltaPercent.toFixed(1)}% ·{" "}
+                      {comparisonForKind.note}
+                    </Alert>
+                  ) : (
+                    baselineForKind && (
+                      <Text size="xs" c="dimmed" mt="md">
+                        基线 {baselineForKind.medianScore.toFixed(0)} 分
+                        （{baselineForKind.sampleCount} 次样本，可信度
+                        {baselineForKind.confidence}）；复检后会给出本次与基线的偏差。
+                      </Text>
+                    )
+                  )}
                 </Box>
               ) : (
                 <Text c="dimmed" mt="xl">
@@ -3265,7 +3410,11 @@ function BenchmarkPanel() {
                 disabled={running !== null && running !== item.kind}
                 onClick={() => void run(item.kind)}
               >
-                {result ? "重新测试" : "开始测试"}
+                {result
+                  ? baselineForKind
+                    ? "复检并对比基线"
+                    : "重新测试"
+                  : "开始测试"}
               </Button>
             </Card>
           );
@@ -4319,6 +4468,11 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
   const [genericError, setGenericError] = useState<string | null>(null);
   const [applying, setApplying] = useState<string | null>(null);
   const [applyError, setApplyError] = useState<string | null>(null);
+  const [toolboxStats, setToolboxStats] = useState<ToolboxStatsReport | null>(
+    null,
+  );
+  const [statsError, setStatsError] = useState<string | null>(null);
+  const [statsDetail, setStatsDetail] = useState(false);
   const [selection, setSelection] = useState<string[]>([]);
   const [zipMode, setZipMode] = useState<"compress" | "extract" | "list">(
     "compress",
@@ -4336,18 +4490,26 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
   const [zipNotice, setZipNotice] = useState<string | null>(null);
   const [zipCancelling, setZipCancelling] = useState(false);
   const zipJobRef = useRef<string | null>(null);
-  const [pdfMode, setPdfMode] = useState<"info" | "merge" | "split" | "rotate">(
-    "info",
-  );
+  const [pdfMode, setPdfMode] = useState<
+    "info" | "pages" | "merge" | "split" | "rotate"
+  >("info");
   const [pdfInputs, setPdfInputs] = useState("");
   const [pdfOutput, setPdfOutput] = useState("");
   const [pdfPages, setPdfPages] = useState("");
   const [pdfAngle, setPdfAngle] = useState("90");
-  const [pdfOverwrite, setPdfOverwrite] = useState(false);
+  const [pdfPassword, setPdfPassword] = useState("");
+  const [pdfOutPassword, setPdfOutPassword] = useState("");
+  const [pdfPermissions, setPdfPermissions] = useState<string[]>(["print"]);
+  const [pdfConflict, setPdfConflict] = useState<"fail" | "overwrite" | "rename">(
+    "fail",
+  );
+  // 只有合并/拆分/旋转会写文件；信息与页面预览都是只读。
+  const pdfCanWrite =
+    pdfMode === "merge" || pdfMode === "split" || pdfMode === "rotate";
 
   const runPdf = async (
     tool: ToolDescriptor,
-    mode: "info" | "merge" | "split" | "rotate",
+    mode: "info" | "pages" | "merge" | "split" | "rotate",
   ) => {
     const inputs = pdfInputs
       .split("\n")
@@ -4363,7 +4525,12 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
       output: pdfOutput.trim(),
       pages: pdfPages.trim(),
       angle: Number(pdfAngle),
-      overwrite: pdfOverwrite,
+      // 保留旧的 overwrite 布尔值，新逻辑统一走 conflict。
+      overwrite: pdfConflict === "overwrite",
+      conflict: pdfConflict,
+      password: pdfPassword,
+      outPassword: pdfOutPassword,
+      permissions: pdfPermissions,
     };
     setApplying(`${tool.id}:${mode}`);
     setApplyError(null);
@@ -4371,6 +4538,15 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
       if (mode === "info") {
         const data = (await runToolAction(tool.id, "info", null, {
           path: inputs[0],
+          password: pdfPassword,
+        })) as ToolResult;
+        setGeneric({ tool, data });
+        return;
+      }
+      if (mode === "pages") {
+        const data = (await runToolAction(tool.id, "pages", null, {
+          inputs,
+          password: pdfPassword,
         })) as ToolResult;
         setGeneric({ tool, data });
         return;
@@ -4388,6 +4564,7 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
       )) as ToolResult;
       setGeneric({ tool, data });
       setGenericSuccess("PDF 操作完成");
+      void refreshStats();
     } catch (reason) {
       setApplyError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -4449,6 +4626,7 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
       )) as ToolResult;
       setGeneric({ tool, data });
       setGenericSuccess(mode === "compress" ? "压缩完成" : "解压完成");
+      void refreshStats();
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : String(reason);
       if (isCancelledMessage(message)) {
@@ -4533,11 +4711,21 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
     setWinoptAdminDraft((current) => ({ ...current, [id]: parsed }));
   };
 
+  const refreshStats = useCallback(async () => {
+    try {
+      setToolboxStats(await getToolboxStats());
+      setStatsError(null);
+    } catch (reason) {
+      setStatsError(reason instanceof Error ? reason.message : String(reason));
+    }
+  }, []);
+
   useEffect(() => {
     void listToolboxTools()
       .then(setTools)
       .catch((reason) => setError(String(reason)));
-  }, []);
+    void refreshStats();
+  }, [refreshStats]);
 
   // 订阅工具进度：只有带 jobId 的执行才会有进度事件，按 jobId 过滤避免串台。
   useEffect(() => {
@@ -4576,6 +4764,7 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
       setGeneric({ tool, data });
       setGenericSuccess(`${tool.name}预览生成完成`);
       setGenericDrawerOpen(true);
+      void refreshStats();
       if (tool.id === "clean_master") {
         setSelection(
           (data.rows ?? [])
@@ -4672,6 +4861,7 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
         parameters,
       )) as ToolResult;
       setGeneric({ tool, data });
+      void refreshStats();
       if (data.powerSettings) {
         setPowerDraft(
           Object.fromEntries(
@@ -5470,7 +5660,119 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
           {error}
         </Alert>
       )}
-
+      {statsError && (
+        <Alert color="red" icon={<IconAlertCircle />}>
+          工具运行统计读取失败：{statsError}
+        </Alert>
+      )}
+      {toolboxStats && (
+        <Card className="glass-card" radius="lg">
+          <Group justify="space-between" align="flex-start" wrap="wrap">
+            <Box>
+              <Text size="xs" c="dimmed" fw={800}>
+                工具运行统计
+              </Text>
+              <Group gap="xl" mt={8}>
+                <Box>
+                  <Text size="xs" c="dimmed">
+                    握手成功率
+                  </Text>
+                  <Text fw={800} size="lg">
+                    {toolboxStats.handshakeSuccessPercent === null
+                      ? "暂无样本"
+                      : `${toolboxStats.handshakeSuccessPercent.toFixed(2)}%`}
+                  </Text>
+                  <Text size="xs" c="dimmed">
+                    {toolboxStats.handshakes} / {toolboxStats.handshakeAttempts} 次
+                  </Text>
+                </Box>
+                <Box>
+                  <Text size="xs" c="dimmed">
+                    超时率
+                  </Text>
+                  <Text fw={800} size="lg">
+                    {toolboxStats.timeoutPercent === null
+                      ? "暂无样本"
+                      : `${toolboxStats.timeoutPercent.toFixed(2)}%`}
+                  </Text>
+                  <Text size="xs" c="dimmed">
+                    {toolboxStats.timeouts} / {toolboxStats.attempts} 次
+                  </Text>
+                </Box>
+                <Box>
+                  <Text size="xs" c="dimmed">
+                    耗时 P95
+                  </Text>
+                  <Text fw={800} size="lg">
+                    {toolboxStats.durationP95Ms === null
+                      ? "暂无样本"
+                      : `${toolboxStats.durationP95Ms} ms`}
+                  </Text>
+                  <Text size="xs" c="dimmed">
+                    {toolboxStats.toolCount} 个工具 · 共 {toolboxStats.attempts} 次执行
+                  </Text>
+                </Box>
+              </Group>
+            </Box>
+            <Button
+              size="xs"
+              variant="subtle"
+              onClick={() => setStatsDetail((current) => !current)}
+            >
+              {statsDetail ? "收起明细" : "查看明细"}
+            </Button>
+          </Group>
+          {statsDetail && (
+            <>
+              {toolboxStats.tools.length === 0 ? (
+                <Alert color="gray" mt="md">
+                  还没有工具执行记录。跑一次工具后这里会出现逐工具明细。
+                </Alert>
+              ) : (
+                <ScrollArea type="auto" mt="md">
+                  <Table miw={720} highlightOnHover verticalSpacing="xs">
+                    <Table.Thead>
+                      <Table.Tr>
+                        <Table.Th>工具</Table.Th>
+                        <Table.Th>执行</Table.Th>
+                        <Table.Th>成功</Table.Th>
+                        <Table.Th>超时</Table.Th>
+                        <Table.Th>失败</Table.Th>
+                        <Table.Th>握手成功率</Table.Th>
+                        <Table.Th>P95</Table.Th>
+                      </Table.Tr>
+                    </Table.Thead>
+                    <Table.Tbody>
+                      {toolboxStats.tools.map((tool) => (
+                        <Table.Tr key={tool.toolId}>
+                          <Table.Td>{tool.toolId}</Table.Td>
+                          <Table.Td>{tool.attempts}</Table.Td>
+                          <Table.Td>{tool.completed}</Table.Td>
+                          <Table.Td>{tool.timeouts}</Table.Td>
+                          <Table.Td>{tool.failed + tool.cancelled}</Table.Td>
+                          <Table.Td>
+                            {tool.handshakeSuccessPercent === null
+                              ? "暂无样本"
+                              : `${tool.handshakeSuccessPercent.toFixed(1)}%`}
+                          </Table.Td>
+                          <Table.Td>
+                            {tool.durationP95Ms === null
+                              ? "—"
+                              : `${tool.durationP95Ms} ms`}
+                          </Table.Td>
+                        </Table.Tr>
+                      ))}
+                    </Table.Tbody>
+                  </Table>
+                </ScrollArea>
+              )}
+              <Text size="xs" c="dimmed" mt="sm">
+                统计只记录本机工具执行，不上传任何数据；样本为 0 时显示「暂无样本」，不会用 100% 冒充成功。
+              </Text>
+            </>
+          )}
+        </Card>
+      )}
       <Group justify="space-between" align="flex-end">
         <Box>
           <Title order={3}>已接入工具</Title>
@@ -7681,10 +7983,13 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                 size="xs"
                 value={pdfMode}
                 onChange={(value) =>
-                  setPdfMode(value as "info" | "merge" | "split" | "rotate")
+                  setPdfMode(
+                    value as "info" | "pages" | "merge" | "split" | "rotate",
+                  )
                 }
                 data={[
                   { label: "信息", value: "info" },
+                  { label: "页面预览", value: "pages" },
                   { label: "合并", value: "merge" },
                   { label: "拆分", value: "split" },
                   { label: "旋转", value: "rotate" },
@@ -7699,7 +8004,16 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                 value={pdfInputs}
                 onChange={(event) => setPdfInputs(event.currentTarget.value)}
               />
-              {pdfMode !== "info" && (
+              <TextInput
+                mt="sm"
+                size="xs"
+                type="password"
+                label="打开密码（输入 PDF 已加密时填写）"
+                placeholder="留空表示未加密"
+                value={pdfPassword}
+                onChange={(event) => setPdfPassword(event.currentTarget.value)}
+              />
+              {pdfCanWrite && (
                 <TextInput
                   mt="sm"
                   size="xs"
@@ -7735,16 +8049,67 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                   ]}
                 />
               )}
-              {pdfMode !== "info" && (
-                <Switch
-                  mt="sm"
-                  size="xs"
-                  label="覆盖已存在的输出文件"
-                  checked={pdfOverwrite}
-                  onChange={(event) =>
-                    setPdfOverwrite(event.currentTarget.checked)
-                  }
-                />
+              {pdfCanWrite && (
+                <>
+                  <Select
+                    mt="sm"
+                    size="xs"
+                    w={220}
+                    label="同名输出处理"
+                    allowDeselect={false}
+                    value={pdfConflict}
+                    onChange={(value) =>
+                      setPdfConflict(
+                        (value ?? "fail") as "fail" | "overwrite" | "rename",
+                      )
+                    }
+                    data={[
+                      { value: "fail", label: "报错并给出改名建议" },
+                      { value: "overwrite", label: "覆盖已有文件" },
+                      { value: "rename", label: "自动改名（name (1).pdf）" },
+                    ]}
+                  />
+                  <TextInput
+                    mt="sm"
+                    size="xs"
+                    type="password"
+                    label="输出密码（留空表示不加密）"
+                    placeholder="留空即不加密"
+                    value={pdfOutPassword}
+                    onChange={(event) => setPdfOutPassword(event.currentTarget.value)}
+                  />
+                  {pdfOutPassword.trim() !== "" && (
+                    <Box mt="sm">
+                      <Text size="xs" fw={600}>
+                        允许的操作（不勾选即仅允许阅读）
+                      </Text>
+                      <Group gap="md" mt={4}>
+                        {[
+                          { key: "print", label: "打印" },
+                          { key: "copy", label: "复制文字" },
+                          { key: "modify", label: "修改" },
+                          { key: "annotate", label: "批注" },
+                          { key: "fill", label: "填写表单" },
+                          { key: "assemble", label: "组织页面" },
+                        ].map((entry) => (
+                          <Checkbox
+                            key={entry.key}
+                            size="xs"
+                            label={entry.label}
+                            checked={pdfPermissions.includes(entry.key)}
+                            onChange={(event) =>
+                              setPdfPermissions((current) =>
+                                event.currentTarget.checked
+                                  ? [...current, entry.key]
+                                  : current.filter((value) => value !== entry.key),
+                              )
+                            }
+                          />
+                        ))}
+                      </Group>
+                    </Box>
+                  )}
+                </>
               )}
               <Group mt="sm" align="center">
                 <Button
@@ -7756,14 +8121,16 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                 >
                   {pdfMode === "info"
                     ? "查看信息"
-                    : pdfMode === "merge"
-                      ? "预览并合并"
-                      : pdfMode === "split"
-                        ? "预览并拆分"
-                        : "预览并旋转"}
+                    : pdfMode === "pages"
+                      ? "预览页面"
+                      : pdfMode === "merge"
+                        ? "预览并合并"
+                        : pdfMode === "split"
+                          ? "预览并拆分"
+                          : "预览并旋转"}
                 </Button>
                 <Text size="xs" c="dimmed">
-                  输出新文件；默认不覆盖；加密 PDF 可能无法处理
+                  输出新文件；同名按上方策略处理；加密输入需填打开密码
                 </Text>
               </Group>
             </Box>

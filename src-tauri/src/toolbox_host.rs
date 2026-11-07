@@ -23,6 +23,14 @@ const PROGRESS_EVENT: &str = "toolbox-progress";
 const CANCEL_GRACE: Duration = Duration::from_secs(3);
 /// 轮询间隔：决定取消与超时的响应速度。
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
+/// 每个工具保留的耗时样本数：够算 P95，又不至于让统计文件无限增长。
+const STAT_SAMPLE_LIMIT: usize = 200;
+/// §8 验收线：握手成功率目标（%）。
+pub const TARGET_HANDSHAKE_SUCCESS_PERCENT: f64 = 99.0;
+/// §8 验收线：超时率上限（%）。
+pub const TARGET_TIMEOUT_PERCENT: f64 = 1.0;
+/// 判定所需的最少样本数：两三次执行算出来的比率没有统计意义，不拿来判达标。
+pub const MIN_VERDICT_SAMPLES: u64 = 5;
 
 #[cfg(windows)]
 #[link(name = "bcrypt")]
@@ -174,6 +182,8 @@ struct ToolJob {
 #[derive(Default)]
 pub struct ToolboxState {
     jobs: Mutex<HashMap<String, ToolJob>>,
+    /// 工具执行统计：握手成功率、超时率与耗时 P95 的原始样本。
+    stats: Mutex<HashMap<String, ToolRunStat>>,
 }
 
 impl ToolboxState {
@@ -211,6 +221,254 @@ impl ToolboxState {
             .ok()
             .and_then(|jobs| jobs.get(job_id).map(|job| job.cancelled))
             .unwrap_or(false)
+    }
+
+    /// 记录一次工具执行的结果与耗时，并立即落盘。
+    fn record_run(
+        &self,
+        app: &AppHandle,
+        tool_id: &str,
+        outcome: ToolRunOutcome,
+        trace: &RunTrace,
+        duration_ms: u64,
+    ) {
+        let Ok(mut stats) = self.stats.lock() else {
+            return;
+        };
+        if stats.is_empty() {
+            // 进程刚启动时内存里没有数据，先把历史统计读回来再累加。
+            if let Some(loaded) = load_stats(app) {
+                *stats = loaded;
+            }
+        }
+        stats
+            .entry(tool_id.to_string())
+            .or_default()
+            .record(outcome, trace, duration_ms);
+        save_stats(app, &stats);
+    }
+
+    /// 取出统计快照：内存里有就用内存的（更新），否则回落到磁盘上的历史。
+    fn stats_snapshot(&self, app: &AppHandle) -> HashMap<String, ToolRunStat> {
+        if let Ok(stats) = self.stats.lock() {
+            if !stats.is_empty() {
+                return stats.clone();
+            }
+        }
+        load_stats(app).unwrap_or_default()
+    }
+}
+
+/// 一次工具执行的过程状态：握手是否发起、是否成功。
+#[derive(Debug, Default, Clone, Copy)]
+struct RunTrace {
+    /// 是否进入过握手阶段。
+    handshake_attempted: bool,
+    /// 握手是否成功。
+    handshaked: bool,
+}
+
+/// 一次工具执行的结果分类。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ToolRunOutcome {
+    /// 握手成功并拿到结果。
+    Ok,
+    /// 握手失败：协议不匹配、握手超时或握手格式非法。
+    HandshakeFailed,
+    /// 执行超时。
+    TimedOut,
+    /// 用户取消。
+    Cancelled,
+    /// 其它失败：工具报错、进程异常退出、输出超限等。
+    Failed,
+}
+
+/// 单个工具的累计执行统计（落盘形式）。
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolRunStat {
+    /// 总发起次数（含各类失败）。
+    pub attempts: u64,
+    /// 进入握手阶段的次数。
+    pub handshake_attempts: u64,
+    /// 握手成功次数。
+    pub handshakes: u64,
+    /// 成功拿到结果的次数。
+    pub completed: u64,
+    /// 超时次数。
+    pub timeouts: u64,
+    /// 取消次数。
+    pub cancelled: u64,
+    /// 其它失败次数。
+    pub failed: u64,
+    /// 每次执行的耗时（毫秒），只保留最近若干次。
+    pub durations_ms: Vec<u64>,
+}
+
+impl ToolRunStat {
+    fn record(&mut self, outcome: ToolRunOutcome, trace: &RunTrace, duration_ms: u64) {
+        self.attempts += 1;
+        if trace.handshake_attempted {
+            self.handshake_attempts += 1;
+        }
+        if trace.handshaked {
+            self.handshakes += 1;
+        }
+        match outcome {
+            ToolRunOutcome::Ok => self.completed += 1,
+            ToolRunOutcome::HandshakeFailed => self.failed += 1,
+            ToolRunOutcome::TimedOut => self.timeouts += 1,
+            ToolRunOutcome::Cancelled => self.cancelled += 1,
+            ToolRunOutcome::Failed => self.failed += 1,
+        }
+        self.durations_ms.push(duration_ms);
+        if self.durations_ms.len() > STAT_SAMPLE_LIMIT {
+            let overflow = self.durations_ms.len() - STAT_SAMPLE_LIMIT;
+            self.durations_ms.drain(0..overflow);
+        }
+    }
+}
+
+/// 逐工具统计明细。
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolRunStatEntry {
+    pub tool_id: String,
+    pub attempts: u64,
+    pub handshake_attempts: u64,
+    pub handshakes: u64,
+    pub completed: u64,
+    pub timeouts: u64,
+    pub cancelled: u64,
+    pub failed: u64,
+    /// 握手成功率（%）；没有握手样本时为 null。
+    pub handshake_success_percent: Option<f64>,
+    /// 超时率（%）；没有执行样本时为 null。
+    pub timeout_percent: Option<f64>,
+    /// 耗时 P95（毫秒）。
+    pub duration_p95_ms: Option<u64>,
+}
+
+/// 工具执行统计汇总。
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolboxStatsReport {
+    /// 总发起次数。
+    pub attempts: u64,
+    /// 进入握手阶段的次数。
+    pub handshake_attempts: u64,
+    /// 握手成功次数。
+    pub handshakes: u64,
+    /// 握手成功率（%）；没有样本时为 null —— 没有数据不等于 100%。
+    pub handshake_success_percent: Option<f64>,
+    /// 超时次数。
+    pub timeouts: u64,
+    /// 超时率（%）；没有样本时为 null。
+    pub timeout_percent: Option<f64>,
+    /// 耗时 P95（毫秒）。
+    pub duration_p95_ms: Option<u64>,
+    /// 参与统计的工具数。
+    pub tool_count: usize,
+    /// 逐工具明细，按执行次数从多到少。
+    pub tools: Vec<ToolRunStatEntry>,
+}
+
+/// 比率（%）：分母为 0 时返回 null，不拿 0 冒充「没有失败」。
+fn ratio_percent(part: u64, total: u64) -> Option<f64> {
+    if total == 0 {
+        return None;
+    }
+    Some(part as f64 / total as f64 * 100.0)
+}
+
+/// 百分位（最近邻法）：排序后取第 ceil(p × n) 个样本。
+fn percentile(values: &[u64], p: f64) -> Option<u64> {
+    if values.is_empty() {
+        return None;
+    }
+    let mut sorted = values.to_vec();
+    sorted.sort_unstable();
+    let rank = ((p * sorted.len() as f64).ceil() as usize).clamp(1, sorted.len());
+    Some(sorted[rank - 1])
+}
+
+/// 把逐工具统计汇总成一份报告。
+pub fn build_stats_report(stats: &HashMap<String, ToolRunStat>) -> ToolboxStatsReport {
+    let mut attempts = 0u64;
+    let mut handshake_attempts = 0u64;
+    let mut handshakes = 0u64;
+    let mut timeouts = 0u64;
+    let mut durations: Vec<u64> = Vec::new();
+    let mut tools = Vec::new();
+    for (tool_id, stat) in stats {
+        attempts += stat.attempts;
+        handshake_attempts += stat.handshake_attempts;
+        handshakes += stat.handshakes;
+        timeouts += stat.timeouts;
+        durations.extend(stat.durations_ms.iter().copied());
+        tools.push(ToolRunStatEntry {
+            tool_id: tool_id.clone(),
+            attempts: stat.attempts,
+            handshake_attempts: stat.handshake_attempts,
+            handshakes: stat.handshakes,
+            completed: stat.completed,
+            timeouts: stat.timeouts,
+            cancelled: stat.cancelled,
+            failed: stat.failed,
+            handshake_success_percent: ratio_percent(stat.handshakes, stat.handshake_attempts),
+            timeout_percent: ratio_percent(stat.timeouts, stat.attempts),
+            duration_p95_ms: percentile(&stat.durations_ms, 0.95),
+        });
+    }
+    tools.sort_by(|left, right| {
+        right
+            .attempts
+            .cmp(&left.attempts)
+            .then_with(|| left.tool_id.cmp(&right.tool_id))
+    });
+    ToolboxStatsReport {
+        attempts,
+        handshake_attempts,
+        handshakes,
+        handshake_success_percent: ratio_percent(handshakes, handshake_attempts),
+        timeouts,
+        timeout_percent: ratio_percent(timeouts, attempts),
+        duration_p95_ms: percentile(&durations, 0.95),
+        tool_count: tools.len(),
+        tools,
+    }
+}
+
+/// 把错误消息归类：握手失败、超时、取消要分开统计，不能混进「其它失败」。
+fn classify_failure(message: &str) -> ToolRunOutcome {
+    if message.contains("握手") {
+        ToolRunOutcome::HandshakeFailed
+    } else if message.contains("已取消") {
+        ToolRunOutcome::Cancelled
+    } else if message.contains("超时") {
+        ToolRunOutcome::TimedOut
+    } else {
+        ToolRunOutcome::Failed
+    }
+}
+
+/// 工具执行统计文件：跨进程重启保留，否则「握手成功率」只能看当次运行。
+fn stats_path(app: &AppHandle) -> Option<PathBuf> {
+    Some(state_dir(app)?.join("toolbox-stats.json"))
+}
+
+fn load_stats(app: &AppHandle) -> Option<HashMap<String, ToolRunStat>> {
+    let path = stats_path(app)?;
+    let bytes = std::fs::read(path).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+fn save_stats(app: &AppHandle, stats: &HashMap<String, ToolRunStat>) {
+    let Some(path) = stats_path(app) else {
+        return;
+    };
+    if let Ok(bytes) = serde_json::to_vec_pretty(stats) {
+        let _ = std::fs::write(path, bytes);
     }
 }
 
@@ -478,6 +736,41 @@ fn run_action_blocking(
     parameters: Option<Value>,
     job_id: Option<String>,
 ) -> Result<Value, String> {
+    // 统计必须包住整条执行路径：握手失败、超时、取消都要各自计数。
+    let started = Instant::now();
+    let mut trace = RunTrace::default();
+    let result = run_action_inner(
+        app,
+        tool_id,
+        action,
+        confirmation,
+        parameters,
+        job_id,
+        &mut trace,
+    );
+    let outcome = match &result {
+        Ok(_) => ToolRunOutcome::Ok,
+        Err(message) => classify_failure(message),
+    };
+    app.state::<ToolboxState>().record_run(
+        app,
+        tool_id,
+        outcome,
+        &trace,
+        started.elapsed().as_millis() as u64,
+    );
+    result
+}
+
+fn run_action_inner(
+    app: &AppHandle,
+    tool_id: &str,
+    action: &str,
+    confirmation: Option<String>,
+    parameters: Option<Value>,
+    job_id: Option<String>,
+    trace: &mut RunTrace,
+) -> Result<Value, String> {
     // 先校验任务 id：它会拼进文件路径，而且校验失败不应该白白消耗掉确认令牌。
     if let Some(id) = job_id.as_deref() {
         validate_job_id(id)?;
@@ -557,6 +850,7 @@ fn run_action_blocking(
         }
     });
 
+    trace.handshake_attempted = true;
     let hello = receive(&receiver, Duration::from_secs(5), "工具握手")?;
     let hello: Value = serde_json::from_str(&hello).map_err(|_| "工具握手格式无效".to_string())?;
     if hello.get("type").and_then(Value::as_str) != Some("hello")
@@ -566,6 +860,7 @@ fn run_action_blocking(
         child.kill().ok();
         return Err("工具握手失败：协议或 id 不匹配".into());
     }
+    trace.handshaked = true;
 
     let request = serde_json::json!({
         "type": "request",
@@ -675,6 +970,16 @@ pub async fn run_tool_action(
 pub async fn cancel_tool_action(app: AppHandle, job_id: String) -> Result<bool, String> {
     validate_job_id(&job_id)?;
     Ok(app.state::<ToolboxState>().request_cancel(&job_id))
+}
+
+/// 工具执行统计：握手成功率、超时率与耗时 P95。
+///
+/// 这两项此前在验收指标里一直写着「未统计」——现在由宿主在每次执行后记账，
+/// 界面可以直接读数，不用靠主观判断。
+#[tauri::command]
+pub async fn get_toolbox_stats(app: AppHandle) -> Result<ToolboxStatsReport, String> {
+    let stats = app.state::<ToolboxState>().stats_snapshot(&app);
+    Ok(build_stats_report(&stats))
 }
 
 #[cfg(test)]
@@ -901,5 +1206,126 @@ mod tests {
         assert_eq!(empty.phase, "");
         assert_eq!(empty.done, 0);
         assert_eq!(empty.total, 0);
+    }
+
+    fn traced(handshake_attempted: bool, handshaked: bool) -> RunTrace {
+        RunTrace {
+            handshake_attempted,
+            handshaked,
+        }
+    }
+
+    #[test]
+    fn run_stat_counts_every_outcome() {
+        let mut stat = ToolRunStat::default();
+        stat.record(ToolRunOutcome::Ok, &traced(true, true), 100);
+        stat.record(ToolRunOutcome::TimedOut, &traced(true, true), 200);
+        stat.record(ToolRunOutcome::Cancelled, &traced(true, true), 50);
+        stat.record(ToolRunOutcome::HandshakeFailed, &traced(true, false), 10);
+        // 启动就失败：连握手都没进入。
+        stat.record(ToolRunOutcome::Failed, &traced(false, false), 5);
+        assert_eq!(stat.attempts, 5);
+        assert_eq!(stat.handshake_attempts, 4);
+        assert_eq!(stat.handshakes, 3);
+        assert_eq!(stat.completed, 1);
+        assert_eq!(stat.timeouts, 1);
+        assert_eq!(stat.cancelled, 1);
+        assert_eq!(stat.failed, 2);
+        assert_eq!(stat.durations_ms.len(), 5);
+    }
+
+    #[test]
+    fn run_stat_keeps_only_the_latest_samples() {
+        let mut stat = ToolRunStat::default();
+        for index in 0..(STAT_SAMPLE_LIMIT + 25) {
+            stat.record(ToolRunOutcome::Ok, &traced(true, true), index as u64);
+        }
+        assert_eq!(stat.durations_ms.len(), STAT_SAMPLE_LIMIT);
+        // 丢的是最旧的样本，最新的仍在。
+        assert_eq!(stat.durations_ms.last(), Some(&((STAT_SAMPLE_LIMIT + 24) as u64)));
+    }
+
+    #[test]
+    fn failure_classification_separates_the_causes() {
+        assert_eq!(
+            classify_failure("工具握手失败：协议或 id 不匹配"),
+            ToolRunOutcome::HandshakeFailed
+        );
+        assert_eq!(
+            classify_failure("工具握手超时"),
+            ToolRunOutcome::HandshakeFailed
+        );
+        assert_eq!(classify_failure("工具响应超时"), ToolRunOutcome::TimedOut);
+        assert_eq!(classify_failure("操作已取消"), ToolRunOutcome::Cancelled);
+        assert_eq!(
+            classify_failure("TOOL_ERROR: 磁盘写满"),
+            ToolRunOutcome::Failed
+        );
+    }
+
+    #[test]
+    fn percentile_uses_the_nearest_rank() {
+        let values: Vec<u64> = (1..=100).collect();
+        assert_eq!(percentile(&values, 0.95), Some(95));
+        assert_eq!(percentile(&values, 0.5), Some(50));
+        assert_eq!(percentile(&[7], 0.95), Some(7));
+        assert_eq!(percentile(&[], 0.95), None);
+    }
+
+    #[test]
+    fn stats_report_aggregates_handshake_timeout_and_p95() {
+        let mut stats = HashMap::new();
+        let mut first = ToolRunStat::default();
+        for _ in 0..99 {
+            first.record(ToolRunOutcome::Ok, &traced(true, true), 100);
+        }
+        first.record(ToolRunOutcome::HandshakeFailed, &traced(true, false), 20);
+        stats.insert("alpha".to_string(), first);
+
+        let mut second = ToolRunStat::default();
+        second.record(ToolRunOutcome::TimedOut, &traced(true, true), 5_000);
+        stats.insert("beta".to_string(), second);
+
+        let report = build_stats_report(&stats);
+        assert_eq!(report.attempts, 101);
+        assert_eq!(report.handshake_attempts, 101);
+        assert_eq!(report.handshakes, 100);
+        assert_eq!(report.timeouts, 1);
+        assert_eq!(report.tool_count, 2);
+        // 100 / 101 次握手成功
+        let handshake = report.handshake_success_percent.expect("rate");
+        assert!((handshake - 99.0099).abs() < 0.01);
+        // 1 / 101 次超时
+        let timeout = report.timeout_percent.expect("rate");
+        assert!((timeout - 0.9901).abs() < 0.01);
+        assert!(report.duration_p95_ms.is_some());
+        // 执行次数多的排在前面
+        assert_eq!(report.tools[0].tool_id, "alpha");
+        assert_eq!(report.tools[1].tool_id, "beta");
+        assert_eq!(report.tools[1].timeout_percent, Some(100.0));
+    }
+
+    #[test]
+    fn stats_report_has_no_rate_without_samples() {
+        let report = build_stats_report(&HashMap::new());
+        assert_eq!(report.attempts, 0);
+        // 没有数据不等于「100% 成功」：必须报 null，不能编造。
+        assert_eq!(report.handshake_success_percent, None);
+        assert_eq!(report.timeout_percent, None);
+        assert_eq!(report.duration_p95_ms, None);
+        assert_eq!(report.tool_count, 0);
+        assert!(report.tools.is_empty());
+    }
+
+    #[test]
+    fn tool_run_stat_survives_a_json_round_trip() {
+        let mut stat = ToolRunStat::default();
+        stat.record(ToolRunOutcome::Ok, &traced(true, true), 321);
+        let json = serde_json::to_string(&stat).expect("serialize");
+        assert!(json.contains("\"attempts\":1"));
+        let restored: ToolRunStat = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(restored.attempts, 1);
+        assert_eq!(restored.handshakes, 1);
+        assert_eq!(restored.durations_ms, vec![321]);
     }
 }

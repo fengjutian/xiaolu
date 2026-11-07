@@ -66,6 +66,67 @@ pub struct BenchmarkPreflight {
     source: String,
 }
 
+/// 参与基线统计的最大样本数：只看最近这么多次。
+const BASELINE_WINDOW: usize = 10;
+/// 判断波动所需的最少样本数。
+const BASELINE_MIN_SAMPLES: usize = 3;
+/// 可信度「高」的相对标准差上限（%）。
+const CONFIDENCE_HIGH_SPREAD: f64 = 5.0;
+/// 可信度「中」的相对标准差上限（%）。
+const CONFIDENCE_MEDIUM_SPREAD: f64 = 12.0;
+/// 波动带下限（%）：即便样本看起来完全一致，也留一点测量噪声余量。
+const MIN_BAND_PERCENT: f64 = 2.0;
+
+/// 单项测试的本机基线统计。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BenchmarkBaseline {
+    kind: String,
+    label: String,
+    schema_version: u32,
+    app_version: String,
+    /// 参与统计的样本数。
+    sample_count: usize,
+    /// 样本分数中位数，作为基线（对偶发离群不敏感）。
+    median_score: f64,
+    /// 样本分数平均值。
+    mean_score: f64,
+    best_score: f64,
+    worst_score: f64,
+    /// 相对标准差（%）：同机重复测试的波动幅度。
+    spread_percent: f64,
+    /// 可信度：高 / 中 / 低 / 样本不足。
+    confidence: String,
+    /// 可信度判定理由，直接给用户看。
+    confidence_note: String,
+}
+
+/// 一次新结果与基线的对比。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BenchmarkComparison {
+    kind: String,
+    score: f64,
+    baseline_score: f64,
+    /// 相对基线的偏差（%）；基线为 0 时记 0。
+    delta_percent: f64,
+    /// 是否落在「基线 ± 波动带」内。
+    within_baseline_band: bool,
+    band_low: f64,
+    band_high: f64,
+    /// 面向用户的一句话结论。
+    note: String,
+}
+
+/// 基线报告：基线 + 本次对比 + 说明。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BenchmarkBaselineReport {
+    baselines: Vec<BenchmarkBaseline>,
+    comparisons: Vec<BenchmarkComparison>,
+    notes: Vec<String>,
+}
+
 fn cancelled() -> String {
     CANCELLED.to_string()
 }
@@ -349,6 +410,158 @@ pub fn get_benchmark_history(app: tauri::AppHandle, state: tauri::State<'_, Benc
     Ok(history)
 }
 
+fn median_of(values: &[f64]) -> f64 {
+    if values.is_empty() { return 0.0; }
+    let mut sorted = values.to_vec();
+    sorted.sort_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
+    let middle = sorted.len() / 2;
+    if sorted.len() % 2 == 1 {
+        sorted[middle]
+    } else {
+        (sorted[middle - 1] + sorted[middle]) / 2.0
+    }
+}
+
+/// 按项目统计本机基线。
+///
+/// 只统计「同 kind + 同工作负载版本 + 同应用版本」的记录：换了工作负载或应用版本，
+/// 分数本来就不能直接比较，混进来会把基线算歪。旧记录没有环境信息，一律不参与。
+/// 输入按时间从旧到新排列（与历史文件一致）。
+pub fn compute_baselines(records: &[BenchmarkRecord], app_version: &str) -> Vec<BenchmarkBaseline> {
+    struct Group {
+        label: String,
+        scores: Vec<f64>,
+    }
+    let mut groups: BTreeMap<(String, u32), Group> = BTreeMap::new();
+    for record in records {
+        let Some(environment) = record.environment.as_ref() else { continue };
+        if environment.app_version != app_version { continue; }
+        let result = &record.result;
+        if !result.score.is_finite() || result.score <= 0.0 { continue; }
+        let key = (result.kind.clone(), result.schema_version);
+        let group = groups.entry(key).or_insert_with(|| Group {
+            label: result.label.clone(),
+            scores: Vec::new(),
+        });
+        group.scores.push(result.score);
+    }
+
+    let mut baselines = Vec::new();
+    for ((kind, schema_version), group) in groups {
+        let Group { label, scores } = group;
+        if scores.is_empty() { continue; }
+        // 只看最近 BASELINE_WINDOW 次。
+        let window = if scores.len() > BASELINE_WINDOW {
+            &scores[scores.len() - BASELINE_WINDOW..]
+        } else {
+            &scores[..]
+        };
+        let count = window.len();
+        let mean = window.iter().sum::<f64>() / count as f64;
+        let variance = window.iter().map(|value| (value - mean).powi(2)).sum::<f64>() / count as f64;
+        let spread = if mean > 0.0 { variance.sqrt() / mean * 100.0 } else { 0.0 };
+        let (confidence, confidence_note) = if count < BASELINE_MIN_SAMPLES {
+            (
+                "样本不足".to_string(),
+                format!("同版本样本只有 {count} 次，至少需要 {BASELINE_MIN_SAMPLES} 次才能判断波动。"),
+            )
+        } else if spread <= CONFIDENCE_HIGH_SPREAD {
+            ("高".to_string(), format!("同机波动 ±{:.1}%，结果稳定。", spread))
+        } else if spread <= CONFIDENCE_MEDIUM_SPREAD {
+            ("中".to_string(), format!("同机波动 ±{:.1}%，建议再跑一次取中位数。", spread))
+        } else {
+            ("低".to_string(), format!("同机波动 ±{:.1}%，后台负载或电源模式可能影响结果。", spread))
+        };
+        baselines.push(BenchmarkBaseline {
+            kind,
+            label,
+            schema_version,
+            app_version: app_version.to_string(),
+            sample_count: count,
+            median_score: median_of(window),
+            mean_score: mean,
+            best_score: window.iter().copied().fold(f64::MIN, f64::max),
+            worst_score: window.iter().copied().fold(f64::MAX, f64::min),
+            spread_percent: spread,
+            confidence,
+            confidence_note,
+        });
+    }
+    baselines
+}
+
+/// 把一次新结果与基线对比，给出偏差与是否落在波动带内。
+pub fn compare_with_baseline(baseline: &BenchmarkBaseline, score: f64) -> BenchmarkComparison {
+    let base = baseline.median_score;
+    let delta = if base > 0.0 { (score - base) / base * 100.0 } else { 0.0 };
+    let band_percent = baseline.spread_percent.max(MIN_BAND_PERCENT);
+    let band = base * band_percent / 100.0;
+    let band_low = (base - band).max(0.0);
+    let band_high = base + band;
+    let within = score >= band_low && score <= band_high;
+    let note = if baseline.sample_count < BASELINE_MIN_SAMPLES {
+        format!("样本不足（{} 次），暂时无法判断本次是否正常。", baseline.sample_count)
+    } else if within {
+        format!("落在基线 ±{band_percent:.1}% 波动带内，与本机常态一致。")
+    } else if delta > 0.0 {
+        format!("高于基线 {delta:.1}%，超出波动带；可能是真实提升，也可能是当时负载更低。")
+    } else {
+        format!("低于基线 {:.1}%，超出波动带；建议确认后台负载后复检。", -delta)
+    };
+    BenchmarkComparison {
+        kind: baseline.kind.clone(),
+        score,
+        baseline_score: base,
+        delta_percent: delta,
+        within_baseline_band: within,
+        band_low,
+        band_high,
+        note,
+    }
+}
+
+/// 组装基线报告：基线 + 本次结果对比 + 面向用户的说明。
+pub fn build_baseline_report(
+    records: &[BenchmarkRecord],
+    app_version: &str,
+    current: &[BenchmarkResult],
+) -> BenchmarkBaselineReport {
+    let baselines = compute_baselines(records, app_version);
+    let mut comparisons = Vec::new();
+    for result in current {
+        if !result.score.is_finite() || result.score <= 0.0 { continue; }
+        let Some(baseline) = baselines.iter().find(|baseline| {
+            baseline.kind == result.kind && baseline.schema_version == result.schema_version
+        }) else { continue; };
+        comparisons.push(compare_with_baseline(baseline, result.score));
+    }
+    let notes = vec![
+        "基线只统计本机同项目、同工作负载版本、同应用版本的最近若干次记录；换机器或换版本不通用。".to_string(),
+        format!(
+            "可信度按同机波动判定：≤{CONFIDENCE_HIGH_SPREAD:.0}% 为高，≤{CONFIDENCE_MEDIUM_SPREAD:.0}% 为中，更大为低；样本少于 {BASELINE_MIN_SAMPLES} 次时无法判断。"
+        ),
+        "基线会随新记录滚动更新（取最近若干次的中位数）。".to_string(),
+        "分数受电源模式、后台负载与温度影响；复检前请关闭其他高负载程序。".to_string(),
+    ];
+    BenchmarkBaselineReport { baselines, comparisons, notes }
+}
+
+/// 取本机跑分基线：按项目统计基线与可信度，并与本次结果对比。
+#[tauri::command(async)]
+pub fn get_benchmark_baselines(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, BenchmarkHistoryLock>,
+    current: Option<Vec<BenchmarkResult>>,
+) -> Result<BenchmarkBaselineReport, String> {
+    let _guard = state.0.lock().map_err(|_| "跑分历史正在被占用".to_string())?;
+    let history = load_history_file(&app)?;
+    Ok(build_baseline_report(
+        &history,
+        env!("CARGO_PKG_VERSION"),
+        current.as_deref().unwrap_or(&[]),
+    ))
+}
+
 #[tauri::command(async)]
 pub fn save_external_benchmark(app: tauri::AppHandle, state: tauri::State<'_, BenchmarkHistoryLock>, result: BenchmarkResult) -> Result<(), String> {
     if result.kind != "gpu" || !matches!(result.schema_version, 2 | 3) || !result.score.is_finite() || result.score <= 0.0 {
@@ -460,5 +673,151 @@ mod tests {
         assert!(json.contains("\"environment\""));
         assert!(json.contains("\"cpuBrand\""));
         assert!(json.contains("\"appVersion\""));
+    }
+
+    fn make_record(
+        kind: &str,
+        score: f64,
+        schema: u32,
+        app_version: &str,
+    ) -> BenchmarkRecord {
+        BenchmarkRecord {
+            recorded_at_unix_ms: 1,
+            result: BenchmarkResult {
+                schema_version: schema,
+                kind: kind.into(),
+                label: "测试项".into(),
+                score,
+                unit: "分".into(),
+                duration_ms: 1,
+                details: BTreeMap::new(),
+                note: String::new(),
+            },
+            environment: Some(BenchmarkEnvironment {
+                app_version: app_version.into(),
+                cpu_brand: "CPU".into(),
+                logical_cores: 8,
+                memory_bytes: 16 * 1024 * 1024 * 1024,
+                os_name: "Windows".into(),
+                os_version: "11".into(),
+            }),
+        }
+    }
+
+    fn make_result(kind: &str, score: f64, schema: u32) -> BenchmarkResult {
+        BenchmarkResult {
+            schema_version: schema,
+            kind: kind.into(),
+            label: "测试项".into(),
+            score,
+            unit: "分".into(),
+            duration_ms: 1,
+            details: BTreeMap::new(),
+            note: String::new(),
+        }
+    }
+
+    #[test]
+    fn baseline_uses_median_and_reports_spread() {
+        let records = vec![
+            make_record("cpu-single", 100.0, 1, "1.0.0"),
+            make_record("cpu-single", 102.0, 1, "1.0.0"),
+            make_record("cpu-single", 101.0, 1, "1.0.0"),
+        ];
+        let baselines = compute_baselines(&records, "1.0.0");
+        assert_eq!(baselines.len(), 1);
+        let baseline = &baselines[0];
+        assert_eq!(baseline.sample_count, 3);
+        assert_eq!(baseline.median_score, 101.0);
+        assert_eq!(baseline.best_score, 102.0);
+        assert_eq!(baseline.worst_score, 100.0);
+        assert!(baseline.spread_percent > 0.0 && baseline.spread_percent < 2.0);
+        assert_eq!(baseline.confidence, "高");
+    }
+
+    #[test]
+    fn baseline_skips_other_app_versions_and_legacy_records() {
+        let mut legacy = make_record("cpu-single", 500.0, 1, "1.0.0");
+        legacy.environment = None;
+        let records = vec![
+            legacy,
+            make_record("cpu-single", 500.0, 1, "0.9.0"),
+            make_record("cpu-single", 100.0, 1, "1.0.0"),
+        ];
+        let baselines = compute_baselines(&records, "1.0.0");
+        assert_eq!(baselines.len(), 1);
+        assert_eq!(baselines[0].sample_count, 1);
+        assert_eq!(baselines[0].median_score, 100.0);
+    }
+
+    #[test]
+    fn baseline_reports_insufficient_samples() {
+        let records = vec![
+            make_record("memory", 100.0, 1, "1.0.0"),
+            make_record("memory", 200.0, 1, "1.0.0"),
+        ];
+        let baselines = compute_baselines(&records, "1.0.0");
+        assert_eq!(baselines[0].sample_count, 2);
+        assert_eq!(baselines[0].confidence, "样本不足");
+        assert!(baselines[0].confidence_note.contains("3"));
+    }
+
+    #[test]
+    fn baseline_keeps_only_the_latest_window() {
+        let mut records = Vec::new();
+        for index in 0..20 {
+            records.push(make_record("disk", index as f64, 1, "1.0.0"));
+        }
+        let baselines = compute_baselines(&records, "1.0.0");
+        assert_eq!(baselines[0].sample_count, BASELINE_WINDOW);
+        // 最近 10 次是 10..=19，中位数为 14.5。
+        assert_eq!(baselines[0].median_score, 14.5);
+    }
+
+    #[test]
+    fn comparison_inside_band_is_reported_as_stable() {
+        let records = vec![
+            make_record("cpu-single", 100.0, 1, "1.0.0"),
+            make_record("cpu-single", 101.0, 1, "1.0.0"),
+            make_record("cpu-single", 99.0, 1, "1.0.0"),
+        ];
+        let baselines = compute_baselines(&records, "1.0.0");
+        let comparison = compare_with_baseline(&baselines[0], 100.5);
+        assert!(comparison.within_baseline_band);
+        assert!(comparison.delta_percent.abs() < 1.0);
+        assert!(comparison.note.contains("波动带内"));
+    }
+
+    #[test]
+    fn comparison_flags_a_result_outside_the_band() {
+        let records = vec![
+            make_record("cpu-single", 100.0, 1, "1.0.0"),
+            make_record("cpu-single", 101.0, 1, "1.0.0"),
+            make_record("cpu-single", 99.0, 1, "1.0.0"),
+        ];
+        let baselines = compute_baselines(&records, "1.0.0");
+        let comparison = compare_with_baseline(&baselines[0], 60.0);
+        assert!(!comparison.within_baseline_band);
+        assert!(comparison.delta_percent < -30.0);
+        assert!(comparison.band_low > 50.0);
+        assert!(comparison.note.contains("复检"));
+    }
+
+    #[test]
+    fn report_pairs_current_results_only_with_matching_baseline() {
+        let records = vec![
+            make_record("cpu-single", 100.0, 1, "1.0.0"),
+            make_record("cpu-single", 101.0, 1, "1.0.0"),
+            make_record("cpu-single", 99.0, 1, "1.0.0"),
+        ];
+        let current = vec![
+            make_result("cpu-single", 100.0, 1),
+            make_result("gpu", 500.0, 3),
+        ];
+        let report = build_baseline_report(&records, "1.0.0", &current);
+        assert_eq!(report.baselines.len(), 1);
+        assert_eq!(report.comparisons.len(), 1);
+        assert_eq!(report.comparisons[0].kind, "cpu-single");
+        assert!(!report.notes.is_empty());
     }
 }
