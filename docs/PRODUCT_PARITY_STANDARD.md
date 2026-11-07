@@ -212,10 +212,18 @@
   - `tool.json` 必须声明 `boost` / `undo_boost` 两个写动作，否则宿主 `authorize_action` 直接拒绝执行；✅ 0.2.0
   - 清单声明的动作集合与工具实际服务的动作集合必须一致（由 `tools/sys_boost` 的清单一致性单测守护）；✅ 0.2.0
 
-#### 8. cclean（C 盘瘦身）L0 → 合并/升级
+#### 8. cclean（C 盘瘦身）L0 → L1 已完成（0.2.0，与 clean_master 合并）
 
-- 与 clean_master 共享扫描逻辑，避免两套白名单；或直接升级为可执行版。
-- 验收：两者结果一致；删除重复实现。
+- 现状：0.2.0 前是只读统计工具，且与 clean_master 各写一套白名单与遍历器 —— 同一位置在两个工具里给出的数字不同（cclean 统计整个资源管理器目录、阈值 15 万；clean_master 只匹配 `thumbcache_*`/`iconcache_*`、阈值 2.5 万），cclean 还手写了协议握手。
+- 决定（2026-11-07）：抽出 `tools/cleaner`（package `clean-core`）作为**唯一白名单 + 唯一扫描器 + 唯一回收站删除引擎**，cclean 与 clean_master 都改成它的薄壳。cclean 保留自己的展示层（C 盘容量、分类占用、系统托管文件），同时升级为可写工具。
+- 验收：
+  - 两者结果一致；✅ 同一位置由 `clean_core::preview_rows()` 一次扫描产出，"结果一致"由构造保证（cclean 单测比对 items 与共享行）
+  - 删除重复实现；✅ 两套白名单/遍历器/删除引擎合并为一个 crate，cclean 改用标准协议入口
+  - 删除面不扩大；✅ 可清理位置固定为 9 个（`clean-core` 单测 `cleanable_set_is_explicitly_bounded` 守护），`recycle-bin`、`inet-cache` 只统计
+  - 只统计的位置不可被勾选；✅ 清单标 `cleanable:false`，界面禁用勾选，`apply` 直接拒绝
+  - 移入回收站可还原；✅ `FOF_ALLOWUNDO`，`rollback: recycle_bin`
+  - 确认令牌按工具隔离；✅ 摘要含工具 id，cclean 的令牌不能用于 clean_master
+  - 手搓协议下线；✅ cclean 改用 `tool_protocol::serve_with_request`
 
 #### 9. DuplicateFileClean（重复文件清理）L1 已完成（0.2.0）
 
@@ -367,8 +375,8 @@
 | 指标 | 现状 | 目标 |
 |---|---|---|
 | 25 个工具可运行率 | 25/25 | 25/25 |
-| 写工具可回滚率 | 10/18 | 输出型/不可逆项除外 100% |
-| 写操作确认令牌覆盖 | 18/18 | 100% |
+| 写工具可回滚率 | 11/19 | 输出型/不可逆项除外 100% |
+| 写操作确认令牌覆盖 | 19/19 | 100% |
 | 写操作审计日志覆盖 | 写工具已记录 | 100% |
 | 默认联网工具数 | 1（driver_manager） | ≤ 1，且界面明示 |
 | 默认遥测 | 0 | 0 |
@@ -444,3 +452,4 @@
 | 2026-11-06 | v0.1.27 | gpu_opt 0.2.0：按应用 GPU 偏好（HKCU，可恢复默认） |
 | 2026-11-06 | v0.1.28 | sys_boost 0.2.0：一键加速（视觉/动画/透明/电源计划）+ 快照撤销 |
 | 2026-11-07 | v0.1.29 | 文档校准：gpu_opt 实际已是写工具（v0.1.27）、software_pm 计划任务已实现（v0.1.14）、sys_clean 还原点与导出清单已实现（v0.1.23/24）、ai_cooling 为按次 UAC 限功率（v0.1.25）；§8 指标改为含写动作 18 个 / 有回滚 10 个；gpu_opt 清单补 registry 与 rollback=custom |
+| 2026-11-07 | v0.1.30 | cclean 0.2.0 + clean_master 0.3.0 + clean-core 0.1.0：合并为同一清理引擎（唯一白名单/扫描器/删除实现），cclean 升级为可写工具并下线手搓协议；§8 指标改为含写动作 19 个 / 有回滚 11 个 |

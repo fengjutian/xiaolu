@@ -52,7 +52,7 @@ fn tool(
 pub fn tools() -> Vec<ToolDescriptor> {
     vec![
         tool("sys_clean", "Windows 系统瘦身", "清理", "移除系统自带的无用组件与预装应用（规划）", "write", true, "planned", "需要逐项确认与回滚设计"),
-        tool("cclean", "C 盘瘦身", "清理", "只读统计 C 盘可清理位置与系统托管文件", "read_only", false, "planned", "工具包未安装"),
+        tool("cclean", "C 盘瘦身", "清理", "扫描 C 盘可清理位置与系统托管文件，勾选后移入回收站可还原", "write", false, "planned", "工具包未安装"),
         tool("clean_master", "清理大师", "清理", "扫描并勾选固定清理位置，文件移入回收站可还原", "write", false, "planned", "工具包未安装"),
         tool("privacy_clean", "隐私清理", "隐私", "浏览记录、Cookie 与临时痕迹清理（规划）", "write", false, "planned", "涉及浏览器数据，需逐项确认"),
         tool("privacy_incognito", "无痕模式", "隐私", "只读扫描浏览器、最近文件、跳转列表、剪贴板与 DNS 痕迹", "read_only", false, "planned", "工具包未安装"),
