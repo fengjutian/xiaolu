@@ -5,5 +5,6 @@ import sitemap from "@astrojs/sitemap";
 export default defineConfig({
   site: process.env.SITE_URL ?? "https://xiaolu.example.com",
   output: "static",
+  trailingSlash: "always",
   integrations: [react(), sitemap()],
 });

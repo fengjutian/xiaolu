@@ -1,0 +1,61 @@
+---
+import Layout from "../layouts/Layout.astro";
+---
+
+<Layout title="安全与隐私 · 小鲁 · 系统透镜" description="小鲁的安全边界：本地优先、写操作确认令牌、提权助手隔离、本地审计日志与可回滚设计。">
+  <main>
+    <section class="page-hero section-shell">
+      <div class="eyebrow"><i></i> 安全与隐私</div>
+      <h1>能改的都留后路，<br /><em>不能改的一律不改。</em></h1>
+      <p class="hero-copy">小鲁的第一条原则是默认离线、只读、以普通用户权限运行。需要提权的动作被单独隔离，每一次写操作都要经过预览、确认与记录。</p>
+      <div class="hero-actions">
+        <a class="button primary" href="/toolbox/">查看工具风险分级 <span>↓</span></a>
+        <a class="button secondary" href="/download/">下载 Windows 版 <span>↘</span></a>
+      </div>
+    </section>
+
+    <section class="page-section section-shell">
+      <div class="section-head"><div class="section-label">PRINCIPLES / 设计原则</div><h2>四条贯穿全局的规则</h2></div>
+      <div class="spec-grid">
+        <article class="spec-card"><h3>默认本地、只读</h3><p>不注册账户，不静默联网，不安装后台常驻服务。数据读取走 Windows 标准接口、公开文档与已评估的 WMI/CIM。</p></article>
+        <article class="spec-card"><h3>写操作与只读分离</h3><p>查看能力与修改能力在代码与界面上分开。写操作有预览、二次确认、确认令牌、审计记录与回滚路径。</p></article>
+        <article class="spec-card"><h3>数据不可用就说不可用</h3><p>每项指标都标明来源、采集时间与权限限制。拿不到读数时显示不可用原因，不用估算值冒充真实温度。</p></article>
+        <article class="spec-card"><h3>可解释、可退出</h3><p>每项结论都给出依据、时间与原因。可以撤销、可以还原，也可以随时卸载，不留无法关闭的后台组件。</p></article>
+      </div>
+    </section>
+
+    <section class="page-section section-shell">
+      <div class="section-head"><div class="section-label">WRITE PATH / 写操作约束</div><h2>任何一次改动都要走完六步</h2><p>无论是一个注册表值、一次清理，还是一个系统级设置，写操作都不会绕过这条链路。</p></div>
+      <div class="flow">
+        <div class="flow-step"><b>01</b><div><h4>预览</h4><p>先展示将要发生什么：改哪个路径、动哪些文件、影响什么范围。</p></div></div>
+        <div class="flow-step"><b>02</b><div><h4>明确确认</h4><p>敏感操作始终要求用户主动确认，不做默认勾选，也不静默执行。</p></div></div>
+        <div class="flow-step"><b>03</b><div><h4>确认令牌</h4><p>写操作需要一次性确认令牌，令牌由预览环节产生，跨越步骤复用无效。</p></div></div>
+        <div class="flow-step"><b>04</b><div><h4>提权隔离</h4><p>需要管理员权限的动作交给独立的提权助手进程执行，只做白名单内的具体动作，主程序不直接提权。</p></div></div>
+        <div class="flow-step"><b>05</b><div><h4>本地审计</h4><p>执行结果、失败原因与耗时写入本地操作日志，可回看每一次工具运行。</p></div></div>
+        <div class="flow-step"><b>06</b><div><h4>回滚</h4><p>能还原的都要还原：清理进回收站、设置项保留原值、优化项提供快照撤销。</p></div></div>
+      </div>
+    </section>
+
+    <section class="page-section section-shell">
+      <div class="section-head"><div class="section-label">DATA / 数据处理</div><h2>数据留在本机，去留由你决定</h2></div>
+      <div class="spec-grid">
+        <article class="spec-card"><h3>报告脱敏</h3><p>导出前可逐项处理主机名、用户名、硬件序列号、MAC 地址与本地路径，脱敏默认开启。</p></article>
+        <article class="spec-card"><h3>密钥加密</h3><p>AI 接口密钥使用 Windows DPAPI（当前用户）加密保存，不写入设置文件与日志。</p></article>
+        <article class="spec-card"><h3>发送前预览</h3><p>启用 AI 后，发送到云端的内容经过敏感字段筛选与脱敏，界面上可以先看完整载荷再决定是否发送。</p></article>
+        <article class="spec-card"><h3>本地数据目录</h3><p>跑分历史、工具统计与操作日志都在本机数据目录中，设置页可查看位置、调整保留策略并一键清理。</p></article>
+        <article class="spec-card"><h3>无静默更新</h3><p>不静默联网下载更新，不在后台推送规则，也不做进程注入与跨进程写内存。</p></article>
+        <article class="spec-card"><h3>工具权限声明</h3><p>每个工具在清单中声明读取路径、写入路径、注册表范围、是否联网与是否需要提权，界面与文档保持一致。</p></article>
+      </div>
+    </section>
+
+    <section class="page-section section-shell">
+      <div class="section-head"><div class="section-label">NOT DOING / 明确不做的事</div><h2>有些事我们不打算做</h2></div>
+      <div class="spec-grid">
+        <article class="spec-card"><h3>不装内核驱动</h3><p>传感器读取走 Windows 标准接口与已安装的厂商工具，不额外安装内核级驱动。</p></article>
+        <article class="spec-card"><h3>不装后台常驻服务</h3><p>除可选的托盘常驻外，不留无法关闭的系统级组件。</p></article>
+        <article class="spec-card"><h3>不静默改系统</h3><p>不静默清理文件、不静默卸载软件、不静默改系统配置。</p></article>
+        <article class="spec-card"><h3>不让 AI 动手</h3><p>AI 不直接执行命令或系统写操作，所有修改都要回到本地界面确认。</p></article>
+      </div>
+    </section>
+  </main>
+</Layout>

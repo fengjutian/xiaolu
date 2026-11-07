@@ -1,5 +1,6 @@
 ---
 import "../styles/global.css";
+import "../styles/pages.css";
 
 interface Props {
   title: string;
@@ -7,6 +8,17 @@ interface Props {
 }
 
 const { title, description } = Astro.props;
+const current = Astro.url.pathname.replace(/\/+$/, "") || "/";
+
+const nav = [
+  { href: "/features/", label: "功能" },
+  { href: "/toolbox/", label: "工具箱" },
+  { href: "/ai/", label: "AI 解读" },
+  { href: "/security/", label: "安全" },
+  { href: "/download/", label: "下载" },
+];
+
+const year = new Date().getFullYear();
 ---
 
 <!doctype html>
@@ -23,6 +35,26 @@ const { title, description } = Astro.props;
     <title>{title}</title>
   </head>
   <body>
+    <header class="site-header">
+      <a class="brand" href="/" aria-label="小鲁首页"><span>鲁</span><strong>小鲁</strong><small>系统透镜</small></a>
+      <nav aria-label="主导航">
+        {nav.map((item) => <a href={item.href} class:list={[current === item.href && "active"]}>{item.label}</a>)}
+      </nav>
+      <a class="header-cta" href="/download/">免费下载</a>
+    </header>
+
     <slot />
+
+    <footer class="site-footer section-shell">
+      <a class="brand" href="/"><span>鲁</span><strong>小鲁</strong></a>
+      <p>看清系统，安心使用。</p>
+      <div class="footer-links">
+        {nav.map((item) => <a href={item.href}>{item.label}</a>)}
+      </div>
+      <div class="footer-meta">
+        <a href="https://github.com/fengjutian/xiaolu">GitHub</a>
+        <span>© {year} 小鲁</span>
+      </div>
+    </footer>
   </body>
 </html>

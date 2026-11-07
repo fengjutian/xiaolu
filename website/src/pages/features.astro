@@ -1,0 +1,216 @@
+---
+import Layout from "../layouts/Layout.astro";
+
+const version = "0.57.0";
+
+const groups = [
+  {
+    id: "monitor",
+    label: "REALTIME / 实时监控",
+    title: "每一秒的电脑状态，都看得见",
+    desc: "所有指标来自 Windows 公开接口与性能计数器，每 2 秒刷新一次。数据不可用时界面会直接说明原因，不用估算值冒充真实读数。",
+    cards: [
+      {
+        name: "资源曲线",
+        text: "CPU、内存、磁盘、网络四路实时曲线，鼠标悬停可回看历史采样点。",
+        points: ["刷新间隔可在设置中调整", "指标历史保留时长可配置", "托盘常驻，关闭窗口后继续采集"],
+      },
+      {
+        name: "网络流量",
+        text: "实时上传与下载速度、累计流量，配合活动 TCP 连接与 DNS 统计。",
+        points: ["连接状态与远端地址一览", "DNS、网关、代理、Hosts 统一视图"],
+      },
+      {
+        name: "进程排行",
+        text: "按 CPU 与内存占用排序的进程清单，一眼看到谁在拖慢系统。",
+        points: ["默认展示占用最高的 30 个进程", "结束进程等操作受保护规则约束"],
+      },
+    ],
+  },
+  {
+    id: "hardware",
+    label: "HARDWARE / 硬件与健康",
+    title: "配置、温度与存储健康",
+    desc: "从主板到磁盘 SMART，把硬件的真实状态摊开给你看。需要更高权限才能读取的项目会标明来源与限制。",
+    cards: [
+      {
+        name: "硬件详情",
+        text: "主板、BIOS、显卡、内存、硬盘、网卡、显示器、电池、音频、USB、蓝牙与摄像头的只读清单。",
+        points: ["显示器读取 EDID 型号信息", "电池健康度与充放电状态", "设备与驱动清单含签名状态"],
+      },
+      {
+        name: "温度与传感器",
+        text: "Windows ACPI 热区、NVIDIA GPU 温度、风扇、功耗与频率，以及物理磁盘温度。",
+        points: ["硬件不支持时明确显示不可用", "支持温度告警桌面通知", "可设置冷却时间与免打扰时段"],
+      },
+      {
+        name: "存储健康",
+        text: "ATA SMART 原始属性、当前值、最差值、原始计数与预测故障状态，配合分区空间与实时读写速度。",
+        points: ["预测故障状态单独标出", "磁盘介质类型与 TRIM 状态可见", "SSD 与 HDD 表现分别呈现"],
+      },
+    ],
+  },
+  {
+    id: "benchmark",
+    label: "BENCHMARK / 性能测试",
+    title: "跑分要能比较，才有意义",
+    desc: "每项测试都公开负载、时长、取消方式与计分方法。更重要的是：结果会和你自己这台机器的历史基线比，而不是只给一个孤立分数。",
+    cards: [
+      {
+        name: "基础跑分",
+        text: "CPU 单核与多核、内存带宽、磁盘顺序读写测试。",
+        points: ["测试过程中可随时取消", "原始指标与综合评分同时保存", "历史结果按版本分组"],
+      },
+      {
+        name: "GPU 跑分",
+        text: "WebGL2 离屏着色器跑分与 GPU 像素吞吐测试。",
+        points: ["无需安装额外驱动或工具", "结果与本机历史同版本对比"],
+      },
+      {
+        name: "本机基线",
+        text: "按项目统计同机同版本的中位数基线与波动幅度，并给出可信度；复检时直接显示与基线的偏差。",
+        points: ["样本不足时明确标注，不硬算可信度", "基线随版本变化自动重算", "偏差超过波动范围会被指出"],
+      },
+    ],
+  },
+  {
+    id: "diagnostics",
+    label: "DIAGNOSTICS / 问题诊断",
+    title: "出错之后，先看证据",
+    desc: "蓝屏、崩溃、驱动异常、网络不通——小鲁不猜，只把系统留下的记录整理成可读的线索。",
+    cards: [
+      {
+        name: "崩溃与事件",
+        text: "蓝屏转储元数据、崩溃事件，以及最近 24 小时的关键系统事件。",
+        points: ["转储文件与崩溃模式可查看", "崩溃转储模式可经 UAC 切换", "关键事件按时间排列"],
+      },
+      {
+        name: "驱动与更新",
+        text: "驱动异常、缺失驱动与 PnP 问题检测，并只读扫描 Windows Update 官方驱动候选。",
+        points: ["安装动作仍走 Windows 官方界面", "候选结果只读展示，不静默下载"],
+      },
+      {
+        name: "网络排查",
+        text: "DNS、网关、代理、Hosts 统计与活动 TCP 连接诊断，配合系统事件给出线索。",
+        points: ["自动启动服务异常一并诊断", "待重启状态单独提示"],
+      },
+    ],
+  },
+  {
+    id: "space",
+    label: "STORAGE / 空间与文件",
+    title: "空间去哪了，看得明白",
+    desc: "盘符级可视化加目录钻取，定位大文件；系统目录默认排除，避免统计结果失真。",
+    cards: [
+      {
+        name: "全盘空间分析",
+        text: "盘符级 Treemap 与逐层目录钻取，快速定位占空间的文件夹。",
+        points: ["系统目录默认排除", "下载、文档、桌面目录的隐私友好型统计", "逐文件清单可导出"],
+      },
+      {
+        name: "压缩与 PDF",
+        text: "Windows 压缩工具实时进度、可随时取消；PDF 大师逐页预览、合并、拆分与旋转。",
+        points: ["Zip-Slip 防护与覆盖保护", "支持 ZIP64 大文件", "PDF 输出可加密并限制权限"],
+      },
+      {
+        name: "C 盘瘦身与扩容",
+        text: "清理前逐项预览，文件移入回收站可还原；扩容只做可行性分析，不实际扩盘。",
+        points: ["固定白名单扫描，不做黑盒规则", "未分配空间与可行性只读分析"],
+      },
+    ],
+  },
+  {
+    id: "utility",
+    label: "UTILITY / 日常效率",
+    title: "顺手的小工具，也在同一个入口",
+    desc: "常用操作不必跳转系统设置。这些入口都在应用内完成，不需要常驻后台。",
+    cards: [
+      {
+        name: "快捷启动与桌面助手",
+        text: "搜索并启动开始菜单快捷方式与系统应用；查看并打开桌面项目与常用文件夹。",
+        points: ["不注入 Explorer 进程", "不常驻，退出即释放"],
+      },
+      {
+        name: "护眼与锁屏",
+        text: "Gamma Ramp 色温滤镜、定时休息提醒与应用内时间段设置；锁屏工具预览后确认锁定会话。",
+        points: ["护眼时段可自定义", "锁屏前先给出会话确认"],
+      },
+      {
+        name: "软件管理入口",
+        text: "已安装软件清单含版本、发布者、位置与登记空间；卸载入口启动系统卸载程序并回执结果。",
+        points: ["安装目录缺失项标记为残留候选", "启动结果与失败原因当场回执"],
+      },
+    ],
+  },
+  {
+    id: "report",
+    label: "REPORT / 报告与数据",
+    title: "结论可以带走，数据自己脱敏",
+    desc: "诊断报告用于求助、留档或二次分析。导出前可以逐项处理敏感字段，默认开启脱敏。",
+    cards: [
+      {
+        name: "报告导出",
+        text: "JSON、Markdown 与自包含 HTML 三种格式，HTML 可直接用浏览器打印为 PDF。",
+        points: ["可单独导出 AI 解读报告", "也可勾选并入主诊断报告", "历史记录可查看"],
+      },
+      {
+        name: "脱敏",
+        text: "主机名、用户名、硬件序列号、MAC 地址与本地路径都可在导出前隐藏。",
+        points: ["脱敏状态在导出前可预览", "AI 发送前同样走脱敏与字段筛选"],
+      },
+      {
+        name: "本地数据",
+        text: "设置页可查看数据目录、调整保留策略并一键清理。",
+        points: ["跑分历史、工具日志与报告都在本机", "不上传、不云端同步"],
+      },
+    ],
+  },
+];
+---
+
+<Layout title="功能总览 · 小鲁 · 系统透镜" description="小鲁的全部功能：实时监控、硬件健康、性能跑分与基线、问题诊断、空间分析、工具箱与诊断报告。">
+  <main>
+    <section class="page-hero section-shell">
+      <div class="eyebrow"><i></i> 功能总览 · 版本 {version}</div>
+      <h1>一个应用，<br /><em>覆盖电脑健康的全部侧面。</em></h1>
+      <p class="hero-copy">从实时曲线到蓝屏转储，从跑分基线到空间占用。下面是小鲁目前提供的全部能力，以及每一项能为你回答什么问题。</p>
+      <div class="hero-actions">
+        <a class="button primary" href="/download/">下载 Windows 版 <span>↓</span></a>
+        <a class="button secondary" href="/toolbox/">查看 25 个工具 <span>↘</span></a>
+      </div>
+    </section>
+
+    {groups.map((group) => (
+      <section class="page-section section-shell" id={group.id}>
+        <div class="section-head">
+          <div class="section-label">{group.label}</div>
+          <h2>{group.title}</h2>
+          <p>{group.desc}</p>
+        </div>
+        <div class="spec-grid">
+          {group.cards.map((card) => (
+            <article class="spec-card">
+              <h3>{card.name}</h3>
+              <p>{card.text}</p>
+              <ul class="spec-list">
+                {card.points.map((point) => <li>{point}</li>)}
+              </ul>
+            </article>
+          ))}
+        </div>
+      </section>
+    ))}
+
+    <section class="page-section section-shell">
+      <div class="section-head">
+        <div class="section-label">NEXT / 继续了解</div>
+        <h2>还有三件事值得知道</h2>
+      </div>
+      <div class="mini-grid">
+        <article class="mini-card"><h3>工具箱</h3><p>25 个独立工具进程，每个都标注能力边界与风险等级，写操作一律先预览再确认。</p><a href="/toolbox/">打开工具箱 →</a></article>
+        <article class="mini-card"><h3>AI 解读</h3><p>默认关闭。开启后基于本机诊断快照给出结论，每条结论都附证据引用与置信度。</p><a href="/ai/">了解 AI 解读 →</a></article>
+        <article class="mini-card"><h3>安全边界</h3><p>本地优先、写操作确认令牌、提权助手隔离、审计日志与可回滚设计。</p><a href="/security/">查看安全说明 →</a></article>
+      </div>
+    </section>
+  </main>
+</Layout>

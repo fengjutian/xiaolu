@@ -1,0 +1,137 @@
+---
+import Layout from "../layouts/Layout.astro";
+
+type Risk = "read_only" | "write" | "system";
+
+type Tool = {
+  id: string;
+  name: string;
+  text: string;
+  risk: Risk;
+};
+
+const riskLabel: Record<Risk, { text: string; cls: string }> = {
+  read_only: { text: "只读", cls: "badge-read" },
+  write: { text: "写操作", cls: "badge-write" },
+  system: { text: "系统级 · 需 UAC", cls: "badge-system" },
+};
+
+const groups: { id: string; label: string; title: string; desc: string; tools: Tool[] }[] = [
+  {
+    id: "cleanup",
+    label: "CLEANUP / 清理与空间",
+    title: "清理之前，先看清楚要删什么",
+    desc: "清理类工具共用同一套扫描与回收站机制：固定白名单扫描、逐项勾选、文件移入回收站而非直接删除，误删可还原。",
+    tools: [
+      { id: "cclean", name: "C 盘瘦身", text: "扫描 C 盘可清理位置与系统托管文件，勾选后文件移入回收站可还原。", risk: "write" },
+      { id: "clean_master", name: "清理大师", text: "扫描并勾选固定清理位置，文件移入回收站可还原，执行前后提供差异对比。", risk: "write" },
+      { id: "DuplicateFileClean", name: "重复文件清理", text: "扫描下载、文档、桌面、图片、音乐与视频中的重复文件，选择保留项后其余移入回收站。", risk: "write" },
+      { id: "sys_clean", name: "Windows 系统瘦身", text: "列出应用包，白名单内的内置应用可移除（当前用户，可重装）。", risk: "write" },
+      { id: "c_expand", name: "C 盘瘦身与扩容", text: "分析卷与右侧未分配空间，支持 NTFS 卷向右扩展相邻空间（需 UAC）。", risk: "system" },
+    ],
+  },
+  {
+    id: "optimize",
+    label: "OPTIMIZE / 优化与性能",
+    title: "优化要可撤销，才敢按下按钮",
+    desc: "优化类工具在执行前记录原值或生成快照，提供一键撤销入口。不做伪优化：清空工作集式的“释放内存”不会出现在这里。",
+    tools: [
+      { id: "pc_optimizer", name: "电脑性能优化", text: "预览并切换 Windows 活动电源计划，支持逐项调整与省电、均衡、性能一键预设。", risk: "system" },
+      { id: "sys_boost", name: "系统优化大师", text: "汇总优化候选，可一键加速（视觉、动画、透明、电源计划），带快照撤销。", risk: "write" },
+      { id: "winopt_assistant", name: "Windows 优化助手", text: "检查系统设置，5 项用户级设置可直接应用，6 项管理员设置经 UAC 修改。", risk: "write" },
+      { id: "gpu_opt", name: "显卡性能优化", text: "查看显卡、驱动与电源计划，并按应用设置 GPU 偏好，可恢复默认。", risk: "write" },
+      { id: "ai_cooling", name: "AI 智能降温", text: "查看 ACPI 温度与负载，可经 UAC 限制处理器最大状态降温（非风扇控制）。", risk: "system" },
+      { id: "defrag", name: "磁盘碎片整理", text: "查看磁盘介质与 TRIM 状态，HDD 优化与 SSD TRIM 需管理员授权。", risk: "system" },
+      { id: "memopt_pro", name: "内存优化 Pro", text: "只读诊断物理内存、提交量、缓存与进程内存排行。", risk: "read_only" },
+      { id: "proc_opt", name: "电脑智能防卡顿", text: "列出高占用进程，可逐项调整优先级或结束进程，系统关键进程受保护。", risk: "system" },
+    ],
+  },
+  {
+    id: "repair",
+    label: "REPAIR / 修复与驱动",
+    title: "能修的不乱修，该查的不装",
+    desc: "修复类工具优先给出诊断结论。驱动安装动作仍交给 Windows 官方界面，小鲁只做只读扫描与候选提示。",
+    tools: [
+      { id: "bsod_repair", name: "蓝屏修复", text: "查看转储与蓝屏事件，并可经 UAC 切换崩溃转储模式。", risk: "system" },
+      { id: "dll_repair", name: "DLL 修复", text: "检查运行库 DLL 与 VC++/.NET 安装状态，可打开微软官方下载页。", risk: "read_only" },
+      { id: "driver_manager", name: "驱动管理", text: "检查驱动异常与 Windows Update 候选，可打开设备管理器或 Windows 更新。", risk: "read_only" },
+    ],
+  },
+  {
+    id: "privacy",
+    label: "PRIVACY / 隐私与安全",
+    title: "隐私相关的能力，多数只读",
+    desc: "涉及痕迹清除的边界容易说不清，这类工具默认只做只读扫描与统计；设置类改动才提供可撤销的写操作。",
+    tools: [
+      { id: "privacy_protection", name: "隐私保护", text: "检查诊断数据、广告 ID 与位置、相机、麦克风权限，4 项用户级设置可应用与撤销。", risk: "write" },
+      { id: "privacy_incognito", name: "无痕模式", text: "只读扫描浏览器数据、最近文件、跳转列表、剪贴板与 DNS 痕迹。", risk: "read_only" },
+      { id: "privacy_clean", name: "隐私清理", text: "只读统计浏览器记录、缓存与最近使用痕迹的占用。", risk: "read_only" },
+      { id: "adblock_master", name: "广告拦截", text: "审计 Hosts、DNS、扩展与防火墙，并可经 UAC 写入或移除 SystemLens 管理的 Hosts 规则。", risk: "write" },
+      { id: "intercept_bs", name: "安装拦截", text: "只读检查近期安装包的签名与捆绑风险，不运行安装包。", risk: "read_only" },
+    ],
+  },
+  {
+    id: "utility",
+    label: "UTILITY / 日常工具",
+    title: "文件、权限与会话的小工具",
+    desc: "日常高频操作集中在同一个入口，全部在应用内完成，不需要额外常驻。",
+    tools: [
+      { id: "omni_zip", name: "Windows 压缩工具", text: "压缩、解压与查看 ZIP，实时进度、可随时取消，含 Zip-Slip 防护与覆盖保护。", risk: "write" },
+      { id: "master_pdf", name: "PDF 大师", text: "逐页预览 PDF，合并、拆分与旋转页面，支持输出加密、权限限制与冲突策略。", risk: "write" },
+      { id: "software_pm", name: "软件权限管理", text: "查看并管理启动项、第三方服务启动类型与非 Microsoft 计划任务。", risk: "write" },
+      { id: "lockscreen", name: "锁屏", text: "预览后确认锁定当前 Windows 会话。", risk: "write" },
+    ],
+  },
+];
+---
+
+<Layout title="工具箱 · 小鲁 · 系统透镜" description="小鲁工具箱：25 个独立工具进程，标注能力边界与风险等级，写操作一律预览、确认、审计。">
+  <main>
+    <section class="page-hero section-shell">
+      <div class="eyebrow"><i></i> 工具箱 · 25 个独立工具进程</div>
+      <h1>每个工具，<br /><em>都写清楚它能做什么。</em></h1>
+      <p class="hero-copy">工具箱里的工具是彼此独立的进程，各自声明读取路径、写入路径、注册表范围与所需权限。界面上先看能力，再按按钮。</p>
+      <div class="hero-actions">
+        <a class="button primary" href="/download/">下载 Windows 版 <span>↓</span></a>
+        <a class="button secondary" href="/security/">写操作如何被约束 <span>↘</span></a>
+      </div>
+    </section>
+
+    <section class="page-section section-shell">
+      <div class="section-head"><div class="section-label">RISK / 风险分级</div><h2>三级能力标注</h2><p>每个工具卡片右上角的标签就是它的能力边界。写操作与系统级操作在执行前都会先给出预览。</p></div>
+      <div class="spec-grid">
+        <article class="spec-card"><h3><span class="badge badge-read">只读</span></h3><p>只扫描、只展示，零写入。数据来源、采集时间与不可用原因都会显示。</p></article>
+        <article class="spec-card"><h3><span class="badge badge-write">写操作</span></h3><p>会修改本机状态。需要预览、二次确认、确认令牌，执行记录写入本地操作日志。</p></article>
+        <article class="spec-card"><h3><span class="badge badge-system">系统级 · 需 UAC</span></h3><p>改动 HKLM 或系统级配置，由独立提权助手执行，同样保留预览与日志。</p></article>
+      </div>
+    </section>
+
+    {groups.map((group) => (
+      <section class="page-section section-shell" id={group.id}>
+        <div class="section-head">
+          <div class="section-label">{group.label}</div>
+          <h2>{group.title}</h2>
+          <p>{group.desc}</p>
+        </div>
+        <div class="tool-grid">
+          {group.tools.map((tool) => (
+            <article class="tool-card">
+              <h3>{tool.name}<span class:list={["badge", riskLabel[tool.risk].cls]}>{riskLabel[tool.risk].text}</span></h3>
+              <p>{tool.text}</p>
+              <div class="tool-meta"><span class="badge badge-cat">{tool.id}</span></div>
+            </article>
+          ))}
+        </div>
+      </section>
+    ))}
+
+    <section class="page-section section-shell">
+      <div class="section-head"><div class="section-label">HEALTH / 工具健康度</div><h2>工具自己也要被体检</h2><p>每次工具执行都会记录握手成功率、超时率与耗时 P95，逐工具明细全部留在本机不上传。样本量不足时只显示“样本不足”，不硬算达标率。</p></div>
+      <div class="spec-grid">
+        <article class="spec-card"><h3>达标 / 未达标</h3><p>对照既定验收线给出结论，并指名道姓说明是哪个工具掉了链子，而不是只报一个总体分。</p></article>
+        <article class="spec-card"><h3>样本不足</h3><p>执行次数低于最小样本数时不下结论，避免用两三次执行算出夸张的比率。</p></article>
+        <article class="spec-card"><h3>本地日志</h3><p>每次执行的成功、失败、超时与耗时都会落到本地操作日志，便于复盘。</p></article>
+      </div>
+    </section>
+  </main>
+</Layout>
