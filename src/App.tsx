@@ -114,6 +114,9 @@ import {
   openPathInExplorer,
   openRecycleBin,
   runToolAction,
+  listenToolProgress,
+  cancelToolAction,
+  newToolJobId,
   sendTestNotification,
   saveNotificationSettings,
   getSensorSettings,
@@ -2715,6 +2718,7 @@ function SoftwarePanel({ data }: { data: SoftwareInventory | null }) {
   const [query, setQuery] = useState("");
   const [uninstallStatus, setUninstallStatus] = useState<string | null>(null);
   const [uninstallError, setUninstallError] = useState<string | null>(null);
+  const [uninstallingKey, setUninstallingKey] = useState<string | null>(null);
 
   const uninstall = async (item: SoftwareInventory["items"][number]) => {
     const command = item.uninstallString || item.quietUninstallString;
@@ -2724,12 +2728,21 @@ function SoftwarePanel({ data }: { data: SoftwareInventory | null }) {
       )
     )
       return;
+    setUninstallingKey(item.key);
+    setUninstallStatus(null);
+    setUninstallError(null);
     try {
-      setUninstallStatus(await launchSoftwareUninstall(item.key));
-      setUninstallError(null);
+      const message = await launchSoftwareUninstall(item.key);
+      const detail = message.trim().replace(/[。.]$/, "");
+      setUninstallStatus(
+        `${item.name}：${detail}。请在系统弹出的卸载窗口中继续，本页不会跟踪卸载进度。`,
+      );
     } catch (error) {
-      setUninstallStatus(null);
-      setUninstallError(error instanceof Error ? error.message : String(error));
+      setUninstallError(
+        `${item.name}：${error instanceof Error ? error.message : String(error)}`,
+      );
+    } finally {
+      setUninstallingKey(null);
     }
   };
   if (!data)
@@ -2784,6 +2797,16 @@ function SoftwarePanel({ data }: { data: SoftwareInventory | null }) {
         leftSection={<IconSearch size={17} />}
         placeholder="搜索软件、版本、发布者或安装位置"
       />
+      {uninstallError && (
+        <Alert color="red" icon={<IconAlertCircle />} title="卸载程序没有启动">
+          {uninstallError}
+        </Alert>
+      )}
+      {uninstallStatus && (
+        <Alert color="teal" icon={<IconShieldCheck />} title="已启动系统卸载程序">
+          {uninstallStatus}
+        </Alert>
+      )}
       <Card className="glass-card" radius="lg" p={0}>
         <ScrollArea h="calc(100vh - 360px)">
           <Table stickyHeader highlightOnHover verticalSpacing="sm">
@@ -2820,7 +2843,7 @@ function SoftwarePanel({ data }: { data: SoftwareInventory | null }) {
                       {item.uninstallAvailable ? "提供卸载入口" : "无卸载入口"}
                     </Text>
                   </Table.Td>
-                                    <Table.Td>
+                  <Table.Td>
                     {item.estimatedSizeBytes
                       ? bytes(item.estimatedSizeBytes)
                       : "未登记"}
@@ -2835,7 +2858,13 @@ function SoftwarePanel({ data }: { data: SoftwareInventory | null }) {
                       <Button
                         size="xs"
                         variant="light"
-                        disabled={!item.uninstallAvailable || !item.key}
+                        loading={uninstallingKey === item.key}
+                        disabled={
+                          !item.uninstallAvailable ||
+                          !item.key ||
+                          (uninstallingKey != null &&
+                            uninstallingKey !== item.key)
+                        }
                         onClick={() => void uninstall(item)}
                       >
                         卸载
@@ -3032,6 +3061,7 @@ function BenchmarkPanel() {
   const [failure, setFailure] = useState<string | null>(null);
   const [diskSize, setDiskSize] = useState("1024");
   const [cancelling, setCancelling] = useState(false);
+  const [cancelError, setCancelError] = useState<string | null>(null);
   useEffect(() => {
     void getBenchmarkHistory()
       .then(setBenchmarkHistory)
@@ -3131,19 +3161,33 @@ function BenchmarkPanel() {
           </Text>
         </Group>
         {running && (
-          <Button
-            size="xs"
-            color="red"
-            variant="light"
-            loading={cancelling}
-            onClick={() => {
-              setCancelling(true);
-              cancelGpuBenchmark();
-              void cancelBenchmark().finally(() => setCancelling(false));
-            }}
-          >
-            取消测试
-          </Button>
+          <Box>
+            <Button
+              size="xs"
+              color="red"
+              variant="light"
+              loading={cancelling}
+              onClick={() => {
+                setCancelling(true);
+                setCancelError(null);
+                cancelGpuBenchmark();
+                void cancelBenchmark()
+                  .catch((error) =>
+                    setCancelError(
+                      error instanceof Error ? error.message : String(error),
+                    ),
+                  )
+                  .finally(() => setCancelling(false));
+              }}
+            >
+              取消测试
+            </Button>
+            {cancelError && (
+              <Text size="xs" c="red" mt={4}>
+                取消失败：{cancelError}
+              </Text>
+            )}
+          </Box>
         )}
       </Group>
       )}
@@ -3813,6 +3857,7 @@ function SettingsPanel({
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
+  const [openPathError, setOpenPathError] = useState<string | null>(null);
 
   useEffect(() => setDraft(settings), [settings]);
   useEffect(() => {
@@ -3841,6 +3886,15 @@ function SettingsPanel({
       setFailed(true);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const openDataPath = async (path: string) => {
+    setOpenPathError(null);
+    try {
+      await openPathInExplorer(path);
+    } catch (error) {
+      setOpenPathError(error instanceof Error ? error.message : String(error));
     }
   };
 
@@ -3934,12 +3988,17 @@ function SettingsPanel({
                 size="xs"
                 variant="light"
                 disabled={!path}
-                onClick={() => path && void openPathInExplorer(path)}
+                onClick={() => path && void openDataPath(path)}
               >
                 打开
               </Button>
             </Group>
           ))}
+          {openPathError && (
+            <Text size="xs" c="red" mt="xs">
+              打开目录失败：{openPathError}
+            </Text>
+          )}
         </Stack>
       </Card>
 
@@ -4232,6 +4291,11 @@ function CleanupDiffTable({ rows }: { rows: CleanupDiffRow[] }) {
   );
 }
 
+/** 取消与失败要分开回执：取消是用户主动操作，不该显示成报错。 */
+function isCancelledMessage(message: string): boolean {
+  return message.startsWith("CANCELLED:") || message.includes("操作已取消");
+}
+
 function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { onOpenEyeCare?: () => void; onOpenStartMenu?: () => void; onOpenDesktopQuick?: () => void }) {
   const [tools, setTools] = useState<ToolDescriptor[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -4263,6 +4327,15 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
   const [zipArchive, setZipArchive] = useState("");
   const [zipDestination, setZipDestination] = useState("");
   const [zipOverwrite, setZipOverwrite] = useState(false);
+  const [zipProgress, setZipProgress] = useState<{
+    phase: string;
+    done: number;
+    total: number;
+    message: string;
+  } | null>(null);
+  const [zipNotice, setZipNotice] = useState<string | null>(null);
+  const [zipCancelling, setZipCancelling] = useState(false);
+  const zipJobRef = useRef<string | null>(null);
   const [pdfMode, setPdfMode] = useState<"info" | "merge" | "split" | "rotate">(
     "info",
   );
@@ -4338,6 +4411,7 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
     };
     setApplying(`${tool.id}:${mode}`);
     setApplyError(null);
+    setZipNotice(null);
     try {
       if (mode === "list") {
         const data = (await runToolAction(tool.id, "list", null, {
@@ -4356,18 +4430,53 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
         )
       )
         return;
+      // 任务 id 必须在调用前同步记下：进度事件是异步到达的，靠它关联到这一次执行。
+      const jobId = newToolJobId();
+      zipJobRef.current = jobId;
+      setZipProgress({
+        phase: mode,
+        done: 0,
+        total: 0,
+        message: mode === "compress" ? "正在准备压缩…" : "正在准备解压…",
+      });
+      setZipCancelling(false);
       const data = (await runToolAction(
         tool.id,
         "apply",
         preview.confirmationToken ?? null,
         params,
+        jobId,
       )) as ToolResult;
       setGeneric({ tool, data });
       setGenericSuccess(mode === "compress" ? "压缩完成" : "解压完成");
     } catch (reason) {
-      setApplyError(reason instanceof Error ? reason.message : String(reason));
+      const message = reason instanceof Error ? reason.message : String(reason);
+      if (isCancelledMessage(message)) {
+        setZipNotice(message.replace(/^CANCELLED:\s*/, ""));
+      } else {
+        setApplyError(message);
+      }
     } finally {
       setApplying(null);
+      setZipProgress(null);
+      setZipCancelling(false);
+      zipJobRef.current = null;
+    }
+  };
+
+  const cancelZip = async () => {
+    const jobId = zipJobRef.current;
+    if (!jobId) return;
+    setZipCancelling(true);
+    try {
+      const accepted = await cancelToolAction(jobId);
+      if (!accepted) {
+        setApplyError("取消请求未被接受：任务可能已经结束。");
+        setZipCancelling(false);
+      }
+    } catch (reason) {
+      setApplyError(reason instanceof Error ? reason.message : String(reason));
+      setZipCancelling(false);
     }
   };
   const [powerDraft, setPowerDraft] = useState<
@@ -4428,6 +4537,33 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
     void listToolboxTools()
       .then(setTools)
       .catch((reason) => setError(String(reason)));
+  }, []);
+
+  // 订阅工具进度：只有带 jobId 的执行才会有进度事件，按 jobId 过滤避免串台。
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void listenToolProgress((event) => {
+      if (event.jobId !== zipJobRef.current) return;
+      setZipProgress({
+        phase: event.phase,
+        done: event.done,
+        total: event.total,
+        message: event.message,
+      });
+    })
+      .then((stop) => {
+        if (disposed) {
+          stop();
+          return;
+        }
+        unlisten = stop;
+      })
+      .catch(() => undefined);
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
   }, []);
 
   const runGeneric = async (tool: ToolDescriptor) => {
@@ -7498,6 +7634,45 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                   绝对路径；不跟随符号链接；系统目录受限
                 </Text>
               </Group>
+              {zipProgress && (
+                <Box mt="sm">
+                  <Group justify="space-between" align="center" gap="xs">
+                    <Text size="xs" c="dimmed">
+                      {zipProgress.message || "处理中…"}
+                    </Text>
+                    <Text size="xs" c="dimmed">
+                      {zipProgress.total > 0
+                        ? `${zipProgress.done}/${zipProgress.total}`
+                        : ""}
+                    </Text>
+                  </Group>
+                  <Progress
+                    value={
+                      zipProgress.total > 0
+                        ? (zipProgress.done / zipProgress.total) * 100
+                        : 0
+                    }
+                    mt={4}
+                    size="sm"
+                    animated
+                  />
+                  <Button
+                    size="xs"
+                    color="orange"
+                    variant="subtle"
+                    mt="xs"
+                    loading={zipCancelling}
+                    onClick={() => void cancelZip()}
+                  >
+                    取消本次{zipMode === "compress" ? "压缩" : "解压"}
+                  </Button>
+                </Box>
+              )}
+              {zipNotice && (
+                <Alert color="orange" title="已取消" mt="sm">
+                  {zipNotice}
+                </Alert>
+              )}
             </Box>
           )}
           {generic.tool.id === "master_pdf" && (

@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::ffi::c_void;
@@ -6,8 +6,8 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{mpsc, Mutex, OnceLock};
-use std::time::Duration;
-use tauri::{AppHandle, Manager};
+use std::time::{Duration, Instant};
+use tauri::{AppHandle, Emitter, Manager};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -16,6 +16,13 @@ use crate::toolbox::{ToolActionDescriptor, ToolDescriptor};
 
 static TOKEN_SECRET: OnceLock<String> = OnceLock::new();
 static USED_TOKENS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+
+/// 工具进度事件名：界面按 jobId 关联到具体的一次执行。
+const PROGRESS_EVENT: &str = "toolbox-progress";
+/// 取消后留给工具自行收尾的宽限期；超时才强制结束子进程。
+const CANCEL_GRACE: Duration = Duration::from_secs(3);
+/// 轮询间隔：决定取消与超时的响应速度。
+const POLL_INTERVAL: Duration = Duration::from_millis(200);
 
 #[cfg(windows)]
 #[link(name = "bcrypt")]
@@ -144,6 +151,135 @@ fn state_dir(app: &AppHandle) -> Option<PathBuf> {
     let directory = app.path().app_local_data_dir().ok()?;
     std::fs::create_dir_all(&directory).ok()?;
     Some(directory)
+}
+
+/// 取消标记文件所在目录：工具进程轮询这里的标记文件是否存在。
+fn cancel_dir(app: &AppHandle) -> Option<PathBuf> {
+    let directory = state_dir(app)?.join("tool-cancel");
+    std::fs::create_dir_all(&directory).ok()?;
+    Some(directory)
+}
+
+/// 正在运行的工具任务：界面用它请求取消。
+#[derive(Debug, Clone)]
+struct ToolJob {
+    tool_id: String,
+    action: String,
+    /// 取消标记文件：宿主请求取消时创建它，工具看到后自行收尾。
+    marker: PathBuf,
+    cancelled: bool,
+}
+
+/// 工具任务注册表：只有带 jobId 的执行才会登记，也才支持取消。
+#[derive(Default)]
+pub struct ToolboxState {
+    jobs: Mutex<HashMap<String, ToolJob>>,
+}
+
+impl ToolboxState {
+    fn register(&self, job_id: &str, job: ToolJob) {
+        if let Ok(mut jobs) = self.jobs.lock() {
+            jobs.insert(job_id.to_string(), job);
+        }
+    }
+
+    fn finish(&self, job_id: &str) {
+        if let Ok(mut jobs) = self.jobs.lock() {
+            jobs.remove(job_id);
+        }
+    }
+
+    /// 请求取消：落下标记文件，工具进程下一轮轮询就会看到。
+    fn request_cancel(&self, job_id: &str) -> bool {
+        let Ok(mut jobs) = self.jobs.lock() else {
+            return false;
+        };
+        let Some(job) = jobs.get_mut(job_id) else {
+            return false;
+        };
+        job.cancelled = true;
+        eprintln!(
+            "[toolbox] 请求取消任务 {job_id}（{} / {}）",
+            job.tool_id, job.action
+        );
+        std::fs::write(&job.marker, b"cancel").is_ok()
+    }
+
+    fn is_cancelled(&self, job_id: &str) -> bool {
+        self.jobs
+            .lock()
+            .ok()
+            .and_then(|jobs| jobs.get(job_id).map(|job| job.cancelled))
+            .unwrap_or(false)
+    }
+}
+
+/// 进度事件负载：工具负责给 phase/done/total/message，宿主补上归属信息。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolProgress {
+    pub job_id: String,
+    pub tool_id: String,
+    pub action: String,
+    pub phase: String,
+    pub done: u64,
+    pub total: u64,
+    pub message: String,
+}
+
+fn progress_payload(job_id: &str, tool_id: &str, action: &str, data: &Value) -> ToolProgress {
+    ToolProgress {
+        job_id: job_id.to_string(),
+        tool_id: tool_id.to_string(),
+        action: action.to_string(),
+        phase: data
+            .get("phase")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        done: data.get("done").and_then(Value::as_u64).unwrap_or_default(),
+        total: data.get("total").and_then(Value::as_u64).unwrap_or_default(),
+        message: data
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+    }
+}
+
+/// 任务 id 会拼进文件路径，必须挡住路径穿越与超长输入。
+fn validate_job_id(job_id: &str) -> Result<(), String> {
+    if job_id.is_empty() || job_id.len() > 64 {
+        return Err("任务 id 无效".into());
+    }
+    if !job_id
+        .chars()
+        .all(|character| character.is_ascii_alphanumeric() || character == '-' || character == '_')
+    {
+        return Err("任务 id 只能包含字母、数字、连字符与下划线".into());
+    }
+    Ok(())
+}
+
+/// 任务结束时的清理：注销任务并删除取消标记文件。
+struct JobGuard<'a> {
+    app: &'a AppHandle,
+    job_id: Option<String>,
+    marker: Option<PathBuf>,
+}
+
+impl Drop for JobGuard<'_> {
+    fn drop(&mut self) {
+        if let Some(job_id) = &self.job_id {
+            // 清理发生在展开路径上，不能因为状态缺失而 panic。
+            if let Some(state) = self.app.try_state::<ToolboxState>() {
+                state.finish(job_id);
+            }
+        }
+        if let Some(marker) = &self.marker {
+            let _ = std::fs::remove_file(marker);
+        }
+    }
 }
 
 fn tools_dirs(app: &AppHandle) -> Vec<PathBuf> {
@@ -340,7 +476,12 @@ fn run_action_blocking(
     action: &str,
     confirmation: Option<String>,
     parameters: Option<Value>,
+    job_id: Option<String>,
 ) -> Result<Value, String> {
+    // 先校验任务 id：它会拼进文件路径，而且校验失败不应该白白消耗掉确认令牌。
+    if let Some(id) = job_id.as_deref() {
+        validate_job_id(id)?;
+    }
     let found = discover(app)
         .into_iter()
         .find(|(_, manifest)| manifest.id == tool_id)
@@ -352,6 +493,17 @@ fn run_action_blocking(
         consume_token(token)?;
     }
 
+    // 任务 id 与取消标记必须在启动子进程前准备好：工具一启动就可能去读标记文件。
+    let job = match job_id.as_deref() {
+        Some(id) => {
+            let cancel_directory = cancel_dir(app).ok_or("无法准备任务取消目录")?;
+            let marker = cancel_directory.join(format!("{id}.cancel"));
+            let _ = std::fs::remove_file(&marker);
+            Some((id.to_string(), marker))
+        }
+        None => None,
+    };
+
     let executable = directory.join(&manifest.entry);
     let mut command = Command::new(&executable);
     command
@@ -361,12 +513,32 @@ fn run_action_blocking(
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .creation_flags(0x0800_0000);
+    if let Some((_, marker)) = &job {
+        command.env("SYSTEM_LENS_CANCEL_FILE", marker);
+    }
     if let Some(directory) = state_dir(app) {
         command.env("SYSTEM_LENS_STATE_DIR", directory);
     }
     let mut child = command
         .spawn()
         .map_err(|error| format!("无法启动工具 {}：{error}", executable.display()))?;
+
+    if let Some((id, marker)) = &job {
+        app.state::<ToolboxState>().register(
+            id,
+            ToolJob {
+                tool_id: tool_id.to_string(),
+                action: action.to_string(),
+                marker: marker.clone(),
+                cancelled: false,
+            },
+        );
+    }
+    let _guard = JobGuard {
+        app,
+        job_id: job.as_ref().map(|(id, _)| id.clone()),
+        marker: job.as_ref().map(|(_, marker)| marker.clone()),
+    };
 
     let mut stdin = child.stdin.take().ok_or("无法写入工具进程")?;
     let stdout = child.stdout.take().ok_or("无法读取工具进程")?;
@@ -406,13 +578,34 @@ fn run_action_blocking(
     stdin.flush().ok();
 
     let timeout = Duration::from_millis(manifest.limits.timeout_ms.max(1_000));
+    let started = Instant::now();
     let mut received_bytes = 0usize;
+    let mut cancel_deadline: Option<Instant> = None;
     loop {
-        let line = match receive(&receiver, timeout, "工具响应") {
-            Ok(line) => line,
-            Err(error) => {
+        // 超时与取消每轮都检查：工具持续上报进度时不能只等收不到消息才判定。
+        if started.elapsed() >= timeout {
+            child.kill().ok();
+            return Err("工具响应超时".into());
+        }
+        if cancel_deadline.is_none() {
+            if let Some((id, _)) = &job {
+                if app.state::<ToolboxState>().is_cancelled(id) {
+                    cancel_deadline = Some(Instant::now() + CANCEL_GRACE);
+                }
+            }
+        }
+        if let Some(deadline) = cancel_deadline {
+            if Instant::now() >= deadline {
                 child.kill().ok();
-                return Err(error);
+                return Err("操作已取消".into());
+            }
+        }
+        let line = match receiver.recv_timeout(POLL_INTERVAL) {
+            Ok(line) => line,
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                child.kill().ok();
+                return Err("工具进程意外退出".into());
             }
         };
         received_bytes += line.len();
@@ -428,7 +621,16 @@ fn run_action_blocking(
             }
         };
         match message.get("type").and_then(Value::as_str) {
-            Some("progress") => continue,
+            Some("progress") => {
+                if let Some((id, _)) = &job {
+                    let data = message.get("data").cloned().unwrap_or(Value::Null);
+                    let _ = app.emit(
+                        PROGRESS_EVENT,
+                        progress_payload(id, tool_id, action, &data),
+                    );
+                }
+                continue;
+            }
             Some("result") => {
                 child.kill().ok();
                 return Ok(message.get("data").cloned().unwrap_or(Value::Null));
@@ -459,12 +661,20 @@ pub async fn run_tool_action(
     action: String,
     confirmation: Option<String>,
     parameters: Option<Value>,
+    job_id: Option<String>,
 ) -> Result<Value, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        run_action_blocking(&app, &tool_id, &action, confirmation, parameters)
+        run_action_blocking(&app, &tool_id, &action, confirmation, parameters, job_id)
     })
     .await
     .map_err(|error| format!("工具执行任务失败：{error}"))?
+}
+
+/// 请求取消正在执行的工具任务：工具看到标记文件后自行收尾并清理半成品。
+#[tauri::command]
+pub async fn cancel_tool_action(app: AppHandle, job_id: String) -> Result<bool, String> {
+    validate_job_id(&job_id)?;
+    Ok(app.state::<ToolboxState>().request_cancel(&job_id))
 }
 
 #[cfg(test)]
@@ -627,5 +837,69 @@ mod tests {
         let token = format!("unit-test-{}", std::process::id());
         assert!(consume_token(&token).is_ok());
         assert!(consume_token(&token).unwrap_err().contains("已使用"));
+    }
+
+    #[test]
+    fn rejects_unsafe_job_ids() {
+        assert!(validate_job_id("job-abc_123").is_ok());
+        assert!(validate_job_id("").is_err());
+        assert!(validate_job_id("..\\evil").is_err());
+        assert!(validate_job_id("job/1").is_err());
+        assert!(validate_job_id("job 1").is_err());
+        assert!(validate_job_id(&"a".repeat(65)).is_err());
+    }
+
+    #[test]
+    fn cancel_writes_marker_and_marks_job() {
+        let temp = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join(format!("toolbox-cancel-{}", std::process::id()));
+        std::fs::create_dir_all(&temp).ok();
+        let marker = temp.join("job.cancel");
+        let _ = std::fs::remove_file(&marker);
+
+        let state = ToolboxState::default();
+        assert!(!state.request_cancel("job-missing"));
+        state.register(
+            "job-1",
+            ToolJob {
+                tool_id: "omni_zip".into(),
+                action: "apply".into(),
+                marker: marker.clone(),
+                cancelled: false,
+            },
+        );
+        assert!(!state.is_cancelled("job-1"));
+        assert!(state.request_cancel("job-1"));
+        assert!(state.is_cancelled("job-1"));
+        assert!(marker.is_file(), "取消必须落下标记文件供工具进程发现");
+
+        state.finish("job-1");
+        assert!(!state.is_cancelled("job-1"));
+        assert!(!state.request_cancel("job-1"));
+
+        std::fs::remove_dir_all(&temp).ok();
+    }
+
+    #[test]
+    fn progress_payload_fills_defaults() {
+        let payload = progress_payload(
+            "job-1",
+            "omni_zip",
+            "apply",
+            &serde_json::json!({"phase": "compress", "done": 3, "total": 10, "message": "处理中"}),
+        );
+        assert_eq!(payload.job_id, "job-1");
+        assert_eq!(payload.tool_id, "omni_zip");
+        assert_eq!(payload.action, "apply");
+        assert_eq!(payload.phase, "compress");
+        assert_eq!(payload.done, 3);
+        assert_eq!(payload.total, 10);
+        assert_eq!(payload.message, "处理中");
+
+        let empty = progress_payload("job-2", "omni_zip", "apply", &Value::Null);
+        assert_eq!(empty.phase, "");
+        assert_eq!(empty.done, 0);
+        assert_eq!(empty.total, 0);
     }
 }

@@ -253,4 +253,22 @@ mod tests {
         assert!(!is_residue(""));
         assert!(is_residue("Z:\\definitely-not-existing-system-lens"));
     }
+
+    /// 卸载入口必须先被键校验挡住：非白名单位置、非法子键、以及读不到的子键
+    /// 都应该在拉起任何进程之前失败，界面上才有明确的失败原因可显示。
+    #[test]
+    #[cfg(windows)]
+    fn refuses_to_launch_uninstallers_outside_the_whitelist() {
+        let outside = launch_uninstall("HKLM:\\SOFTWARE\\Run|Bad").unwrap_err();
+        assert!(outside.contains("不允许的卸载注册表位置"), "{outside}");
+
+        let broken = launch_uninstall("no-separator").unwrap_err();
+        assert!(broken.contains("格式无效"), "{broken}");
+
+        let missing = launch_uninstall(
+            "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall|SystemLens-Not-Installed",
+        )
+        .unwrap_err();
+        assert!(missing.contains("无法读取卸载项"), "{missing}");
+    }
 }

@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import {
   ActionIcon,
   Alert,
@@ -10,6 +17,7 @@ import {
   Divider,
   Group,
   Loader,
+  Menu,
   Modal,
   NumberInput,
   PasswordInput,
@@ -27,10 +35,15 @@ import {
 } from "@mantine/core";
 import {
   IconAlertCircle,
+  IconArrowRight,
+  IconCamera,
+  IconDownload,
+  IconHistory,
+  IconInfoCircle,
   IconKey,
   IconLock,
+  IconMessageCircle,
   IconRefresh,
-  IconRobot,
   IconSend,
   IconShieldCheck,
   IconSparkles,
@@ -137,6 +150,43 @@ const formatBytes = (value: number | null | undefined) => {
   if (value >= 1024) return `${(value / 1024).toFixed(0)} KB`;
   return `${value} B`;
 };
+
+function PanelHeading({
+  icon,
+  color,
+  title,
+  description,
+  right,
+}: {
+  icon: ReactNode;
+  color: string;
+  title: string;
+  description: string;
+  right?: ReactNode;
+}) {
+  return (
+    <Group justify="space-between" align="flex-start" wrap="nowrap" gap="sm">
+      <Group gap="sm" align="flex-start" wrap="nowrap">
+        <ThemeIcon
+          size={34}
+          radius="md"
+          variant="light"
+          color={color}
+          style={{ flexShrink: 0 }}
+        >
+          {icon}
+        </ThemeIcon>
+        <Box>
+          <Title order={4}>{title}</Title>
+          <Text size="sm" c="dimmed" mt={2} lh={1.55}>
+            {description}
+          </Text>
+        </Box>
+      </Group>
+      {right}
+    </Group>
+  );
+}
 
 function FindingCard({
   finding,
@@ -621,175 +671,249 @@ export default function AiPanel({
 
         <Tabs.Panel value="analysis" pt="md">
           <Stack gap="lg">
-            <Card className="glass-card" radius="lg">
-              <Group justify="space-between" align="flex-start">
-                <Box>
-                  <Title order={3}>本机健康快照</Title>
-                  <Text size="sm" c="dimmed" mt={4}>
-                    快照包含系统、温度、SMART、驱动、诊断和 24 小时趋势事实；生成过程只读且在本机完成。
-                  </Text>
-                </Box>
-                <Badge color={aiEnabled ? "teal" : "gray"} variant="light">
-                  {aiEnabled ? "AI 已启用" : "AI 已关闭"}
-                </Badge>
-              </Group>
-
-              <Group mt="md">
-                <Button
-                  leftSection={<IconRefresh size={16} />}
-                  loading={building}
-                  onClick={() => void refreshSnapshot()}
-                >
-                  生成本机健康快照
-                </Button>
-                <Button
-                  variant="light"
-                  leftSection={<IconLock size={16} />}
-                  disabled={!snapshot}
-                  onClick={() => void openPreview()}
-                >
-                  预览将发送的数据
-                </Button>
-              </Group>
-
-              {snapshotError && (
-                <Alert color="red" mt="md" icon={<IconAlertCircle />}>
-                  {snapshotError}
-                </Alert>
-              )}
-
-              {building && (
-                <Alert color="blue" mt="md" icon={<Loader size="sm" />}>
-                  正在采集系统、传感器、驱动与诊断数据，通常需要数秒…
-                </Alert>
-              )}
-
-              {snapshot && (
-                <Box mt="md">
-                  <Group gap="xs">
-                    <Badge variant="light" color="indigo">
-                      快照 {snapshot.snapshotId.slice(0, 18)}
-                    </Badge>
-                    <Badge variant="outline">{formatTime(snapshot.capturedAtUnixMs)}</Badge>
-                    <Badge variant="outline">{snapshot.facts.length} 条事实</Badge>
-                    {snapshot.excludedFactCount > 0 && (
-                      <Badge color="orange" variant="light">
-                        已排除 {snapshot.excludedFactCount} 条敏感事实
-                      </Badge>
-                    )}
-                  </Group>
-                  <Group gap="xs" mt="sm">
-                    {snapshot.sources.map((source) => (
-                      <Tooltip key={source.id} label={source.detail} multiline maw={360}>
-                        <Badge color={source.ok ? "teal" : "red"} variant="dot">
-                          {source.label}
-                        </Badge>
-                      </Tooltip>
-                    ))}
-                  </Group>
-                  {snapshot.limitations.length > 0 && (
-                    <Alert
-                      color="yellow"
+            <SimpleGrid
+              cols={{ base: 1, xl: 2 }}
+              spacing="lg"
+              style={{ alignItems: "start" }}
+            >
+              <Card className="glass-card" radius="lg">
+                <PanelHeading
+                  icon={<IconCamera size={19} />}
+                  color="indigo"
+                  title="本机健康快照"
+                  description="只读采集本机健康事实，生成过程全程不离开这台设备。"
+                  right={
+                    <Badge
+                      color={snapshot ? "teal" : "gray"}
                       variant="light"
-                      mt="sm"
-                      icon={<IconAlertCircle />}
-                      title="数据限制"
+                      style={{ flexShrink: 0 }}
                     >
-                      <Stack gap={2}>
-                        {snapshot.limitations.slice(0, 6).map((limitation, index) => (
-                          <Text key={`${limitation}-${index}`} size="xs">
-                            {limitation}
-                          </Text>
-                        ))}
-                      </Stack>
-                    </Alert>
-                  )}
-                </Box>
-              )}
-            </Card>
+                      {snapshot ? "已就绪" : "未生成"}
+                    </Badge>
+                  }
+                />
+
+                <Group mt="md" gap="xs">
+                  <Button
+                    leftSection={<IconRefresh size={16} />}
+                    loading={building}
+                    onClick={() => void refreshSnapshot()}
+                  >
+                    {snapshot ? "重新生成快照" : "生成本机健康快照"}
+                  </Button>
+                  <Tooltip
+                    label={snapshot ? "查看将要发送给模型的脱敏内容" : "生成快照后可预览"}
+                    withArrow
+                  >
+                    <Box>
+                      <Button
+                        variant="light"
+                        leftSection={<IconLock size={16} />}
+                        disabled={!snapshot}
+                        onClick={() => void openPreview()}
+                      >
+                        预览将发送的数据
+                      </Button>
+                    </Box>
+                  </Tooltip>
+                </Group>
+
+                {!snapshot && !building && !snapshotError && (
+                  <Box mt="md">
+                    <Group gap={6} wrap="nowrap" align="flex-start">
+                      <IconInfoCircle
+                        size={15}
+                        style={{ flexShrink: 0, marginTop: 2, opacity: 0.55 }}
+                      />
+                      <Text size="xs" c="dimmed" lh={1.6}>
+                        尚未生成快照，将采集以下事实：
+                      </Text>
+                    </Group>
+                    <Group gap={6} mt="xs">
+                      {["系统指标", "温度", "SMART", "驱动", "诊断计数", "24 小时趋势"].map(
+                        (item) => (
+                          <Badge key={item} size="sm" variant="light" color="gray">
+                            {item}
+                          </Badge>
+                        ),
+                      )}
+                    </Group>
+                    <Text size="xs" c="dimmed" mt="xs">
+                      生成后会显示采集时间、事实数量以及每个数据源的健康状态。
+                    </Text>
+                  </Box>
+                )}
+
+                {snapshotError && (
+                  <Alert color="red" mt="md" icon={<IconAlertCircle />}>
+                    {snapshotError}
+                  </Alert>
+                )}
+
+                {building && (
+                  <Alert color="blue" mt="md" icon={<Loader size="sm" />}>
+                    正在采集系统、传感器、驱动与诊断数据，通常需要数秒…
+                  </Alert>
+                )}
+
+                {snapshot && (
+                  <Box mt="md">
+                    <Group gap="xs">
+                      <Badge variant="light" color="indigo">
+                        快照 {snapshot.snapshotId.slice(0, 18)}
+                      </Badge>
+                      <Badge variant="outline">{formatTime(snapshot.capturedAtUnixMs)}</Badge>
+                      <Badge variant="outline">{snapshot.facts.length} 条事实</Badge>
+                      {snapshot.excludedFactCount > 0 && (
+                        <Badge color="orange" variant="light">
+                          已排除 {snapshot.excludedFactCount} 条敏感事实
+                        </Badge>
+                      )}
+                    </Group>
+                    <Group gap="xs" mt="sm">
+                      {snapshot.sources.map((source) => (
+                        <Tooltip key={source.id} label={source.detail} multiline maw={360}>
+                          <Badge color={source.ok ? "teal" : "red"} variant="dot">
+                            {source.label}
+                          </Badge>
+                        </Tooltip>
+                      ))}
+                    </Group>
+                    {snapshot.limitations.length > 0 && (
+                      <Alert
+                        color="yellow"
+                        variant="light"
+                        mt="sm"
+                        icon={<IconAlertCircle />}
+                        title="数据限制"
+                      >
+                        <Stack gap={2}>
+                          {snapshot.limitations.slice(0, 6).map((limitation, index) => (
+                            <Text key={`${limitation}-${index}`} size="xs">
+                              {limitation}
+                            </Text>
+                          ))}
+                        </Stack>
+                      </Alert>
+                    )}
+                  </Box>
+                )}
+              </Card>
+
+              <Card className="glass-card" radius="lg">
+                <PanelHeading
+                  icon={<IconSparkles size={19} />}
+                  color="grape"
+                  title="AI 健康解读"
+                  description="每次最多输出 3 个重点问题，结论必须引用本地事实；数据不足时会明确说明。"
+                  right={
+                    <Badge
+                      color={aiEnabled ? "teal" : "gray"}
+                      variant="light"
+                      style={{ flexShrink: 0 }}
+                    >
+                      {aiEnabled ? "已启用" : "默认关闭"}
+                    </Badge>
+                  }
+                />
+
+                {!aiEnabled ? (
+                  <Alert
+                    color="gray"
+                    variant="light"
+                    mt="md"
+                    icon={<IconLock size={18} />}
+                  >
+                    <Text size="sm" fw={600}>
+                      启用后才会发送脱敏事实
+                    </Text>
+                    <Text size="sm" c="dimmed" mt={4} lh={1.6}>
+                      当前不会向任何模型服务发送数据；快照、本地规则诊断、原始指标和报告仍然完全可用。
+                    </Text>
+                    <Group mt="sm" gap="sm">
+                      <Button
+                        size="xs"
+                        rightSection={<IconArrowRight size={14} />}
+                        onClick={() => setTab("settings")}
+                      >
+                        前往模型与隐私设置
+                      </Button>
+                      <Text size="xs" c="dimmed">
+                        密钥经 Windows DPAPI 加密保存
+                      </Text>
+                    </Group>
+                  </Alert>
+                ) : (
+                  <>
+                    <Group mt="md" gap="xs">
+                      <Button
+                        leftSection={<IconSparkles size={16} />}
+                        loading={asking}
+                        disabled={!snapshot}
+                        onClick={() => void analyze(null)}
+                      >
+                        让 AI 解读本机健康
+                      </Button>
+                      {asking && (
+                        <Button
+                          variant="subtle"
+                          color="red"
+                          leftSection={<IconX size={16} />}
+                          loading={cancelling}
+                          onClick={() => void cancel()}
+                        >
+                          取消
+                        </Button>
+                      )}
+                    </Group>
+                    {!snapshot && (
+                      <Text size="xs" c="dimmed" mt="xs">
+                        请先生成本机健康快照，再开始解读。
+                      </Text>
+                    )}
+                    {asking && (
+                      <Alert color="blue" mt="md" icon={<Loader size="sm" />} title="AI 正在生成">
+                        <Text size="sm">{streamMessage || "正在等待模型响应…"}</Text>
+                        <Text size="xs" c="dimmed" mt={4}>
+                          已接收 {streamChars.toLocaleString()} 个字符。可以随时取消。
+                        </Text>
+                      </Alert>
+                    )}
+                  </>
+                )}
+
+                {analysisError && (
+                  <Alert
+                    color="red"
+                    mt="md"
+                    icon={<IconAlertCircle />}
+                    withCloseButton
+                    onClose={() => setAnalysisError(null)}
+                  >
+                    {analysisError}
+                  </Alert>
+                )}
+              </Card>
+            </SimpleGrid>
 
             {snapshot && snapshot.localFindings.length > 0 && (
               <Card className="glass-card" radius="lg">
-                <Group justify="space-between">
-                  <Box>
-                    <Title order={4}>本地规则诊断</Title>
-                    <Text size="sm" c="dimmed" mt={4}>
-                      由本地阈值和 SMART/告警规则判定，不依赖 AI；模型不可用时仍然有效。
-                    </Text>
-                  </Box>
-                  <Badge variant="light" color="gray">
-                    {snapshot.localFindings.length} 项
-                  </Badge>
-                </Group>
+                <PanelHeading
+                  icon={<IconShieldCheck size={19} />}
+                  color="teal"
+                  title="本地规则诊断"
+                  description="由本地阈值和 SMART / 告警规则判定，不依赖 AI；模型不可用时仍然有效。"
+                  right={
+                    <Badge variant="light" color="gray" style={{ flexShrink: 0 }}>
+                      {snapshot.localFindings.length} 项
+                    </Badge>
+                  }
+                />
                 <Box mt="md">
                   <FindingsList findings={snapshot.localFindings} facts={factsById} historical={false} />
                 </Box>
               </Card>
             )}
-
-            <Card className="glass-card" radius="lg">
-              <Group justify="space-between" align="flex-start">
-                <Box>
-                  <Title order={4}>AI 健康解读</Title>
-                  <Text size="sm" c="dimmed" mt={4}>
-                    每次解读最多输出 3 个重点问题；结论必须引用本地事实，数据不足时会明确说明。
-                  </Text>
-                </Box>
-                <ThemeIcon size={40} radius="xl" variant="light" color="grape">
-                  <IconRobot size={22} />
-                </ThemeIcon>
-              </Group>
-
-              {!aiEnabled && (
-                <Alert color="gray" mt="md" icon={<IconLock />} title="AI 默认关闭">
-                  启用后才会向所配置的模型服务发送脱敏事实。关闭状态下，快照、本地规则诊断、原始指标和报告完全可用。
-                  <Button
-                    size="xs"
-                    variant="light"
-                    mt="sm"
-                    onClick={() => setTab("settings")}
-                  >
-                    前往模型与隐私设置
-                  </Button>
-                </Alert>
-              )}
-
-              <Group mt="md">
-                <Button
-                  leftSection={<IconSparkles size={16} />}
-                  loading={asking}
-                  disabled={!snapshot || !aiEnabled}
-                  onClick={() => void analyze(null)}
-                >
-                  让 AI 解读本机健康
-                </Button>
-                <Button
-                  variant="light"
-                  color="red"
-                  leftSection={<IconX size={16} />}
-                  disabled={!asking}
-                  loading={cancelling}
-                  onClick={() => void cancel()}
-                >
-                  取消
-                </Button>
-              </Group>
-
-              {asking && (
-                <Alert color="blue" mt="md" icon={<Loader size="sm" />} title="AI 正在生成">
-                  <Text size="sm">{streamMessage || "正在等待模型响应…"}</Text>
-                  <Text size="xs" c="dimmed" mt={4}>
-                    已接收 {streamChars.toLocaleString()} 个字符。可以随时取消。
-                  </Text>
-                </Alert>
-              )}
-
-              {analysisError && (
-                <Alert color="red" mt="md" icon={<IconAlertCircle />} withCloseButton onClose={() => setAnalysisError(null)}>
-                  {analysisError}
-                </Alert>
-              )}
-            </Card>
 
             {entries.length > 0 && (
               <Stack gap="md">
@@ -1043,90 +1167,121 @@ export default function AiPanel({
             )}
 
             <Card className="glass-card" radius="lg">
-              <Text fw={700}>围绕当前快照追问</Text>
-              <Text size="xs" c="dimmed" mt={4}>
-                追问只绑定当前快照 ID；切换或重新生成快照后，旧回答会标记为历史结果。
-              </Text>
-              <Group mt="sm" align="flex-end">
-                <Textarea
-                  style={{ flex: 1 }}
-                  minRows={2}
-                  maxRows={5}
-                  autosize
-                  placeholder="例如：磁盘是否应该更换？游戏闪退更可能是温度、驱动还是内存？"
-                  value={question}
-                  onChange={(event) => setQuestion(event.currentTarget.value)}
-                  disabled={!snapshot}
-                />
-                <Button
-                  leftSection={<IconSend size={16} />}
-                  disabled={!snapshot || !aiEnabled || asking || !question.trim()}
-                  onClick={() => {
-                    const value = question.trim();
-                    if (!value) return;
-                    setQuestion("");
-                    void analyze(value);
-                  }}
-                >
-                  提问
-                </Button>
-              </Group>
-            </Card>
+              <PanelHeading
+                icon={<IconMessageCircle size={19} />}
+                color="teal"
+                title="围绕当前快照追问"
+                description="追问只绑定当前快照 ID；切换或重新生成快照后，旧回答会标记为历史结果。"
+              />
 
-            <Group justify="flex-end" gap="xs">
-              <Button
-                size="xs"
-                variant="light"
-                disabled={entries.length === 0 && sessions.length === 0}
-                onClick={() => exportAiReport("md")}
-              >
-                导出 AI 报告（Markdown）
-              </Button>
-              <Button
-                size="xs"
-                variant="light"
-                disabled={entries.length === 0 && sessions.length === 0}
-                onClick={() => exportAiReport("json")}
-              >
-                导出 AI 报告（JSON）
-              </Button>
-            </Group>
-
-            <Card className="glass-card" radius="lg">
-              <Group justify="space-between" align="flex-start">
-                <Box>
-                  <Text fw={700}>本地会话记录</Text>
-                  <Text size="xs" c="dimmed" mt={4}>
-                    AI 回答默认保存在本机数据目录（最多 50 条，不包含原始事实和 API 密钥），可逐条删除或全部清除。
+              {!snapshot ? (
+                <Text size="sm" c="dimmed" mt="md">
+                  生成快照后，可以围绕它的诊断事实继续追问。
+                </Text>
+              ) : !aiEnabled ? (
+                <Group gap="xs" mt="md">
+                  <IconLock size={15} style={{ opacity: 0.6 }} />
+                  <Text size="sm" c="dimmed">
+                    AI 解读已关闭，启用后可围绕当前快照追问。
                   </Text>
-                </Box>
-                {sessions.length > 0 && (
                   <Button
-                    size="xs"
+                    size="compact-xs"
                     variant="light"
-                    color="red"
-                    loading={sessionsBusy}
-                    onClick={async () => {
-                      if (!window.confirm("确定要清除全部本地 AI 会话记录吗？此操作不可撤销。")) {
-                        return;
-                      }
-                      setSessionsBusy(true);
-                      try {
-                        await clearAiSessions();
-                        setSessions([]);
-                      } catch (reason) {
-                        setAnalysisError(
-                          reason instanceof Error ? reason.message : String(reason),
-                        );
-                      } finally {
-                        setSessionsBusy(false);
-                      }
+                    onClick={() => setTab("settings")}
+                  >
+                    去启用
+                  </Button>
+                </Group>
+              ) : (
+                <Group mt="md" align="flex-end" gap="sm" wrap="nowrap">
+                  <Textarea
+                    style={{ flex: 1 }}
+                    minRows={2}
+                    maxRows={5}
+                    autosize
+                    placeholder="例如：磁盘是否应该更换？游戏闪退更可能是温度、驱动还是内存？"
+                    value={question}
+                    onChange={(event) => setQuestion(event.currentTarget.value)}
+                    disabled={asking}
+                  />
+                  <Button
+                    leftSection={<IconSend size={16} />}
+                    disabled={asking || !question.trim()}
+                    onClick={() => {
+                      const value = question.trim();
+                      if (!value) return;
+                      setQuestion("");
+                      void analyze(value);
                     }}
                   >
-                    清除全部
+                    提问
                   </Button>
-                )}
-              </Group>
+                </Group>
+              )}
+            </Card>
+
+            <Card className="glass-card" radius="lg">
+              <PanelHeading
+                icon={<IconHistory size={19} />}
+                color="gray"
+                title="本地会话记录"
+                description="AI 回答默认保存在本机数据目录（最多 50 条，不包含原始事实和 API 密钥），可逐条删除或全部清除。"
+                right={
+                  <Group gap="xs" wrap="nowrap" style={{ flexShrink: 0 }}>
+                    {sessions.length > 0 && (
+                      <Badge variant="light" color="gray" size="sm">
+                        {sessions.length}
+                      </Badge>
+                    )}
+                    <Menu position="bottom-end" withArrow>
+                      <Menu.Target>
+                        <Button
+                          size="xs"
+                          variant="light"
+                          leftSection={<IconDownload size={14} />}
+                          disabled={entries.length === 0 && sessions.length === 0}
+                        >
+                          导出报告
+                        </Button>
+                      </Menu.Target>
+                      <Menu.Dropdown>
+                        <Menu.Item onClick={() => exportAiReport("md")}>
+                          Markdown 报告
+                        </Menu.Item>
+                        <Menu.Item onClick={() => exportAiReport("json")}>
+                          JSON 报告
+                        </Menu.Item>
+                      </Menu.Dropdown>
+                    </Menu>
+                    {sessions.length > 0 && (
+                      <Button
+                        size="xs"
+                        variant="light"
+                        color="red"
+                        loading={sessionsBusy}
+                        onClick={async () => {
+                          if (!window.confirm("确定要清除全部本地 AI 会话记录吗？此操作不可撤销。")) {
+                            return;
+                          }
+                          setSessionsBusy(true);
+                          try {
+                            await clearAiSessions();
+                            setSessions([]);
+                          } catch (reason) {
+                            setAnalysisError(
+                              reason instanceof Error ? reason.message : String(reason),
+                            );
+                          } finally {
+                            setSessionsBusy(false);
+                          }
+                        }}
+                      >
+                        清除全部
+                      </Button>
+                    )}
+                  </Group>
+                }
+              />
               {sessions.length === 0 ? (
                 <Text size="sm" c="dimmed" mt="sm">
                   还没有本地 AI 会话记录。完成一次解读后会自动保存。

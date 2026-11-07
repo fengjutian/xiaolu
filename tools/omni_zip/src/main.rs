@@ -11,6 +11,8 @@ const ACTION: &str = "apply";
 const MAX_FILES: usize = 20_000;
 const MAX_TOTAL_BYTES: u64 = 8 * 1024 * 1024 * 1024;
 const MAX_ENTRY_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+/// 超过 4 GiB 的条目必须走 ZIP64，否则写入时会被库直接报错。
+const ZIP64_THRESHOLD: u64 = u32::MAX as u64;
 
 /// 拒绝写入这些系统目录，避免误把压缩包解到系统位置。
 const BLOCKED_ROOTS: [&str; 4] = [
@@ -210,6 +212,65 @@ fn scan_sources(sources: &[PathBuf]) -> Result<(usize, u64), ToolError> {
     Ok((files, bytes))
 }
 
+/// 进度回报步长：条目多时按比例抽样，最多约 200 次，避免刷屏拖慢压缩。
+fn progress_step(total: usize) -> usize {
+    let step = total / 200;
+    if step < 1 {
+        1
+    } else {
+        step
+    }
+}
+
+/// 展开源路径清单：(绝对路径, 压缩包内条目名)。
+/// 一次遍历拿到完整清单，进度条才能给出准确总数，也能在写盘前就判定是否超限。
+fn collect_entries(sources: &[PathBuf]) -> Result<Vec<(PathBuf, String)>, ToolError> {
+    let mut entries: Vec<(PathBuf, String)> = Vec::new();
+    let mut bytes = 0u64;
+    for source in sources {
+        let base = source.parent().unwrap_or(source.as_path());
+        let candidates: Vec<PathBuf> = if source.is_file() {
+            vec![source.clone()]
+        } else {
+            WalkDir::new(source)
+                .follow_links(false)
+                .min_depth(1)
+                .into_iter()
+                .filter_map(Result::ok)
+                .filter(|entry| !entry.path_is_symlink() && entry.file_type().is_file())
+                .map(|entry| entry.path().to_path_buf())
+                .collect()
+        };
+        for path in candidates {
+            let Ok(metadata) = fs::metadata(&path) else {
+                continue;
+            };
+            let name = path
+                .strip_prefix(base)
+                .unwrap_or(&path)
+                .components()
+                .map(|component| component.as_os_str().to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .join("/");
+            bytes = bytes.saturating_add(metadata.len());
+            entries.push((path, name));
+            if entries.len() > MAX_FILES {
+                return Err(ToolError::new(
+                    "INVALID_INPUT",
+                    format!("文件数超过上限（{}）。", MAX_FILES),
+                ));
+            }
+            if bytes > MAX_TOTAL_BYTES {
+                return Err(ToolError::new(
+                    "INVALID_INPUT",
+                    format!("总大小超过上限（{}）。", human_bytes(MAX_TOTAL_BYTES)),
+                ));
+            }
+        }
+    }
+    Ok(entries)
+}
+
 fn preview(parameters: &Value) -> Result<Value, ToolError> {
     let plan = plan_from(parameters)?;
     let token = tool_protocol::issue_token(ACTION, &plan.digest())?;
@@ -304,64 +365,78 @@ fn compress(plan: &Plan) -> Result<Value, ToolError> {
             ));
         }
     }
+    let entries = collect_entries(&plan.sources)?;
+    let total = entries.len();
+    let step = progress_step(total);
+
     let file = File::create(&plan.archive)
         .map_err(|error| ToolError::new("INTERNAL", format!("无法创建压缩包：{error}")))?;
     let mut writer = ZipWriter::new(file);
-    let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
     let mut files = 0usize;
     let mut bytes = 0u64;
 
-    for source in &plan.sources {
-        let base = source.parent().unwrap_or(source.as_path());
-        let entries: Vec<PathBuf> = if source.is_file() {
-            vec![source.clone()]
-        } else {
-            WalkDir::new(source)
-                .follow_links(false)
-                .min_depth(1)
-                .into_iter()
-                .filter_map(Result::ok)
-                .filter(|entry| !entry.path_is_symlink() && entry.file_type().is_file())
-                .map(|entry| entry.path().to_path_buf())
-                .collect()
+    for (index, (path, name)) in entries.iter().enumerate() {
+        if tool_protocol::cancel_requested() {
+            // 先释放文件句柄再删除：Windows 下仍被打开的文件删不掉。
+            drop(writer);
+            let _ = fs::remove_file(&plan.archive);
+            return Err(tool_protocol::cancelled_error(
+                "压缩已取消，未完成的压缩包已删除。",
+            ));
+        }
+        let metadata = match fs::metadata(path) {
+            Ok(value) => value,
+            Err(_) => continue,
         };
-        for path in entries {
-            let relative = path.strip_prefix(base).unwrap_or(&path);
-            let name = relative
-                .components()
-                .map(|component| component.as_os_str().to_string_lossy().into_owned())
-                .collect::<Vec<_>>()
-                .join("/");
-            let metadata = match fs::metadata(&path) {
-                Ok(value) => value,
-                Err(_) => continue,
-            };
-            files += 1;
-            if files > MAX_FILES || bytes.saturating_add(metadata.len()) > MAX_TOTAL_BYTES {
+        files += 1;
+        bytes = bytes.saturating_add(metadata.len());
+        if files > MAX_FILES || bytes > MAX_TOTAL_BYTES {
+            drop(writer);
+            let _ = fs::remove_file(&plan.archive);
+            return Err(ToolError::new(
+                "INVALID_INPUT",
+                "压缩过程中超过文件数或大小上限，已删除未完成的压缩包。",
+            ));
+        }
+        let options = SimpleFileOptions::default()
+            .compression_method(CompressionMethod::Deflated)
+            .large_file(metadata.len() > ZIP64_THRESHOLD);
+        writer
+            .start_file(name.clone(), options)
+            .map_err(|error| ToolError::new("INTERNAL", format!("无法写入条目：{error}")))?;
+        let mut input = File::open(path)
+            .map_err(|error| ToolError::new("INTERNAL", format!("无法读取：{error}")))?;
+        let mut buffer = [0u8; 64 * 1024];
+        let mut chunks = 0u64;
+        loop {
+            let read = input
+                .read(&mut buffer)
+                .map_err(|error| ToolError::new("INTERNAL", format!("读取失败：{error}")))?;
+            if read == 0 {
+                break;
+            }
+            writer
+                .write_all(&buffer[..read])
+                .map_err(|error| ToolError::new("INTERNAL", format!("写入失败：{error}")))?;
+            chunks += 1;
+            // 大文件也要能及时响应取消：每 1 MiB 检查一次标记文件。
+            if chunks % 16 == 0 && tool_protocol::cancel_requested() {
+                drop(writer);
                 let _ = fs::remove_file(&plan.archive);
-                return Err(ToolError::new(
-                    "INVALID_INPUT",
-                    "压缩过程中超过文件数或大小上限，已删除未完成的压缩包。",
+                return Err(tool_protocol::cancelled_error(
+                    "压缩已取消，未完成的压缩包已删除。",
                 ));
             }
-            bytes = bytes.saturating_add(metadata.len());
-            writer
-                .start_file(name, options)
-                .map_err(|error| ToolError::new("INTERNAL", format!("无法写入条目：{error}")))?;
-            let mut input = File::open(&path)
-                .map_err(|error| ToolError::new("INTERNAL", format!("无法读取：{error}")))?;
-            let mut buffer = [0u8; 64 * 1024];
-            loop {
-                let read = input
-                    .read(&mut buffer)
-                    .map_err(|error| ToolError::new("INTERNAL", format!("读取失败：{error}")))?;
-                if read == 0 {
-                    break;
-                }
-                writer
-                    .write_all(&buffer[..read])
-                    .map_err(|error| ToolError::new("INTERNAL", format!("写入失败：{error}")))?;
-            }
+        }
+        // 进度按「已处理条目」推进：跳过的条目同样要计数，否则界面会一直停在原地。
+        let done = index + 1;
+        if done == 1 || done % step == 0 || done == total {
+            tool_protocol::emit_progress(json!({
+                "phase": "compress",
+                "done": done,
+                "total": total,
+                "message": format!("已压缩 {done}/{total} 个文件"),
+            }));
         }
     }
     writer
@@ -389,6 +464,80 @@ fn compress(plan: &Plan) -> Result<Value, ToolError> {
     ))
 }
 
+/// 处理压缩包里的单个条目。
+///
+/// 跳过的条目（目录 / 已存在 / 超限 / 不安全）同样要计入进度：
+/// 否则目标文件已存在时进度条会一直停在原地，看起来像卡死。
+#[allow(clippy::too_many_arguments)]
+fn extract_entry(
+    archive: &mut ZipArchive<File>,
+    index: usize,
+    destination: &Path,
+    overwrite: bool,
+    files: &mut usize,
+    bytes: &mut u64,
+    skipped: &mut usize,
+    unsafe_entries: &mut usize,
+) -> Result<(), ToolError> {
+    let mut entry = archive
+        .by_index(index)
+        .map_err(|error| ToolError::new("INTERNAL", format!("读取条目失败：{error}")))?;
+    if entry.is_dir() {
+        return Ok(());
+    }
+    let Some(relative) = entry.enclosed_name() else {
+        *unsafe_entries += 1;
+        return Ok(());
+    };
+    if entry.size() > MAX_ENTRY_BYTES {
+        *skipped += 1;
+        return Ok(());
+    }
+    *bytes = bytes.saturating_add(entry.size());
+    if *bytes > MAX_TOTAL_BYTES || *files >= MAX_FILES {
+        return Err(ToolError::new(
+            "INVALID_INPUT",
+            "解压超过文件数或大小上限，已停止。",
+        ));
+    }
+    let target = destination.join(&relative);
+    if !target.starts_with(destination) {
+        *unsafe_entries += 1;
+        return Ok(());
+    }
+    if target.exists() && !overwrite {
+        *skipped += 1;
+        return Ok(());
+    }
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| ToolError::new("INTERNAL", format!("无法创建目录：{error}")))?;
+    }
+    let mut output = File::create(&target)
+        .map_err(|error| ToolError::new("INTERNAL", format!("无法写入文件：{error}")))?;
+    let mut buffer = [0u8; 64 * 1024];
+    let mut chunks = 0u64;
+    loop {
+        let read = entry
+            .read(&mut buffer)
+            .map_err(|error| ToolError::new("INTERNAL", format!("读取条目失败：{error}")))?;
+        if read == 0 {
+            break;
+        }
+        output
+            .write_all(&buffer[..read])
+            .map_err(|error| ToolError::new("INTERNAL", format!("写入文件失败：{error}")))?;
+        chunks += 1;
+        if chunks % 16 == 0 && tool_protocol::cancel_requested() {
+            return Err(tool_protocol::cancelled_error(&format!(
+                "解压已取消，已写出 {files} 个文件（已解出的文件保留）。"
+            )));
+        }
+    }
+    *files += 1;
+    Ok(())
+}
+
 fn extract(plan: &Plan) -> Result<Value, ToolError> {
     fs::create_dir_all(&plan.destination)
         .map_err(|error| ToolError::new("INTERNAL", format!("无法创建解压目录：{error}")))?;
@@ -405,57 +554,36 @@ fn extract(plan: &Plan) -> Result<Value, ToolError> {
     let mut bytes = 0u64;
     let mut skipped = 0usize;
     let mut unsafe_entries = 0usize;
+    let total = archive.len();
+    let step = progress_step(total);
 
     for index in 0..archive.len() {
-        let mut entry = archive
-            .by_index(index)
-            .map_err(|error| ToolError::new("INTERNAL", format!("读取条目失败：{error}")))?;
-        if entry.is_dir() {
-            continue;
+        if tool_protocol::cancel_requested() {
+            // 已解出的文件不回收：覆盖模式下它们可能本来就是用户的老文件，
+            // 删掉反而会造成数据丢失。只如实汇报已写出的数量。
+            return Err(tool_protocol::cancelled_error(&format!(
+                "解压已取消，已写出 {files} 个文件（已解出的文件保留）。"
+            )));
         }
-        let Some(relative) = entry.enclosed_name() else {
-            unsafe_entries += 1;
-            continue;
-        };
-        if entry.size() > MAX_ENTRY_BYTES {
-            skipped += 1;
-            continue;
+        extract_entry(
+            &mut archive,
+            index,
+            &canonical_destination,
+            plan.overwrite,
+            &mut files,
+            &mut bytes,
+            &mut skipped,
+            &mut unsafe_entries,
+        )?;
+        // 进度按「已处理条目」推进：跳过的条目同样要计数，否则界面会一直停在原地。
+        if index == 0 || (index + 1) % step == 0 || index + 1 == total {
+            tool_protocol::emit_progress(json!({
+                "phase": "extract",
+                "done": index + 1,
+                "total": total,
+                "message": format!("已处理 {}/{} 个条目", index + 1, total),
+            }));
         }
-        bytes = bytes.saturating_add(entry.size());
-        if bytes > MAX_TOTAL_BYTES || files >= MAX_FILES {
-            return Err(ToolError::new(
-                "INVALID_INPUT",
-                "解压超过文件数或大小上限，已停止。",
-            ));
-        }
-        let target = canonical_destination.join(&relative);
-        if !target.starts_with(&canonical_destination) {
-            unsafe_entries += 1;
-            continue;
-        }
-        if target.exists() && !plan.overwrite {
-            skipped += 1;
-            continue;
-        }
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|error| ToolError::new("INTERNAL", format!("无法创建目录：{error}")))?;
-        }
-        let mut output = File::create(&target)
-            .map_err(|error| ToolError::new("INTERNAL", format!("无法写入文件：{error}")))?;
-        let mut buffer = [0u8; 64 * 1024];
-        loop {
-            let read = entry
-                .read(&mut buffer)
-                .map_err(|error| ToolError::new("INTERNAL", format!("读取条目失败：{error}")))?;
-            if read == 0 {
-                break;
-            }
-            output
-                .write_all(&buffer[..read])
-                .map_err(|error| ToolError::new("INTERNAL", format!("写入文件失败：{error}")))?;
-        }
-        files += 1;
     }
 
     Ok(table(
@@ -564,6 +692,32 @@ fn main() {
 mod tests {
     use super::*;
 
+    /// 进度回调与取消标记都是进程级状态，调用 compress/extract 的测试必须串行。
+    static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn test_dir(name: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test-tmp")
+            .join(format!("{name}-{}", std::process::id()))
+    }
+
+    /// 捕获压缩/解压过程中上报的进度消息，返回 (调用结果, 进度消息)。
+    fn with_progress_capture<R, F: FnOnce() -> R>(body: F) -> (R, Vec<Value>) {
+        use std::sync::Arc;
+        let captured = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = captured.clone();
+        let previous = tool_protocol::set_progress_sink(Some(Arc::new(move |value: Value| {
+            sink.lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .push(value);
+        })));
+        let result = body();
+        tool_protocol::set_progress_sink(previous);
+        let messages = captured.lock().unwrap_or_else(|error| error.into_inner());
+        (result, messages.clone())
+    }
+
     #[test]
     fn rejects_relative_and_parent_paths() {
         assert!(absolute_path("relative\\file.zip").is_err());
@@ -632,6 +786,7 @@ mod tests {
 
     #[test]
     fn compresses_and_extracts_roundtrip() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner());
         let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("target")
             .join("test-tmp")
@@ -649,8 +804,14 @@ mod tests {
             destination: PathBuf::new(),
             overwrite: false,
         };
-        compress(&compress_plan).expect("compress");
+        let (_, messages) = with_progress_capture(|| compress(&compress_plan).expect("compress"));
         assert!(archive.is_file());
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.get("phase").and_then(Value::as_str) == Some("compress")),
+            "压缩过程必须上报进度"
+        );
 
         let extract_dir = base.join("extract");
         let extract_plan = Plan {
@@ -660,11 +821,121 @@ mod tests {
             destination: extract_dir.clone(),
             overwrite: false,
         };
-        extract(&extract_plan).expect("extract");
+        let (_, messages) = with_progress_capture(|| extract(&extract_plan).expect("extract"));
         assert_eq!(std::fs::read(extract_dir.join("a.txt")).unwrap(), b"alpha");
         assert_eq!(
             std::fs::read(extract_dir.join("sub").join("b.txt")).unwrap(),
             b"beta"
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.get("phase").and_then(Value::as_str) == Some("extract")),
+            "解压过程必须上报进度"
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn compress_reports_accurate_progress() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+        let base = test_dir("progress");
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join("src")).expect("create dir");
+        for name in ["a.txt", "b.txt", "c.txt"] {
+            std::fs::write(base.join("src").join(name), b"data").expect("write file");
+        }
+        std::fs::create_dir_all(base.join("out")).expect("create out dir");
+        let archive = base.join("out").join("out.zip");
+
+        let plan = Plan {
+            mode: "compress".into(),
+            sources: vec![base.join("src")],
+            archive: archive.clone(),
+            destination: PathBuf::new(),
+            overwrite: false,
+        };
+        let (_, messages) = with_progress_capture(|| compress(&plan).expect("compress"));
+        let last = messages.last().expect("至少一条进度");
+        assert_eq!(last.get("phase").and_then(Value::as_str), Some("compress"));
+        assert_eq!(last.get("total").and_then(Value::as_u64), Some(3));
+        assert_eq!(last.get("done").and_then(Value::as_u64), Some(3));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn extract_reports_progress_even_when_every_entry_is_skipped() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+        let base = test_dir("skip-progress");
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join("src")).expect("create dir");
+        std::fs::write(base.join("src").join("a.txt"), b"alpha").expect("write a");
+        std::fs::write(base.join("src").join("b.txt"), b"beta").expect("write b");
+
+        let archive = base.join("out.zip");
+        let compress_plan = Plan {
+            mode: "compress".into(),
+            sources: vec![base.join("src")],
+            archive: archive.clone(),
+            destination: PathBuf::new(),
+            overwrite: false,
+        };
+        let _ = with_progress_capture(|| compress(&compress_plan).expect("compress"));
+
+        let extract_dir = base.join("extract");
+        let extract_plan = Plan {
+            mode: "extract".into(),
+            sources: Vec::new(),
+            archive: archive.clone(),
+            destination: extract_dir.clone(),
+            overwrite: false,
+        };
+        let (_, first) = with_progress_capture(|| extract(&extract_plan).expect("extract"));
+        // 第二次解压时目标文件都已存在，条目会被全部跳过。
+        let (_, second) = with_progress_capture(|| extract(&extract_plan).expect("extract"));
+        assert!(!first.is_empty(), "首次解压必须上报进度");
+        assert!(
+            !second.is_empty(),
+            "条目全部被跳过时也必须上报进度，否则界面进度条会卡住"
+        );
+        let last = second.last().expect("progress");
+        assert_eq!(last.get("done").and_then(Value::as_u64), Some(2));
+        assert_eq!(last.get("total").and_then(Value::as_u64), Some(2));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn cancel_stops_compress_and_removes_partial_archive() {        let _guard = TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+        let base = test_dir("cancel");
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join("src")).expect("create dir");
+        std::fs::write(base.join("src").join("a.txt"), b"data").expect("write file");
+        std::fs::create_dir_all(base.join("out")).expect("create out dir");
+        let archive = base.join("out").join("out.zip");
+
+        // 宿主先落下取消标记，工具进入压缩前就会看到它。
+        let marker = base.join("job.cancel");
+        std::fs::write(&marker, b"1").expect("write marker");
+        std::env::set_var("SYSTEM_LENS_CANCEL_FILE", &marker);
+
+        let plan = Plan {
+            mode: "compress".into(),
+            sources: vec![base.join("src")],
+            archive: archive.clone(),
+            destination: PathBuf::new(),
+            overwrite: false,
+        };
+        let (outcome, _) = with_progress_capture(|| compress(&plan));
+        std::env::remove_var("SYSTEM_LENS_CANCEL_FILE");
+
+        let error = outcome.expect_err("取消后必须报错");
+        assert_eq!(error.code, "CANCELLED");
+        assert!(
+            !archive.exists(),
+            "取消后不允许留下半成品压缩包"
         );
 
         let _ = std::fs::remove_dir_all(&base);

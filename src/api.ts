@@ -1,4 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { BenchmarkPreflight, BenchmarkRecord, BenchmarkResult, CleanupPreview, DesktopOverview, DeviceDetails, DiagnosticReport, DirectoryListing, DriverAssessmentReport, DriverInventory, DriverUpdate, DuplicateScan, AppSettings, AppPaths, EventLogResult, EyeCareSettings, EyeCareStatus, HardwareDetails, LargeFileScan, LaunchEntry, NetworkDiagnosticReport, NotificationOutcome, NotificationSettings, ProcessInfo, NvmeHealthReport, ScheduledTaskInventory, SensorHistorySeries, SensorSettings, SensorSnapshot, SensorValue, SlimScan, SoftwareInventory, StartupItem, StorageDrive, StorageKind, StorageScan, SystemHistorySeries, SystemSnapshot, ToolDescriptor } from "./types";
 
 const gib = 1024 ** 3;
@@ -965,6 +966,7 @@ export async function runToolAction(
   action: string,
   confirmation?: string | null,
   parameters?: Record<string, unknown> | null,
+  jobId?: string | null,
 ): Promise<unknown> {
   if (!isTauri()) {
     if (toolId === "sys_clean") {
@@ -1048,7 +1050,41 @@ export async function runToolAction(
     action,
     confirmation: confirmation ?? null,
     parameters: parameters ?? null,
+    jobId: jobId ?? null,
   });
+}
+
+/** 工具执行进度事件：宿主把工具的 progress 消息转成界面事件。 */
+export interface ToolProgressEvent {
+  jobId: string;
+  toolId: string;
+  action: string;
+  phase: string;
+  done: number;
+  total: number;
+  message: string;
+}
+
+/** 生成任务 id：界面用它把进度事件关联到具体的一次执行。 */
+export function newToolJobId(): string {
+  const random = Math.random().toString(36).slice(2, 10);
+  return `job-${Date.now().toString(36)}-${random}`;
+}
+
+/** 订阅工具进度事件；浏览器演示模式不订阅。 */
+export async function listenToolProgress(
+  handler: (event: ToolProgressEvent) => void,
+): Promise<UnlistenFn> {
+  if (!isTauri()) return () => undefined;
+  return listen<ToolProgressEvent>("toolbox-progress", (event) =>
+    handler(event.payload),
+  );
+}
+
+/** 请求取消正在执行的工具任务。 */
+export async function cancelToolAction(jobId: string): Promise<boolean> {
+  if (!isTauri()) return false;
+  return invoke<boolean>("cancel_tool_action", { jobId });
 }
 
 export function isDesktopRuntime(): boolean {

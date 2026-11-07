@@ -1,15 +1,24 @@
 use hmac::{Hmac, Mac};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use std::cell::RefCell;
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// 确认令牌有效期：5 分钟。
 pub const TOKEN_TTL_MS: u64 = 5 * 60 * 1000;
 const TOKEN_SECRET_ENV: &str = "SYSTEM_LENS_TOKEN_SECRET";
 const STATE_DIR_ENV: &str = "SYSTEM_LENS_STATE_DIR";
+/// 取消标记文件：宿主下发路径，工具在长循环里轮询它是否存在。
+const CANCEL_FILE_ENV: &str = "SYSTEM_LENS_CANCEL_FILE";
+
+thread_local! {
+    /// 当前正在处理的请求 id：进度消息需要带上它，宿主据此归属事件。
+    static CURRENT_REQUEST: RefCell<Value> = RefCell::new(Value::Null);
+}
 
 #[derive(Debug)]
 pub struct ToolError {
@@ -213,6 +222,62 @@ pub fn append_audit_log(entry: Value) -> Result<(), ToolError> {
         .map_err(|error| ToolError::new("INTERNAL", format!("无法写入操作日志：{error}")))
 }
 
+/// 上报一次进度。进度与结果共用 stdout 行协议，宿主会把 progress 转成界面事件，
+/// 工具内部不需要关心界面与传输细节。未处于请求处理中时静默忽略。
+pub fn emit_progress(progress: Value) {
+    let sink = progress_slot()
+        .lock()
+        .ok()
+        .and_then(|guard| guard.clone());
+    if let Some(sink) = sink {
+        sink(progress);
+        return;
+    }
+    let id = CURRENT_REQUEST.with(|cell| cell.borrow().clone());
+    let mut stdout = std::io::stdout();
+    write(
+        &mut stdout,
+        json!({"type":"progress","id":id,"data":progress}),
+    );
+}
+
+/// 进度回调：替换默认的 stdout 输出，便于在进程内观察进度。
+pub type ProgressSink = std::sync::Arc<dyn Fn(Value) + Send + Sync>;
+
+static PROGRESS_SINK: OnceLock<Mutex<Option<ProgressSink>>> = OnceLock::new();
+
+fn progress_slot() -> &'static Mutex<Option<ProgressSink>> {
+    PROGRESS_SINK.get_or_init(|| Mutex::new(None))
+}
+
+/// 安装进度回调并返回此前的回调；传入 `None` 恢复默认（写 stdout）。
+pub fn set_progress_sink(sink: Option<ProgressSink>) -> Option<ProgressSink> {
+    let mut guard = progress_slot().lock().ok()?;
+    match sink {
+        Some(value) => guard.replace(value),
+        None => guard.take(),
+    }
+}
+
+/// 取消标记文件路径：宿主在启动工具时下发，工具长循环里轮询它。
+pub fn cancel_marker_path() -> Option<PathBuf> {
+    std::env::var_os(CANCEL_FILE_ENV)
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
+}
+
+/// 是否已收到取消请求。宿主下发标记文件，工具发现后应尽快停止并清理半成品。
+pub fn cancel_requested() -> bool {
+    cancel_marker_path()
+        .map(|path| path.exists())
+        .unwrap_or(false)
+}
+
+/// 统一的取消错误码，宿主与界面据此把「取消」与「失败」区分开。
+pub fn cancelled_error(message: &str) -> ToolError {
+    ToolError::new("CANCELLED", message)
+}
+
 /// 标准工具进程入口：握手、读取请求、输出结果。
 /// handler 接收 action，返回 `data`；错误统一转为 `error` 消息。
 pub fn serve<F>(tool_id: &str, version: &str, actions: &[&str], handler: F)
@@ -293,6 +358,7 @@ where
                 .filter(|token| !token.trim().is_empty())
                 .map(str::to_string),
         };
+        CURRENT_REQUEST.with(|cell| *cell.borrow_mut() = id.clone());
         match handler(&parsed) {
             Ok(data) => write(
                 &mut stdout,
@@ -347,6 +413,9 @@ mod tests {
     use super::*;
 
     const SECRET: &[u8] = b"test-secret-key";
+
+    /// 进度回调是进程级全局，替换它时必须串行，否则并行测试会互相污染。
+    static PROGRESS_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn token_roundtrip_binds_action_and_digest() {
@@ -421,5 +490,58 @@ mod tests {
         assert_eq!(human_bytes(512), "512 B");
         assert_eq!(human_bytes(1536), "1.5 KB");
         assert_eq!(human_bytes(5 * 1024 * 1024 * 1024), "5.0 GB");
+    }
+
+    #[test]
+    fn progress_outside_request_is_ignored() {
+        // 没有请求上下文时上报进度不应 panic，也不应写坏 stdout。
+        emit_progress(json!({"phase": "test"}));
+    }
+
+    #[test]
+    fn progress_sink_receives_messages() {
+        use std::sync::Arc;
+        let _guard = PROGRESS_TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let sink = captured.clone();
+        let previous = set_progress_sink(Some(Arc::new(move |value: Value| {
+            sink.lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .push(value);
+        })));
+        emit_progress(json!({"phase": "demo"}));
+        set_progress_sink(previous);
+        let messages = captured.lock().unwrap_or_else(|error| error.into_inner());
+        assert_eq!(messages.len(), 1);
+        assert_eq!(
+            messages[0].get("phase").and_then(Value::as_str),
+            Some("demo")
+        );
+    }
+
+    #[test]
+    fn cancel_marker_is_detected() {
+        let dir = std::env::current_exe()
+            .ok()
+            .and_then(|exe| {
+                exe.parent().map(|parent| {
+                    parent.join(format!("system-lens-cancel-{}", std::process::id()))
+                })
+            })
+            .expect("测试二进制路径");
+        std::fs::create_dir_all(&dir).expect("create dir");
+        let marker = dir.join("job.cancel");
+        let _ = std::fs::remove_file(&marker);
+
+        std::env::remove_var(CANCEL_FILE_ENV);
+        assert!(!cancel_requested());
+
+        std::env::set_var(CANCEL_FILE_ENV, &marker);
+        assert!(!cancel_requested());
+        std::fs::write(&marker, b"1").expect("write marker");
+        assert!(cancel_requested());
+
+        std::env::remove_var(CANCEL_FILE_ENV);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
