@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "id": "winopt_assistant",
   "name": "Windows 优化助手",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "apiVersion": 1,
-  "description": "检查系统设置，5 项用户级设置可直接应用，6 项管理员设置经 UAC 修改（含 Windows 搜索服务）",
+  "description": "检查系统设置，5 项用户级设置可直接应用，6 项管理员设置经 UAC 修改（可整批一次授权）",
   "category": "优化",
   "risk": "write",
   "entry": "winopt_assistant.exe",
@@ -20,7 +20,8 @@
       "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Power",
       "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\DataCollection",
       "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\SystemRestore",
-      "HKLM\\SYSTEM\\CurrentControlSet\\Control\\FileSystem"
+      "HKLM\\SYSTEM\\CurrentControlSet\\Control\\FileSystem",
+      "HKLM\\SYSTEM\\CurrentControlSet\\Services\\WSearch"
     ],
     "network": false,
     "elevation": "none"
@@ -28,9 +29,10 @@
   "actions": [
     { "id": "preview", "label": "体检", "write": false },
     { "id": "apply_settings", "label": "应用所选设置", "write": true, "requiresConfirmation": true },
-    { "id": "apply_admin_setting", "label": "应用管理员设置（需 UAC）", "write": true, "requiresConfirmation": true }
+    { "id": "apply_admin_setting", "label": "应用管理员设置（需 UAC）", "write": true, "requiresConfirmation": true },
+    { "id": "apply_admin_settings", "label": "批量应用管理员设置（需 UAC）", "write": true, "requiresConfirmation": true }
   ],
-  "limits": { "timeoutMs": 30000, "maxOutputBytes": 262144 },
+  "limits": { "timeoutMs": 180000, "maxOutputBytes": 262144 },
   "ui": { "kind": "table" },
   "rollback": "custom",
   "hash": "",

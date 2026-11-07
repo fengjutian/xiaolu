@@ -54,7 +54,8 @@ cclean.exe --stdio
 - **失败隔离**：每 256 个文件一批移入回收站，整批失败时逐文件重试；
 - **限额**：单位置最多统计 2.5 万个文件，单次最多移入回收站 1 万个；
 - **确认令牌**：绑定工具 id + 位置集合，一次性、5 分钟过期；
-- **审计日志与清单**：写入 `%LOCALAPPDATA%\SystemLens\tool-actions.jsonl` 与 `%LOCALAPPDATA%\SystemLens\cleanup\cclean-<时间戳>-<进程号>.json`。
+- **审计日志与清单**：写入 `%LOCALAPPDATA%\SystemLens\tool-actions.jsonl` 与 `%LOCALAPPDATA%\SystemLens\cleanup\cclean-<时间戳>-<进程号>.json`；
+- **清理前后对比**：清理结果带 `diff` 字段（按位置的清理前后占用/文件数与释放量），与清理大师的对比结果完全一致。
 
 ## 构建与测试
 

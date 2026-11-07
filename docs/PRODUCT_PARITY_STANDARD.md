@@ -126,36 +126,42 @@
 
 ### 6.1 总览
 
-- 25 个独立工具进程：**7 个纯只读 + 18 个含写操作**（`tool.json` 的 `risk` 实测为 read_only 7 / write 12 / system 6）；另有 4 个应用内页面（护眼、快捷启动、桌面助手等）。
-- 安全画像（按 `tool.json` 实测）：**仅 `driver_manager` 声明联网**，其余 24 个默认离线；提权 helper 已实现（系统启动项、服务启动类型、受限传感器）。
-- 18 个含写操作的工具中，**10 个有回滚字段**（`adblock_master=custom`、`ai_cooling=custom`、`bsod_repair=custom`、`clean_master=recycle_bin`、`DuplicateFileClean=recycle_bin`、`pc_optimizer=custom`、`privacy_protection=custom`、`software_pm=custom`、`sys_boost=custom`、`winopt_assistant=custom`）；`proc_opt` 的结束进程不可逆，`lockscreen`、`omni_zip`、`master_pdf`、`gpu_opt` 属于一次性动作或输出型。
+- 25 个独立工具进程：**6 个纯只读 + 19 个含写操作**（`tool.json` 的 `risk` 实测为 read_only 6 / write 13 / system 6）；另有 4 个应用内页面（护眼、快捷启动、桌面助手等）。
+- 安全画像（按 `tool.json` 实测）：**仅 `driver_manager` 声明联网**，其余 24 个默认离线；提权 helper 已实现（系统启动项、服务启动类型、计划任务、受限传感器、碎片整理、Hosts、崩溃转储模式、HKLM 设置、卷扩展、还原点、处理器限功率、电源计划与电源设置写入）。
+- 19 个含写操作的工具中，**11 个有回滚字段**（`adblock_master=custom`、`ai_cooling=custom`、`bsod_repair=custom`、`cclean=recycle_bin`、`clean_master=recycle_bin`、`DuplicateFileClean=recycle_bin`、`pc_optimizer=custom`、`privacy_protection=custom`、`software_pm=custom`、`sys_boost=custom`、`winopt_assistant=custom`）；`proc_opt` 的结束进程不可逆，`lockscreen`、`omni_zip`、`master_pdf`、`gpu_opt` 属于一次性动作或输出型。
+- `permissions.elevation` 只有真正需要提权才能工作的工具才标 `uac`（当前：`pc_optimizer`）；部分动作才需要提权的工具（`winopt_assistant`、`software_pm`、`sys_clean`、`bsod_repair`、`adblock_master`、`ai_cooling`）仍标 `none`，由界面在动作按钮上标注「需 UAC」，避免整个工具被误标成必须管理员运行。
 
 排序原则：**用户感知频率 × 可逆性 × 实现成本**。先做“高频、可逆、成本低”的，再做“高风险、需提权”的。
 
 ### 6.2 P0：立即优化（2 周，6 个）
 
-#### 1. clean_master（清理大师）L2 → L3（0.2.0 已补执行明细与还原入口）
+#### 1. clean_master（清理大师）L2 → L3（0.3.1 已补执行前后 diff）
 
-- 现状：9 类固定白名单扫描、勾选清理、文件移入回收站；0.2.0 起逐文件记录结果并写入本地完整清单，结果页提供“打开回收站还原”“打开清单目录”。
-- 缺口：无执行前后可视化 diff。
+- 现状：11 类固定白名单扫描、勾选清理、文件移入回收站；逐文件记录结果并写入本地完整清单，结果页提供"打开回收站还原""打开清单目录"；0.3.1 起结果页给出按位置的「清理前后对比」。
+- 缺口：无。
 - 验收：
   - 清理后生成逐文件清单（路径、大小、结果、失败原因）；✅ 0.2.0
-  - 回收站还原成功率 ≥ 95%，且界面有“还原”入口；✅ 入口已提供（回收站手动还原）
+  - 回收站还原成功率 ≥ 95%，且界面有"还原"入口；✅ 入口已提供（回收站手动还原）
   - 被占用/无权限文件跳过并逐项说明，不中断整批；✅ 0.2.0（256 个一批，失败自动逐文件重试）
   - 白名单外写入为 0；✅
   - 1 GiB 候选量下 P95 ≤ 60 秒（SSD）；✅ 单次 1.57s（128×8 MiB），P95 待多次补测
   - 批量选择（全选/仅缓存/清空）；✅
+  - 执行前后可视化 diff：按位置给出清理前后的占用与文件数；✅ 0.3.1（`diff` 字段，两个工具共用同一份引擎结果）
 
-#### 2. pc_optimizer（电脑性能优化）L2 → L3（0.2.0 已补逐项复核与撤销）
+#### 2. pc_optimizer（电脑性能优化）L2 → L3（0.3.0 补批量预设、提权写入与撤销修复）
 
-- 现状：电源计划切换 + 逐项电源设置读写；0.2.0 起每项独立写入、独立回读，结果附带一次性“撤销本次修改”令牌，并写入本地快照。
-- 缺口：无批量预设；无系统恢复点（电源设置可逐项还原，暂不需要）。
+- 现状：电源计划切换 + 逐项电源设置读写 + 3 套一键预设（省电/均衡/性能）。0.3.0 起写入一律经独立提权助手 `lens_helper.exe` 执行（电源计划取值在 HKLM，普通权限写入只会拿到 `ERROR_ACCESS_DENIED`，实测错误码 5），整批一次授权、一次快照、一次撤销。
+- 决定（2026-11-07 修订）：0.2.0 文档里的「一键撤销本次修改」实际永远失败 —— 续签令牌用 `apply_settings` 签发、用 `apply` 校验，动作名对不上会被判「确认令牌与当前动作不匹配」。本次统一为 `TOKEN_ACTION` 常量，并加单测守护。
+- 缺口：预设只覆盖 5 项设置，不含电源计划切换与处理器 boost；不建系统还原点（电源设置可逐项还原，暂不需要）；真机 UAC 授权待验证。
 - 验收：
-  - 切换/还原后 `powercfg /getactivescheme` 与逐项值一致；✅ 切换后有回读校验
+  - 切换/还原后 `powercfg /getactivescheme` 与逐项值一致；✅ 切换后有回读校验（0.3.0 经提权助手执行，真机 UAC 待验证）
   - 每项原值、执行时间、结果可查；✅ 操作日志 + `pc_optimizer/run-*.json` 快照
-  - 单项失败不影响其余项；✅ 0.2.0 逐项隔离
+  - 单项失败不影响其余项；✅ 逐项隔离，失败原因逐项写明
   - 审计覆盖率 100%；✅
-  - 一键撤销本次修改；✅ 0.2.0（结果页按钮）
+  - 一键撤销本次修改；✅ 0.3.0 修复（此前因令牌动作名不一致永远失败；单测 `continue_token_can_be_used_by_the_next_write` 守护）
+  - 批量预设：一次授权写入整套设置，可一键撤销；✅ 0.3.0（`apply_preset`；预设取值表在工具内固定，界面从预览结果读取，不硬编码）
+  - 普通用户可用：写入不依赖宿主自身提权；✅ 0.3.0 走 `lens_helper`（`power_plan_activate` / `power_settings_write`）
+  - 提权请求参数受白名单约束；✅ helper 内 `powercfg` 别名仅 9 个固定值，计划 GUID 必须为标准格式
 
 #### 3. software_pm（软件权限管理）L2 → L3（0.6.0 已接入计划任务）
 
@@ -168,15 +174,20 @@
   - 单项失败不影响其他项；✅ 0.3.0
   - 请求/结果路径受限、操作白名单、取消 UAC 不写入；✅ 0.4.0
 
-#### 4. winopt_assistant（Windows 优化助手）L2 已实现（0.3.0，待真机验证）
+#### 4. winopt_assistant（Windows 优化助手）L2 → L3（0.4.0 补齐管理员设置入口）
 
-- 现状：11 项系统设置体检；5 项 HKCU 可应用/撤销，5 项 HKLM（诊断数据、快速启动、休眠、系统还原、长路径）经 UAC + `lens_helper.exe` 修改。
-- 缺口：Windows 搜索服务仍只读；HKLM 项按单项授权，不能批量一次 UAC。
+- 现状：11 项系统设置体检；5 项 HKCU 可应用/撤销，6 项 HKLM（诊断数据、快速启动、休眠、系统还原、长路径、Windows 搜索服务）经 UAC + `lens_helper.exe` 修改，0.4.0 起可勾选后**整批一次 UAC** 写入。
+- 决定（2026-11-07 修订）：0.3.x 之前这 6 项管理员设置在界面上**完全不可达** —— 前端只渲染 `winoptSettings`，管理员项的草稿状态 `winoptAdminDraft` 建了但从没被任何 JSX 读过。工具侧能写，用户点不到，等于没有。
+- 缺口：无（Windows 搜索服务已于 0.3.1 纳入可写；真机 UAC 成功路径仍待验证）。
 - 验收：
-  - 每项可单独应用、单独还原；✅ HKCU 5 项撤销，HKLM 可切回原值
+  - 每项可单独应用、单独还原；✅ HKCU 5 项撤销；HKLM 6 项可切回原值（`winoptAdminUndo`）
   - 原值写入日志，还原后与执行前一致；✅
   - 只改体检项，不引入注册表模板；✅
-  - 需管理员的设置可应用；✅ 5 项（0.3.0，真机 UAC 待验证）
+  - 需管理员的设置可应用；✅ 6 项（0.4.0，真机 UAC 待验证）
+  - 管理员项在界面上可达（独立「管理员级设置（HKLM）」表，可逐项改、整批应用）；✅ 0.4.0
+  - 整批只问一次 UAC，单项失败不影响其余项；✅ 0.4.0（`apply_admin_settings` → helper `winopt_set_batch`，逐项回读并隔离失败）
+  - HKCU 与 HKLM 通道隔离：管理员令牌不能用于用户级动作，反之亦然；✅ 独立签发 + 独立摘要，e2e 断言互报 `INVALID_TOKEN`
+  - 取值受工具自己的选项表约束，不接受任意值；✅ `validate_admin_value` + 单测
 
 #### 5. gpu_opt（显卡性能优化）L0 → L1（0.2.0 按应用 GPU 偏好，2026-11-06 修订）
 
@@ -453,3 +464,6 @@
 | 2026-11-06 | v0.1.28 | sys_boost 0.2.0：一键加速（视觉/动画/透明/电源计划）+ 快照撤销 |
 | 2026-11-07 | v0.1.29 | 文档校准：gpu_opt 实际已是写工具（v0.1.27）、software_pm 计划任务已实现（v0.1.14）、sys_clean 还原点与导出清单已实现（v0.1.23/24）、ai_cooling 为按次 UAC 限功率（v0.1.25）；§8 指标改为含写动作 18 个 / 有回滚 10 个；gpu_opt 清单补 registry 与 rollback=custom |
 | 2026-11-07 | v0.1.30 | cclean 0.2.0 + clean_master 0.3.0 + clean-core 0.1.0：合并为同一清理引擎（唯一白名单/扫描器/删除实现），cclean 升级为可写工具并下线手搓协议；§8 指标改为含写动作 19 个 / 有回滚 11 个 |
+| 2026-11-07 | v0.1.31 | pc_optimizer 0.3.0 + lens_helper：写入改走提权助手（普通用户原本写入即错误码 5）、新增 3 套一键预设、修复「撤销本次修改」令牌动作名不一致导致的永久失败；`permissions.elevation` 首次按实际需要标注 |
+| 2026-11-07 | v0.1.32 | clean_master 0.3.1 + cclean 0.2.1：补「清理前后对比」（P0 #1 最后一项缺口），按位置给出清理前后占用与文件数，两个工具共用同一份引擎结果 |
+| 2026-11-07 | v0.1.33 | winopt_assistant 0.4.0：6 项 HKLM 管理员设置此前在界面上完全不可达（`winoptAdminDraft` 是死状态）；补「管理员级设置（HKLM）」表 + 整批一次 UAC（`apply_admin_settings` → helper `winopt_set_batch`），并把 HKCU / HKLM 两套令牌与设置清单彻底分开 |

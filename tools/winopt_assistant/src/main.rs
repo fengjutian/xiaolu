@@ -1,4 +1,5 @@
 use serde_json::{json, Value};
+use std::collections::HashSet;
 use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command;
@@ -9,6 +10,7 @@ use winreg::RegKey;
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const ACTION_APPLY: &str = "apply_settings";
 const ACTION_ADMIN: &str = "apply_admin_setting";
+const ACTION_ADMIN_BATCH: &str = "apply_admin_settings";
 
 #[derive(Clone, Copy)]
 enum SettingType {
@@ -529,9 +531,8 @@ fn scan() -> Result<Value, ToolError> {
     );
     let settings = settings_json();
     if let Value::Object(map) = &mut data {
-        let mut all_settings = settings.clone();
-        all_settings.extend(admin_settings_json());
-        map.insert("winoptSettings".into(), Value::Array(all_settings));
+        // 用户级（HKCU）与管理员级（HKLM）分开下发，界面才不会把两类混在一张表里。
+        map.insert("winoptSettings".into(), Value::Array(settings.clone()));
         map.insert(
             "winoptAdminSettings".into(),
             Value::Array(admin_settings_json()),
@@ -763,6 +764,7 @@ fn apply_admin_setting(request: &Request) -> Result<Value, ToolError> {
         json!(["系统设置已由独立提权助手修改，并已回读确认。", "再次操作需要重新预览获取新令牌。"]),
     );
     if let Value::Object(map) = &mut data {
+        map.insert("winoptSettings".into(), Value::Array(settings_json()));
         map.insert("winoptAdminSettings".into(), Value::Array(settings.clone()));
         map.insert("winoptAdminChanged".into(), entry);
     }
@@ -776,6 +778,206 @@ fn map_insert_token(data: &mut Value, token: String) {
     if let Value::Object(map) = data {
         map.insert("winoptAdminToken".into(), Value::String(token));
     }
+}
+
+/// 管理员设置的取值 → 选项文案。
+fn admin_value_label(id: &str, value: &Value) -> String {
+    let Some(value) = value.as_u64() else {
+        return "未知".into();
+    };
+    let setting = admin_settings_json()
+        .into_iter()
+        .find(|setting| setting.get("id").and_then(Value::as_str) == Some(id));
+    setting
+        .and_then(|setting| {
+            setting
+                .get("options")
+                .and_then(Value::as_array)
+                .and_then(|options| {
+                    options
+                        .iter()
+                        .find(|option| option.get("value").and_then(Value::as_u64) == Some(value))
+                        .and_then(|option| option.get("label"))
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                })
+        })
+        .unwrap_or_else(|| value.to_string())
+}
+
+/// 校验管理员设置的取值在允许范围内（用工具自己的选项表，不接受任意值）。
+fn validate_admin_value(id: &str, value: u64) -> Result<(), ToolError> {
+    let setting = admin_settings_json()
+        .into_iter()
+        .find(|setting| setting.get("id").and_then(Value::as_str) == Some(id))
+        .ok_or_else(|| ToolError::new("INVALID_INPUT", format!("不是管理员级设置：{id}")))?;
+    let options = setting
+        .get("options")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if !options
+        .iter()
+        .any(|option| option.get("value").and_then(Value::as_u64) == Some(value))
+    {
+        return Err(ToolError::new(
+            "INVALID_INPUT",
+            format!("{} 的取值不在允许范围内。", admin_label(id)),
+        ));
+    }
+    Ok(())
+}
+
+/// 批量应用管理员级设置：一次提权、一次 UAC，逐项回读复核。
+///
+/// 单项授权意味着改一组设置要反复点 UAC；这里把整批放进同一个提权进程，
+/// 失败只影响该项，其余照常写入，并给出可一键还原的原值。
+fn apply_admin_settings(request: &Request) -> Result<Value, ToolError> {
+    let token = request.confirmation.as_deref().ok_or_else(|| {
+        ToolError::new(
+            "CONFIRMATION_REQUIRED",
+            "修改系统级设置需要确认令牌，请先体检并选择要修改的项。",
+        )
+    })?;
+    tool_protocol::verify_token(token, ACTION_ADMIN, &admin_digest())?;
+    let changes = request
+        .parameters
+        .get("changes")
+        .and_then(Value::as_array)
+        .ok_or_else(|| ToolError::new("INVALID_INPUT", "缺少参数 changes。"))?;
+    if changes.is_empty() {
+        return Err(ToolError::new(
+            "INVALID_INPUT",
+            "没有需要应用的管理员设置。",
+        ));
+    }
+
+    let mut parsed: Vec<(String, u64)> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    for change in changes {
+        let id = change
+            .get("id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| ToolError::new("INVALID_INPUT", "管理员设置项缺少 id。"))?;
+        if !is_admin_setting(id) {
+            return Err(ToolError::new(
+                "INVALID_INPUT",
+                format!("不是管理员级设置：{id}"),
+            ));
+        }
+        if !seen.insert(id.to_string()) {
+            return Err(ToolError::new(
+                "INVALID_INPUT",
+                format!("{} 重复出现。", admin_label(id)),
+            ));
+        }
+        let value = change.get("value").and_then(Value::as_u64).ok_or_else(|| {
+            ToolError::new("INVALID_INPUT", format!("{}缺少取值。", admin_label(id)))
+        })?;
+        validate_admin_value(id, value)?;
+        parsed.push((id.to_string(), value));
+    }
+
+    let items = parsed
+        .iter()
+        .map(|(id, value)| json!({"id": id, "value": value}))
+        .collect::<Vec<_>>();
+    let outcome = run_elevated(json!({"op": "winopt_set_batch", "settings": items}))?;
+    let results = outcome
+        .get("data")
+        .and_then(|data| data.get("items"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+
+    let mut rows = Vec::new();
+    let mut undo = Vec::new();
+    let mut applied = 0usize;
+    let mut failed = 0usize;
+    for (id, target) in &parsed {
+        let entry = results
+            .iter()
+            .find(|entry| entry.get("id").and_then(Value::as_str) == Some(id.as_str()));
+        let ok = entry.and_then(|entry| entry.get("ok")).and_then(Value::as_bool) == Some(true);
+        let before = entry
+            .and_then(|entry| entry.get("before"))
+            .cloned()
+            .unwrap_or(Value::Null);
+        let after = entry
+            .and_then(|entry| entry.get("after"))
+            .cloned()
+            .unwrap_or(Value::Null);
+        let reason = entry
+            .and_then(|entry| entry.get("error"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        if ok {
+            applied += 1;
+        } else {
+            failed += 1;
+        }
+        rows.push(json!({
+            "label": admin_label(id),
+            "before": admin_value_label(id, &before),
+            "after": admin_value_label(id, &after),
+            "target": admin_value_label(id, &json!(target)),
+            "status": if ok { "已应用" } else { "失败" },
+            "reason": reason,
+        }));
+        // 只有"原来有值、且与目标不同"才需要还原；休眠项拿不到原值，无法还原。
+        if ok {
+            if let (Some(before_value), Some(after_value)) = (before.as_u64(), after.as_u64()) {
+                if before_value != after_value {
+                    undo.push(json!({"id": id, "value": before_value}));
+                }
+            }
+        }
+    }
+
+    let settings = admin_settings_json();
+    let _ = tool_protocol::append_audit_log(json!({
+        "tool": "winopt_assistant",
+        "action": ACTION_ADMIN_BATCH,
+        "items": parsed
+            .iter()
+            .map(|(id, value)| json!({"id": id, "value": value}))
+            .collect::<Vec<_>>(),
+        "applied": applied,
+        "failed": failed,
+        "undo": undo,
+        "at": tool_protocol::now_ms(),
+    }));
+
+    let mut data = table(
+        json!([
+            item("已应用", applied.to_string()),
+            item("失败", failed.to_string()),
+            item("授权次数", "1 次 UAC".to_string()),
+        ]),
+        json!([
+            column("label", "设置项"),
+            column("before", "原值"),
+            column("after", "回读"),
+            column("status", "结果"),
+            column("reason", "原因"),
+        ]),
+        Value::Array(rows),
+        json!([
+            "整批设置在同一次管理员授权里完成：单项失败不影响其余项。",
+            "已生成新的一次性令牌，可直接点击“撤销本次修改”恢复原值。",
+            "休眠开关无法读取原值，撤销时不会包含该项。",
+        ]),
+    );
+    if let Value::Object(map) = &mut data {
+        map.insert("winoptSettings".into(), Value::Array(settings_json()));
+        map.insert("winoptAdminSettings".into(), Value::Array(settings));
+        map.insert("winoptAdminUndo".into(), Value::Array(undo));
+    }
+    if let Ok(new_token) = tool_protocol::issue_token(ACTION_ADMIN, &admin_digest()) {
+        map_insert_token(&mut data, new_token);
+    }
+    Ok(data)
 }
 
 fn apply_settings(request: &Request) -> Result<Value, ToolError> {
@@ -810,24 +1012,6 @@ fn apply_settings(request: &Request) -> Result<Value, ToolError> {
             .get("id")
             .and_then(Value::as_str)
             .ok_or_else(|| ToolError::new("INVALID_INPUT", "设置项缺少 id。"))?;
-        if setting_by_id(id).is_none() && is_admin_setting(id) {
-            let value = change
-                .get("value")
-                .and_then(Value::as_u64)
-                .ok_or_else(|| {
-                    ToolError::new("INVALID_INPUT", "管理员设置缺少整数 value。")
-                })?;
-            run_elevated(json!({"op": "winopt_set", "setting": id, "value": value}))?;
-            applied += 1;
-            rows.push(json!({
-                "label": admin_label(id),
-                "before": "需管理员",
-                "after": value.to_string(),
-                "status": "已应用（管理员）",
-                "reason": "",
-            }));
-            continue;
-        }
         let setting = setting_by_id(id).ok_or_else(|| {
             ToolError::new("INVALID_INPUT", format!("不支持或需要管理员的设置：{id}"))
         })?;
@@ -943,7 +1127,7 @@ fn apply_settings(request: &Request) -> Result<Value, ToolError> {
             "每项独立执行：单项失败不影响其他项，写入后立即回读确认。",
             "已生成新的一次性令牌，可直接“撤销本次修改”恢复原值。",
             "视觉效果、窗口动画等可能在下次登录或资源管理器重启后生效。",
-            "休眠、快速启动、诊断数据、系统还原、长路径需要管理员权限，本工具保持只读。",
+            "休眠、快速启动、诊断数据、系统还原、长路径、搜索服务需要管理员授权，可在下方单独或整批应用（整批只问一次 UAC）。",
             snapshot_path
                 .as_ref()
                 .map(|path| format!("本次原值与回读已写入快照：{}", path.display()))
@@ -951,9 +1135,7 @@ fn apply_settings(request: &Request) -> Result<Value, ToolError> {
         ]),
     );
     if let Value::Object(map) = &mut data {
-        let mut all_after = after_settings.clone();
-        all_after.extend(admin_settings_json());
-        map.insert("winoptSettings".into(), Value::Array(all_after));
+        map.insert("winoptSettings".into(), Value::Array(after_settings.clone()));
         map.insert("winoptUndo".into(), Value::Array(undo));
     }
     if let Ok(token) = tool_protocol::issue_token(ACTION_APPLY, &settings_digest(&after_settings)) {
@@ -966,11 +1148,12 @@ fn main() {
     tool_protocol::serve_with_request(
         "winopt_assistant",
         env!("CARGO_PKG_VERSION"),
-        &["preview", ACTION_APPLY, ACTION_ADMIN],
+        &["preview", ACTION_APPLY, ACTION_ADMIN, ACTION_ADMIN_BATCH],
         |request| match request.action.as_str() {
             "preview" => scan(),
             ACTION_APPLY => apply_settings(request),
             ACTION_ADMIN => apply_admin_setting(request),
+            ACTION_ADMIN_BATCH => apply_admin_settings(request),
             other => Err(ToolError::unsupported(other)),
         },
     );
@@ -1080,5 +1263,58 @@ mod tests {
             settings_digest(&first),
             settings_digest(&vec![json!({"id": "visualFx", "current": 1})])
         );
+    }
+
+    #[test]
+    fn admin_settings_are_listed_apart_from_user_settings() {
+        let user_settings = settings_json();
+        let admin_settings = admin_settings_json();
+        let user_ids = user_settings
+            .iter()
+            .filter_map(|setting| setting.get("id").and_then(Value::as_str))
+            .collect::<Vec<_>>();
+        let admin_ids = admin_settings
+            .iter()
+            .filter_map(|setting| setting.get("id").and_then(Value::as_str))
+            .collect::<Vec<_>>();
+        assert_eq!(admin_ids.len(), 6);
+        assert!(
+            user_ids.iter().all(|id| !is_admin_setting(id)),
+            "用户级设置里不能混入管理员项"
+        );
+        assert!(
+            admin_ids.iter().all(|id| is_admin_setting(id)),
+            "管理员项必须都在白名单里"
+        );
+        for setting in &admin_settings {
+            let options = setting
+                .get("options")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            assert!(!options.is_empty(), "每项都要有可选取值");
+            assert_eq!(
+                setting.get("requiresAdmin").and_then(Value::as_bool),
+                Some(true)
+            );
+        }
+    }
+
+    #[test]
+    fn validates_admin_values_against_the_option_table() {
+        assert!(validate_admin_value("telemetry", 3).is_ok());
+        assert!(validate_admin_value("fastStartup", 0).is_ok());
+        assert!(validate_admin_value("telemetry", 9).is_err());
+        assert!(
+            validate_admin_value("visualFx", 1).is_err(),
+            "用户级设置不能走管理员通道"
+        );
+    }
+
+    #[test]
+    fn admin_value_label_follows_the_option_table() {
+        assert_eq!(admin_value_label("fastStartup", &json!(0)), "关闭");
+        assert_eq!(admin_value_label("fastStartup", &Value::Null), "未知");
+        assert_eq!(admin_value_label("fastStartup", &json!(7)), "7");
     }
 }

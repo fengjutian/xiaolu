@@ -3,7 +3,7 @@ use serde_json::{json, Value};
 use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command;
-use tool_protocol::{attach_token, column, digest_of, human_bytes, item, table, Request, ToolError};
+use tool_protocol::{attach_token, column, human_bytes, item, table, Request, ToolError};
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 

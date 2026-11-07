@@ -394,6 +394,37 @@ export interface PowerSettingOption {
   note: string;
 }
 
+export interface PowerPresetItem {
+  id: string;
+  label: string;
+  unit: string;
+  ac: number;
+  dc: number;
+}
+
+export interface PowerPresetOption {
+  id: string;
+  label: string;
+  note: string;
+  items: PowerPresetItem[];
+}
+
+/** 清理前后的占用对比（清理大师与 C 盘瘦身共用同一份引擎结果）。 */
+export interface CleanupDiffRow {
+  id: string;
+  label: string;
+  path: string;
+  beforeFiles: number;
+  beforeBytes: number;
+  beforeSize: string;
+  afterFiles: number;
+  afterBytes: number;
+  afterSize: string;
+  freedBytes: number;
+  freedSize: string;
+  status: string;
+}
+
 export interface StartupToolItem {
   key: string;
   name: string;
@@ -408,6 +439,15 @@ export interface WinoptSetting {
   current: number | null;
   min: number;
   max: number;
+  options: { value: number; label: string }[];
+  requiresAdmin?: boolean;
+}
+
+/** 管理员级（HKLM）设置：取值只能是工具下发的选项之一。 */
+export interface WinoptAdminSetting {
+  id: string;
+  label: string;
+  current: number | null;
   options: { value: number; label: string }[];
   requiresAdmin?: boolean;
 }
@@ -515,11 +555,14 @@ export interface ToolResult {
   confirmationToken?: string;
   confirmationTokenExpiresAt?: number;
   powerSettings?: PowerSettingOption[];
+  powerPresets?: PowerPresetOption[];
+  diff?: CleanupDiffRow[];
   undoChanges?: { id: string; ac: number; dc: number }[];
   winoptSettings?: WinoptSetting[];
   winoptUndo?: { id: string; value: number | null }[];
-  winoptAdminSettings?: WinoptSetting[];
+  winoptAdminSettings?: WinoptAdminSetting[];
   winoptAdminToken?: string;
+  winoptAdminUndo?: { id: string; value: number }[];
   startupItems?: StartupToolItem[];
   systemStartupItems?: StartupToolItem[];
   serviceItems?: ServiceItem[];

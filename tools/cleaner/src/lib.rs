@@ -731,6 +731,41 @@ pub fn write_journal(tool_id: &str, payload: &Value) -> Result<PathBuf, String> 
     Ok(path)
 }
 
+/// 清理前后对比的一行。
+///
+/// 用户要看到的是"这个位置清理前有多少、清理后还剩多少"，
+/// 而不是只有逐文件明细与一个合计数。
+fn diff_row(
+    candidate: &Candidate,
+    before_files: usize,
+    before_bytes: u64,
+    after_files: usize,
+    after_bytes: u64,
+) -> Value {
+    let freed = before_bytes.saturating_sub(after_bytes);
+    let status = if before_files == 0 && after_files == 0 {
+        "目录不存在"
+    } else if freed > 0 {
+        "已清理"
+    } else {
+        "未变化"
+    };
+    json!({
+        "id": candidate.id,
+        "label": candidate.label,
+        "path": candidate.base.to_string_lossy(),
+        "beforeFiles": before_files,
+        "beforeBytes": before_bytes,
+        "beforeSize": human_bytes(before_bytes),
+        "afterFiles": after_files,
+        "afterBytes": after_bytes,
+        "afterSize": human_bytes(after_bytes),
+        "freedBytes": freed,
+        "freedSize": human_bytes(freed),
+        "status": status,
+    })
+}
+
 /// 执行清理：校验令牌 → 逐位置收集文件 → 移入回收站 → 复核 → 写清单与审计日志。
 pub fn apply(
     tool_id: &str,
@@ -764,6 +799,7 @@ pub fn apply(
     let started_at = tool_protocol::now_ms();
     let mut rows = Vec::new();
     let mut journal_candidates = Vec::new();
+    let mut diff: Vec<Value> = Vec::new();
     let mut freed_bytes = 0u64;
     let mut recycled_files = 0usize;
     let mut skipped_locked = 0usize;
@@ -796,6 +832,7 @@ pub fn apply(
                 "after": {"files": 0, "bytes": 0},
                 "records": [],
             }));
+            diff.push(diff_row(candidate, 0, 0, 0, 0));
             continue;
         }
 
@@ -844,6 +881,13 @@ pub fn apply(
                 }))
                 .collect::<Vec<_>>(),
         }));
+        diff.push(diff_row(
+            candidate,
+            before.count,
+            before.bytes,
+            after.count,
+            after.bytes,
+        ));
     }
 
     let journal = json!({
@@ -881,6 +925,7 @@ pub fn apply(
     let mut notes = vec![
         "所选文件已移入回收站，可打开回收站按原路径还原。".to_string(),
         "被占用、只读或无权限的文件已逐个跳过，不会中断其他文件。".to_string(),
+        "「清理前后对比」按位置给出清理前后的占用与文件数，可直接核对释放量。".to_string(),
         format!("单次最多移入回收站 {MAX_DELETE_FILES} 个文件；明细最多展示 {MAX_DETAIL_ROWS} 条。"),
         "本工具只清理固定白名单位置，不删除目录本身，也不修改注册表或服务。".to_string(),
         "再次清理需要重新扫描获取新的确认令牌。".to_string(),
@@ -922,6 +967,8 @@ pub fn apply(
                 map.insert("journalDir".into(), json!(parent.to_string_lossy()));
             }
         }
+        // 执行前后对比：按位置给出清理前后占用与文件数。
+        map.insert("diff".into(), Value::Array(diff));
     }
     Ok(data)
 }
@@ -1196,6 +1243,28 @@ mod tests {
         std::env::remove_var("SYSTEM_LENS_STATE_DIR");
         assert!(text.contains("\"clean-core-test\""));
         assert!(text.contains("\"files\": 2"));
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn diff_row_reports_before_after_and_freed_space() {
+        let root = temp_root("diff");
+        let target = candidate(root.clone(), &[]);
+
+        let cleaned = diff_row(&target, 10, 1000, 2, 200);
+        assert_eq!(cleaned["status"], "已清理");
+        assert_eq!(cleaned["beforeFiles"], 10);
+        assert_eq!(cleaned["afterFiles"], 2);
+        assert_eq!(cleaned["freedBytes"], 800);
+        assert_eq!(cleaned["id"], "test");
+
+        let unchanged = diff_row(&target, 5, 500, 5, 500);
+        assert_eq!(unchanged["status"], "未变化");
+        assert_eq!(unchanged["freedBytes"], 0);
+
+        let missing = diff_row(&target, 0, 0, 0, 0);
+        assert_eq!(missing["status"], "目录不存在");
+
         fs::remove_dir_all(&root).ok();
     }
 

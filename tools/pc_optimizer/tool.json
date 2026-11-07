@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "id": "pc_optimizer",
   "name": "电脑性能优化",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "apiVersion": 1,
-  "description": "预览并切换 Windows 活动电源计划",
+  "description": "预览并切换 Windows 活动电源计划，支持逐项调整与一键应用预设",
   "category": "优化",
   "risk": "system",
   "entry": "pc_optimizer.exe",
@@ -12,16 +12,19 @@
   "permissions": {
     "readPaths": [],
     "writePaths": [],
-    "registry": [],
+    "registry": [
+      "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Power\\User\\PowerSchemes"
+    ],
     "network": false,
-    "elevation": "none"
+    "elevation": "uac"
   },
   "actions": [
     { "id": "preview", "label": "预览", "write": false },
     { "id": "apply", "label": "切换电源计划", "write": true, "requiresConfirmation": true },
-    { "id": "apply_settings", "label": "应用电源设置", "write": true, "requiresConfirmation": true }
+    { "id": "apply_settings", "label": "应用电源设置", "write": true, "requiresConfirmation": true },
+    { "id": "apply_preset", "label": "应用预设", "write": true, "requiresConfirmation": true }
   ],
-  "limits": { "timeoutMs": 30000, "maxOutputBytes": 262144 },
+  "limits": { "timeoutMs": 180000, "maxOutputBytes": 262144 },
   "ui": { "kind": "table" },
   "rollback": "custom",
   "hash": "",

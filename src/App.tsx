@@ -177,7 +177,10 @@ import type {
   SystemHistorySeries,
   SystemSnapshot,
   PowerSettingOption,
+  PowerPresetOption,
+  CleanupDiffRow,
   WinoptSetting,
+  WinoptAdminSetting,
   PrivacySetting,
   ProcessItem,
   AppxItem,
@@ -4155,6 +4158,80 @@ function EyeCarePanel({
   );
 }
 
+/**
+ * 清理前后对比表：按位置给出清理前后的占用与文件数。
+ * 清理大师与 C 盘瘦身共用同一份清理引擎，因此两边的对比结果一致。
+ */
+function CleanupDiffTable({ rows }: { rows: CleanupDiffRow[] }) {
+  if (!rows.length) return null;
+  return (
+    <Box mt="md">
+      <Text size="sm" fw={600}>
+        清理前后对比
+      </Text>
+      <ScrollArea type="auto" mt="xs">
+        <Table miw={760} highlightOnHover verticalSpacing="xs">
+          <Table.Thead>
+            <Table.Tr>
+              <Table.Th>位置</Table.Th>
+              <Table.Th>清理前</Table.Th>
+              <Table.Th>清理后</Table.Th>
+              <Table.Th>释放</Table.Th>
+              <Table.Th>结果</Table.Th>
+            </Table.Tr>
+          </Table.Thead>
+          <Table.Tbody>
+            {rows.map((row) => (
+              <Table.Tr key={row.id}>
+                <Table.Td>
+                  <Text size="sm" fw={600}>
+                    {row.label}
+                  </Text>
+                  <Text size="xs" c="dimmed" truncate maw={300}>
+                    {row.path}
+                  </Text>
+                </Table.Td>
+                <Table.Td>
+                  <Text size="sm">{row.beforeSize}</Text>
+                  <Text size="xs" c="dimmed">
+                    {row.beforeFiles} 个文件
+                  </Text>
+                </Table.Td>
+                <Table.Td>
+                  <Text size="sm">{row.afterSize}</Text>
+                  <Text size="xs" c="dimmed">
+                    {row.afterFiles} 个文件
+                  </Text>
+                </Table.Td>
+                <Table.Td>
+                  <Text size="sm" c={row.freedBytes > 0 ? "teal" : "dimmed"}>
+                    {row.freedSize}
+                  </Text>
+                </Table.Td>
+                <Table.Td>
+                  <Badge
+                    size="xs"
+                    variant="light"
+                    color={
+                      row.status === "已清理"
+                        ? "teal"
+                        : row.status === "未变化"
+                          ? "gray"
+                          : "orange"
+                    }
+                  >
+                    {row.status}
+                  </Badge>
+                </Table.Td>
+              </Table.Tr>
+            ))}
+          </Table.Tbody>
+        </Table>
+      </ScrollArea>
+    </Box>
+  );
+}
+
 function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { onOpenEyeCare?: () => void; onOpenStartMenu?: () => void; onOpenDesktopQuick?: () => void }) {
   const [tools, setTools] = useState<ToolDescriptor[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -4341,6 +4418,12 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
     setWinoptDraft((current) => ({ ...current, [id]: parsed }));
   };
 
+  const updateWinoptAdminValue = (id: string, value: number | string) => {
+    const parsed = typeof value === "number" ? value : Number.parseInt(value, 10);
+    if (!Number.isFinite(parsed)) return;
+    setWinoptAdminDraft((current) => ({ ...current, [id]: parsed }));
+  };
+
   useEffect(() => {
     void listToolboxTools()
       .then(setTools)
@@ -4383,6 +4466,7 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
       }
       if (tool.id === "winopt_assistant") {
         setWinoptDraft({});
+        setWinoptAdminDraft({});
       }
       if (tool.id === "DuplicateFileClean") {
         const groups = (data as ToolResult).duplicateFileGroups ?? [];
@@ -4428,13 +4512,19 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
     tool: ToolDescriptor,
     action: ToolActionDescriptor,
     parameters?: Record<string, unknown>,
+    tokenOverride?: string,
+    confirmNote?: string,
   ) => {
-    const token = generic?.data.confirmationToken;
+    const token = tokenOverride ?? generic?.data.confirmationToken;
     if (!token) {
       setApplyError("确认令牌缺失或已使用，请重新运行预览。");
       return;
     }
-    if (!window.confirm(`确认执行「${action.label}」？该操作会立即生效。`))
+    if (
+      !window.confirm(
+        `确认执行「${action.label}」？该操作会立即生效。${confirmNote ?? ""}`,
+      )
+    )
       return;
     setApplying(`${tool.id}:${action.id}`);
     setApplyError(null);
@@ -4458,6 +4548,9 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
       }
       if (data.winoptSettings) {
         setWinoptDraft({});
+      }
+      if (data.winoptAdminSettings) {
+        setWinoptAdminDraft({});
       }
       if (data.privacySettings) {
         setPrivacyDraft({});
@@ -5086,6 +5179,7 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
   const scan = async () => {
     setScanning(true);
     setScanError(null);
+    setSlimResult(null);
     try {
       const result = (await runToolAction("cclean", "preview")) as SlimScan;
       setSlim(result);
@@ -5182,6 +5276,7 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
     ? Math.max(0, slim.driveTotalBytes - slim.driveFreeBytes)
     : 0;
   const powerSettings: PowerSettingOption[] = generic?.data.powerSettings ?? [];
+  const powerPresets: PowerPresetOption[] = generic?.data.powerPresets ?? [];
   const powerChanges = powerSettings.flatMap((setting) => {
     const draft = powerDraft[setting.id];
     if (
@@ -5207,6 +5302,17 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
     return [{ id: setting.id, value: draft }];
   });
   const winoptUndo = generic?.data.winoptUndo ?? [];
+  const winoptAdminSettings: WinoptAdminSetting[] =
+    generic?.data.winoptAdminSettings ?? [];
+  const winoptAdminChanges = winoptAdminSettings.flatMap((setting) => {
+    const draft = winoptAdminDraft[setting.id];
+    if (draft == null || draft === setting.current) {
+      return [] as { id: string; value: number }[];
+    }
+    return [{ id: setting.id, value: draft }];
+  });
+  const winoptAdminUndo = generic?.data.winoptAdminUndo ?? [];
+  const winoptAdminToken = generic?.data.winoptAdminToken;
   const privacySettings: PrivacySetting[] = generic?.data.privacySettings ?? [];
   const privacyChanges = privacySettings.flatMap((setting) => {
     const draft = privacyDraft[setting.id];
@@ -5366,6 +5472,9 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
               </Badge>
             ))}
           </Group>
+          {(generic.data.diff ?? []).length > 0 && (
+            <CleanupDiffTable rows={generic.data.diff ?? []} />
+          )}
           {(generic.data.rows ?? []).length === 0 ? (
             <Alert color="gray" mt="md">
               没有可显示的数据。
@@ -7015,6 +7124,178 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                 </Group>
               </Box>
             )}
+          {generic.tool.id === "winopt_assistant" &&
+            winoptAdminSettings.length > 0 && (
+              <Box mt="md">
+                <Group gap="xs" align="center">
+                  <Text size="sm" fw={700}>
+                    管理员级设置（HKLM）
+                  </Text>
+                  <Badge size="xs" color="orange" variant="light">
+                    一次 UAC 整批写入
+                  </Badge>
+                </Group>
+                <Text size="xs" c="dimmed" mt={4}>
+                  这几项写在 HKLM，整批只弹一次 UAC；单项失败不影响其他项，写完立即回读复核。
+                </Text>
+                <ScrollArea type="auto" mt="xs">
+                  <Table miw={760} verticalSpacing="xs">
+                    <Table.Thead>
+                      <Table.Tr>
+                        <Table.Th>设置项</Table.Th>
+                        <Table.Th>当前</Table.Th>
+                        <Table.Th>修改为</Table.Th>
+                        <Table.Th>范围</Table.Th>
+                      </Table.Tr>
+                    </Table.Thead>
+                    <Table.Tbody>
+                      {winoptAdminSettings.map((setting) => {
+                        const currentLabel =
+                          setting.current == null
+                            ? "未设置"
+                            : setting.options.find(
+                                (option) => option.value === setting.current,
+                              )?.label ?? String(setting.current);
+                        const value =
+                          winoptAdminDraft[setting.id] ??
+                          setting.current ??
+                          setting.options[0]?.value;
+                        return (
+                          <Table.Tr key={setting.id}>
+                            <Table.Td>
+                              <Text size="sm" fw={600}>
+                                {setting.label}
+                              </Text>
+                            </Table.Td>
+                            <Table.Td>
+                              <Badge size="xs" variant="light">
+                                {currentLabel}
+                              </Badge>
+                            </Table.Td>
+                            <Table.Td>
+                              <Select
+                                size="xs"
+                                w={200}
+                                data={setting.options.map((option) => ({
+                                  value: String(option.value),
+                                  label: option.label,
+                                }))}
+                                value={value == null ? null : String(value)}
+                                allowDeselect={false}
+                                onChange={(next) =>
+                                  next != null &&
+                                  updateWinoptAdminValue(setting.id, next)
+                                }
+                              />
+                            </Table.Td>
+                            <Table.Td>
+                              <Text size="xs" c="dimmed">
+                                HKLM · 需 UAC
+                              </Text>
+                            </Table.Td>
+                          </Table.Tr>
+                        );
+                      })}
+                    </Table.Tbody>
+                  </Table>
+                </ScrollArea>
+                <Group mt="sm" align="center">
+                  <Button
+                    size="xs"
+                    color="orange"
+                    variant="light"
+                    disabled={
+                      winoptAdminChanges.length === 0 || !winoptAdminToken
+                    }
+                    loading={
+                      applying === `${generic.tool.id}:apply_admin_settings`
+                    }
+                    onClick={() =>
+                      void runApply(
+                        generic.tool,
+                        {
+                          id: "apply_admin_settings",
+                          label: "整批应用管理员设置",
+                          write: true,
+                        },
+                        { changes: winoptAdminChanges },
+                        winoptAdminToken,
+                        "Windows 会弹出一次管理员授权（UAC），确认后整批写入。",
+                      )
+                    }
+                  >
+                    整批应用（一次 UAC）
+                  </Button>
+                  {winoptAdminUndo.length > 0 && (
+                    <Button
+                      size="xs"
+                      color="red"
+                      variant="light"
+                      disabled={!winoptAdminToken}
+                      loading={
+                        applying === `${generic.tool.id}:apply_admin_settings`
+                      }
+                      onClick={() =>
+                        void runApply(
+                          generic.tool,
+                          {
+                            id: "apply_admin_settings",
+                            label: "撤销本次管理员修改",
+                            write: true,
+                          },
+                          { changes: winoptAdminUndo },
+                          winoptAdminToken,
+                          "Windows 会弹出一次管理员授权（UAC），确认后恢复原值。",
+                        )
+                      }
+                    >
+                      撤销本次修改
+                    </Button>
+                  )}
+                  <Text size="xs" c="dimmed">
+                    {winoptAdminChanges.length > 0
+                      ? `将修改 ${winoptAdminChanges.length} 项；原值写入本地快照，可一键还原`
+                      : "修改选项后可整批应用"}
+                  </Text>
+                </Group>
+              </Box>
+            )}
+          {generic.tool.id === "pc_optimizer" && powerPresets.length > 0 && (
+            <Box mt="md">
+              <Text size="sm" fw={700}>
+                一键预设（一次授权写入整套设置）
+              </Text>
+              <Group gap="xs" mt="xs">
+                {powerPresets.map((preset) => (
+                  <Button
+                    key={preset.id}
+                    size="xs"
+                    variant="light"
+                    title={preset.note}
+                    loading={
+                      applying === `${generic.tool.id}:apply_preset`
+                    }
+                    onClick={() =>
+                      void runApply(
+                        generic.tool,
+                        {
+                          id: "apply_preset",
+                          label: `应用预设「${preset.label}」`,
+                          write: true,
+                        },
+                        { preset: preset.id },
+                      )
+                    }
+                  >
+                    {preset.label}
+                  </Button>
+                ))}
+              </Group>
+              <Text size="xs" c="dimmed" mt={4}>
+                预设只改当前电源计划的这几项取值，不会切换计划；应用后可用“撤销本次修改”还原。
+              </Text>
+            </Box>
+          )}
           {generic.tool.id === "pc_optimizer" && powerSettings.length > 0 && (
             <Box mt="md">
               <Text size="sm" fw={700}>
@@ -7471,6 +7752,9 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                 .map((entry) => `${entry.label} ${entry.value}`)
                 .join(" · ")}
             </Alert>
+          )}
+          {slimResult && (slimResult.diff ?? []).length > 0 && (
+            <CleanupDiffTable rows={slimResult.diff ?? []} />
           )}
           <Text size="xs" c="dimmed" mt="md">
             {slim.note}

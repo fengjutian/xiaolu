@@ -1,12 +1,20 @@
 use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::ffi::c_void;
+use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
+use std::process::Command;
 use tool_protocol::{attach_token, column, digest_of, item, table, Request, ToolError};
 
 const ACTION: &str = "apply";
 const ACTION_SETTINGS: &str = "apply_settings";
+const ACTION_PRESET: &str = "apply_preset";
+/// 预览签发的令牌授权本次预览之后的全部写操作（切换计划、改单项、应用预设）。
+/// 签发与校验必须用同一个动作名：两者不一致时「撤销本次修改」会被判动作不匹配。
+const TOKEN_ACTION: &str = ACTION;
 const ACCESS_SCHEME: u32 = 16;
+/// 隐藏提权启动用的 PowerShell 窗口。
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 #[derive(Clone, Copy)]
 struct PowerSetting {
@@ -14,6 +22,9 @@ struct PowerSetting {
     label: &'static str,
     subgroup: &'static str,
     setting: &'static str,
+    /// 提权助手调用 powercfg 用的别名，与上面的 GUID 一一对应。
+    alias_subgroup: &'static str,
+    alias_setting: &'static str,
     unit: &'static str,
     min: u32,
     max: u32,
@@ -28,6 +39,8 @@ const SETTINGS: [PowerSetting; 5] = [
         label: "处理器最小状态",
         subgroup: "54533251-82be-4824-96c1-47b60b740d00",
         setting: "893dee8e-2bef-41e0-89c6-b55d0929964c",
+        alias_subgroup: "SUB_PROCESSOR",
+        alias_setting: "PROCTHROTTLEMIN",
         unit: "%",
         min: 0,
         max: 100,
@@ -39,6 +52,8 @@ const SETTINGS: [PowerSetting; 5] = [
         label: "处理器最大状态",
         subgroup: "54533251-82be-4824-96c1-47b60b740d00",
         setting: "bc5038f7-23e0-4960-96da-33abaf5935ec",
+        alias_subgroup: "SUB_PROCESSOR",
+        alias_setting: "PROCTHROTTLEMAX",
         unit: "%",
         min: 0,
         max: 100,
@@ -50,6 +65,8 @@ const SETTINGS: [PowerSetting; 5] = [
         label: "关闭显示器",
         subgroup: "7516b95f-f776-4464-8c53-06167f40cc99",
         setting: "3c0bc021-c8a8-4e07-a973-6b14cbcb2b7e",
+        alias_subgroup: "SUB_VIDEO",
+        alias_setting: "VIDEOIDLE",
         unit: "分钟",
         min: 0,
         max: 300,
@@ -61,6 +78,8 @@ const SETTINGS: [PowerSetting; 5] = [
         label: "睡眠",
         subgroup: "238c9fa8-0aad-41ed-83f4-97be242c8f20",
         setting: "29f6c1db-86da-48c5-9fdb-f2b67b1f44da",
+        alias_subgroup: "SUB_SLEEP",
+        alias_setting: "STANDBYIDLE",
         unit: "分钟",
         min: 0,
         max: 1440,
@@ -72,6 +91,8 @@ const SETTINGS: [PowerSetting; 5] = [
         label: "关闭硬盘",
         subgroup: "0012ee47-9041-4b5d-9b77-535fba8b1442",
         setting: "6738e2c4-e8a5-4a42-b16a-e040e769756e",
+        alias_subgroup: "SUB_DISK",
+        alias_setting: "DISKIDLE",
         unit: "分钟",
         min: 0,
         max: 1440,
@@ -79,6 +100,65 @@ const SETTINGS: [PowerSetting; 5] = [
         note: "SSD 通常无需调整。",
     },
 ];
+
+/// 一键预设：一组固定的电源设置目标值（交流 / 电池）。
+struct Preset {
+    id: &'static str,
+    label: &'static str,
+    note: &'static str,
+    items: &'static [(&'static str, u32, u32)],
+}
+
+const PRESETS: [Preset; 3] = [
+    Preset {
+        id: "saver",
+        label: "省电",
+        note: "压低处理器上限、缩短显示与睡眠时间；适合离电运行与负载较轻的场景。",
+        items: &[
+            ("processor-min", 5, 5),
+            ("processor-max", 60, 60),
+            ("display-off", 5, 5),
+            ("sleep", 15, 15),
+            ("disk-off", 10, 10),
+        ],
+    },
+    Preset {
+        id: "balanced",
+        label: "均衡",
+        note: "Windows 默认取向：处理器可满载，关闭显示器与睡眠时间居中。",
+        items: &[
+            ("processor-min", 5, 5),
+            ("processor-max", 100, 100),
+            ("display-off", 10, 10),
+            ("sleep", 30, 30),
+            ("disk-off", 20, 20),
+        ],
+    },
+    Preset {
+        id: "performance",
+        label: "性能",
+        note: "处理器保持满载，交流电下不自动睡眠、不关闭硬盘；更耗电。",
+        items: &[
+            ("processor-min", 100, 100),
+            ("processor-max", 100, 100),
+            ("display-off", 20, 10),
+            ("sleep", 0, 30),
+            ("disk-off", 0, 20),
+        ],
+    },
+];
+
+fn preset_by_id(id: &str) -> Option<&'static Preset> {
+    PRESETS.iter().find(|preset| preset.id == id)
+}
+
+/// 续签令牌：结果页的「撤销本次修改」直接用它。
+///
+/// 动作名必须与写操作校验时完全一致 —— 两者不一致时撤销会被判
+/// 「确认令牌与当前动作不匹配」而永远失败。
+fn issue_continue_token(digest: &str) -> Option<String> {
+    tool_protocol::issue_token(TOKEN_ACTION, digest).ok()
+}
 
 fn setting_by_id(id: &str) -> Option<&'static PowerSetting> {
     SETTINGS.iter().find(|setting| setting.id == id)
@@ -198,7 +278,6 @@ struct SystemPowerStatus {
 #[link(name = "powrprof")]
 extern "system" {
     fn PowerGetActiveScheme(root: *mut c_void, guid: *mut *mut Guid) -> u32;
-    fn PowerSetActiveScheme(root: *mut c_void, guid: *const Guid) -> u32;
     fn PowerEnumerate(
         root: *mut c_void,
         scheme: *const Guid,
@@ -229,20 +308,6 @@ extern "system" {
         subgroup: *const Guid,
         setting: *const Guid,
         value: *mut u32,
-    ) -> u32;
-    fn PowerWriteACValueIndex(
-        root: *mut c_void,
-        scheme: *const Guid,
-        subgroup: *const Guid,
-        setting: *const Guid,
-        value: u32,
-    ) -> u32;
-    fn PowerWriteDCValueIndex(
-        root: *mut c_void,
-        scheme: *const Guid,
-        subgroup: *const Guid,
-        setting: *const Guid,
-        value: u32,
     ) -> u32;
 }
 
@@ -368,30 +433,176 @@ fn read_setting(plan: &Guid, setting: &PowerSetting, ac: bool) -> Option<u32> {
     (rc == 0).then_some(value)
 }
 
-fn write_setting(plan: &Guid, setting: &PowerSetting, ac: bool, raw: u32) -> u32 {
-    let Some((subgroup, setting_guid)) = setting_guids(setting) else {
-        return 87; // ERROR_INVALID_PARAMETER
-    };
-    // SAFETY: GUID 均来自固定常量，raw 已按范围校验。
-    unsafe {
-        if ac {
-            PowerWriteACValueIndex(
-                std::ptr::null_mut(),
-                plan,
-                &subgroup,
-                &setting_guid,
-                raw,
-            )
-        } else {
-            PowerWriteDCValueIndex(
-                std::ptr::null_mut(),
-                plan,
-                &subgroup,
-                &setting_guid,
-                raw,
-            )
+// ---------------------------------------------------------------------------
+// 提权写入。
+//
+// 电源计划的取值与「当前使用的计划」都落在 HKLM，普通权限写入只会拿到
+// ERROR_ACCESS_DENIED（实测错误码 5），所以这里统一交给独立提权助手执行：
+// 宿主不直接提权，用户只会被问一次 UAC。
+// ---------------------------------------------------------------------------
+
+fn elevated_dir() -> PathBuf {
+    std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_default()
+        .join("SystemLens")
+        .join("elevated")
+}
+
+fn helper_path() -> Result<PathBuf, ToolError> {
+    if let Some(path) = std::env::var_os("SYSTEM_LENS_HELPER") {
+        let path = PathBuf::from(path);
+        if path.is_file() {
+            return Ok(path);
         }
     }
+    let exe = std::env::current_exe()
+        .map_err(|error| ToolError::new("INTERNAL", format!("无法定位工具路径：{error}")))?;
+    let dir = exe
+        .parent()
+        .ok_or_else(|| ToolError::new("INTERNAL", "无法定位工具目录。"))?;
+    let candidates = [
+        dir.join("lens_helper.exe"),
+        dir.join("..").join("lens_helper").join("lens_helper.exe"),
+    ];
+    candidates
+        .into_iter()
+        .find(|path| path.is_file())
+        .ok_or_else(|| ToolError::new("HELPER_MISSING", "缺少提权助手 lens_helper.exe。"))
+}
+
+fn ps_quote(text: &str) -> String {
+    format!("'{}'", text.replace('\'', "''"))
+}
+
+/// 请求提权助手执行一次操作，返回助手写回的结果 JSON。
+fn run_elevated(mut payload: Value) -> Result<Value, ToolError> {
+    let dir = elevated_dir();
+    std::fs::create_dir_all(&dir)
+        .map_err(|error| ToolError::new("INTERNAL", format!("无法创建提权请求目录：{error}")))?;
+    let nonce_source = format!("{}-{}", tool_protocol::now_ms(), std::process::id());
+    let nonce_full = tool_protocol::digest_of(&[&nonce_source]);
+    let nonce = &nonce_full[..32];
+    let request_path = dir.join(format!("req-{nonce}.json"));
+    let result_path = dir.join(format!("res-{nonce}.json"));
+    if let Value::Object(map) = &mut payload {
+        map.insert("version".into(), json!(1));
+        map.insert("nonce".into(), json!(nonce));
+        map.insert("resultPath".into(), json!(result_path));
+    }
+    let serialized = serde_json::to_string(&payload)
+        .map_err(|error| ToolError::new("INTERNAL", format!("无法序列化提权请求：{error}")))?;
+    std::fs::write(&request_path, serialized)
+        .map_err(|error| ToolError::new("INTERNAL", format!("无法写入提权请求：{error}")))?;
+    let helper = helper_path()?;
+    let script = format!(
+        "$ErrorActionPreference='Stop'; try {{ $p = Start-Process -FilePath {} -ArgumentList ('--request',('\"' + {} + '\"')) -Verb RunAs -PassThru -Wait -WindowStyle Hidden; exit $p.ExitCode }} catch {{ exit 1223 }}",
+        ps_quote(&helper.to_string_lossy()),
+        ps_quote(&request_path.to_string_lossy())
+    );
+    let status = Command::new("powershell.exe")
+        .creation_flags(CREATE_NO_WINDOW)
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-WindowStyle",
+            "Hidden",
+            "-Command",
+            &script,
+        ])
+        .status()
+        .map_err(|error| ToolError::new("INTERNAL", format!("无法启动提权助手：{error}")))?;
+    let result_text = std::fs::read_to_string(&result_path).ok();
+    let _ = std::fs::remove_file(&request_path);
+    let _ = std::fs::remove_file(&result_path);
+    if !status.success() {
+        if status.code() == Some(1223) {
+            return Err(ToolError::new(
+                "ELEVATION_CANCELLED",
+                "已取消管理员授权，未修改电源设置。",
+            ));
+        }
+        return Err(ToolError::new(
+            "ELEVATION_FAILED",
+            format!("提权助手执行失败（退出码 {:?}）。", status.code()),
+        ));
+    }
+    let text = result_text
+        .ok_or_else(|| ToolError::new("HELPER_FAILED", "提权助手没有返回结果。"))?;
+    let value: Value = serde_json::from_str(&text)
+        .map_err(|error| ToolError::new("HELPER_FAILED", format!("无法解析助手结果：{error}")))?;
+    if value.get("ok").and_then(Value::as_bool) != Some(true) {
+        let message = value
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or("提权助手返回失败。");
+        return Err(ToolError::new("HELPER_FAILED", message.to_string()));
+    }
+    Ok(value)
+}
+
+/// 一批电源设置的写入结果。
+struct HelperWrite {
+    /// 每项的错误信息（None 表示写入成功）。
+    errors: Vec<Option<String>>,
+    /// 重新激活计划时的错误。
+    activation_error: Option<String>,
+}
+
+/// 经提权助手一次性写入整批电源设置，并重新激活当前计划。
+fn write_targets(targets: &[SettingChange]) -> Result<HelperWrite, ToolError> {
+    let items = targets
+        .iter()
+        .map(|change| {
+            json!({
+                "id": change.setting.id,
+                "subgroup": change.setting.alias_subgroup,
+                "setting": change.setting.alias_setting,
+                "ac": raw_value(change.setting, change.ac),
+                "dc": raw_value(change.setting, change.dc),
+            })
+        })
+        .collect::<Vec<_>>();
+    let outcome = run_elevated(json!({"op": "power_settings_write", "settings": items}))?;
+    let data = outcome.get("data").cloned().unwrap_or(Value::Null);
+    let results = data
+        .get("items")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let errors = targets
+        .iter()
+        .map(|change| {
+            results
+                .iter()
+                .find(|entry| entry.get("id").and_then(Value::as_str) == Some(change.setting.id))
+                .and_then(|entry| {
+                    if entry.get("ok").and_then(Value::as_bool) == Some(true) {
+                        None
+                    } else {
+                        entry
+                            .get("error")
+                            .and_then(Value::as_str)
+                            .map(str::to_string)
+                    }
+                })
+                .or_else(|| Some("提权助手没有返回这一项的结果。".to_string()))
+        })
+        .collect::<Vec<_>>();
+    let activation_error = data
+        .get("activationError")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    Ok(HelperWrite {
+        errors,
+        activation_error,
+    })
+}
+
+/// 经提权助手切换当前使用的电源计划。
+fn activate_plan_via_helper(guid: &Guid) -> Result<(), ToolError> {
+    run_elevated(json!({"op": "power_plan_activate", "guid": guid.to_text()}))?;
+    Ok(())
 }
 
 fn display_value(setting: &PowerSetting, raw: Option<u32>) -> Option<u32> {
@@ -469,7 +680,11 @@ fn item_reason(
     after_dc: Option<u32>,
     target_ac: u32,
     target_dc: u32,
+    helper_error: Option<&str>,
 ) -> String {
+    if let Some(error) = helper_error {
+        return error.to_string();
+    }
     let mut parts = Vec::new();
     if rc_ac != 0 {
         parts.push(format!("交流写入错误码 {rc_ac}"));
@@ -527,7 +742,7 @@ fn preview() -> Result<Value, ToolError> {
                 .map(|(_, name)| name.clone())
         })
         .unwrap_or_else(|| "未知".into());
-    let token = tool_protocol::issue_token(ACTION, &token_digest(&plans, active))?;
+    let token = tool_protocol::issue_token(TOKEN_ACTION, &token_digest(&plans, active))?;
 
     let rows = plans
         .iter()
@@ -567,8 +782,40 @@ fn preview() -> Result<Value, ToolError> {
             map.insert("powerSettings".into(), Value::Array(settings_rows));
         }
     }
+    if let Value::Object(map) = &mut data {
+        map.insert("powerPresets".into(), Value::Array(presets_json()));
+    }
     attach_token(&mut data, token);
     Ok(data)
+}
+
+/// 预设清单，供界面直接渲染（界面不硬编码预设取值）。
+fn presets_json() -> Vec<Value> {
+    PRESETS
+        .iter()
+        .map(|preset| {
+            let items = preset
+                .items
+                .iter()
+                .filter_map(|(id, ac, dc)| {
+                    let setting = setting_by_id(id)?;
+                    Some(json!({
+                        "id": setting.id,
+                        "label": setting.label,
+                        "unit": setting.unit,
+                        "ac": ac,
+                        "dc": dc,
+                    }))
+                })
+                .collect::<Vec<_>>();
+            json!({
+                "id": preset.id,
+                "label": preset.label,
+                "note": preset.note,
+                "items": items,
+            })
+        })
+        .collect()
 }
 
 fn apply(request: &Request) -> Result<Value, ToolError> {
@@ -593,7 +840,7 @@ fn apply(request: &Request) -> Result<Value, ToolError> {
             "无法枚举电源计划，已取消切换。",
         ));
     }
-    tool_protocol::verify_token(token, ACTION, &token_digest(&plans, active_plan()))?;
+    tool_protocol::verify_token(token, TOKEN_ACTION, &token_digest(&plans, active_plan()))?;
 
     let target_name = plans
         .iter()
@@ -615,20 +862,8 @@ fn apply(request: &Request) -> Result<Value, ToolError> {
         })
         .unwrap_or_else(|| "未知".into());
 
-    // SAFETY: target 来自已枚举且校验过的计划 GUID。
-    let rc = unsafe { PowerSetActiveScheme(std::ptr::null_mut(), &target) };
-    if rc == 5 {
-        return Err(ToolError::new(
-            "PERMISSION_DENIED",
-            "当前进程没有写入电源策略的权限（受限账户或沙箱环境）。请在普通桌面会话中重试；仍失败时以管理员身份运行。",
-        ));
-    }
-    if rc != 0 {
-        return Err(ToolError::new(
-            "INTERNAL",
-            format!("PowerSetActiveScheme 失败（错误码 {rc}）。"),
-        ));
-    }
+    // 切换当前计划需要写 HKLM，普通权限会被拒绝，交给提权助手执行。
+    activate_plan_via_helper(&target)?;
     let current = active_plan();
     if current != Some(target) {
         return Err(ToolError::new(
@@ -687,6 +922,61 @@ struct ItemResult {
     after_ac: Option<u32>,
     after_dc: Option<u32>,
     status: &'static str,
+    /// 提权助手返回的失败原因（成功时为 None）。
+    helper_error: Option<String>,
+}
+
+/// 解析前端传来的逐项改动，并做范围校验。
+fn parse_changes(changes: &[Value]) -> Result<Vec<SettingChange>, ToolError> {
+    let mut parsed: Vec<SettingChange> = Vec::new();
+    let mut seen = HashSet::new();
+    for change in changes {
+        let id = change
+            .get("id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| ToolError::new("INVALID_INPUT", "电源设置项缺少 id。"))?;
+        let setting = setting_by_id(id)
+            .ok_or_else(|| ToolError::new("INVALID_INPUT", format!("不支持的电源设置：{id}")))?;
+        if !seen.insert(setting.id) {
+            return Err(ToolError::new(
+                "INVALID_INPUT",
+                format!("{} 重复出现。", setting.label),
+            ));
+        }
+        let ac = change.get("ac").and_then(Value::as_u64).ok_or_else(|| {
+            ToolError::new(
+                "INVALID_INPUT",
+                format!("{}缺少交流电取值。", setting.label),
+            )
+        })?;
+        let dc = change.get("dc").and_then(Value::as_u64).ok_or_else(|| {
+            ToolError::new(
+                "INVALID_INPUT",
+                format!("{}缺少电池取值。", setting.label),
+            )
+        })?;
+        parsed.push(SettingChange {
+            setting,
+            ac: validate_value(setting, ac)?,
+            dc: validate_value(setting, dc)?,
+        });
+    }
+    Ok(parsed)
+}
+
+/// 把预设解析成逐项改动。预设是固定表，取值天然在范围内，这里仍走一次校验。
+fn preset_changes(preset: &Preset) -> Result<Vec<SettingChange>, ToolError> {
+    let mut parsed = Vec::with_capacity(preset.items.len());
+    for (id, ac, dc) in preset.items {
+        let setting = setting_by_id(id)
+            .ok_or_else(|| ToolError::new("INTERNAL", format!("预设引用了未知设置：{id}")))?;
+        parsed.push(SettingChange {
+            setting,
+            ac: validate_value(setting, *ac as u64)?,
+            dc: validate_value(setting, *dc as u64)?,
+        });
+    }
+    Ok(parsed)
 }
 
 fn apply_settings(request: &Request) -> Result<Value, ToolError> {
@@ -707,7 +997,35 @@ fn apply_settings(request: &Request) -> Result<Value, ToolError> {
             "没有需要应用的电源设置。",
         ));
     }
+    let parsed = parse_changes(changes)?;
+    apply_changes(ACTION_SETTINGS, token, parsed)
+}
 
+/// 应用一套批量预设：一次提权写完整套设置，一次快照，可一键撤销。
+fn apply_preset(request: &Request) -> Result<Value, ToolError> {
+    let token = request.confirmation.as_deref().ok_or_else(|| {
+        ToolError::new(
+            "CONFIRMATION_REQUIRED",
+            "应用预设需要确认令牌，请先预览并选择预设。",
+        )
+    })?;
+    let preset_id = request
+        .parameters
+        .get("preset")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ToolError::new("INVALID_INPUT", "缺少参数 preset。"))?;
+    let preset = preset_by_id(preset_id)
+        .ok_or_else(|| ToolError::new("INVALID_INPUT", format!("不支持的预设：{preset_id}")))?;
+    let parsed = preset_changes(preset)?;
+    apply_changes(ACTION_PRESET, token, parsed)
+}
+
+/// 写电源设置的公共流程：校验令牌 → 记录原值 → 一次提权写完整批 → 回读复核。
+fn apply_changes(
+    action: &str,
+    token: &str,
+    parsed: Vec<SettingChange>,
+) -> Result<Value, ToolError> {
     let plans = enumerate_plans();
     if plans.is_empty() {
         return Err(ToolError::new(
@@ -717,60 +1035,38 @@ fn apply_settings(request: &Request) -> Result<Value, ToolError> {
     }
     let active = active_plan()
         .ok_or_else(|| ToolError::new("INTERNAL", "无法读取当前活动电源计划。"))?;
-    tool_protocol::verify_token(token, ACTION, &token_digest(&plans, Some(active)))?;
+    tool_protocol::verify_token(token, TOKEN_ACTION, &token_digest(&plans, Some(active)))?;
     let plan_name = plans
         .iter()
         .find(|(guid, _)| *guid == active)
         .map(|(_, name)| name.clone())
         .unwrap_or_else(|| "当前计划".into());
 
-    let mut parsed: Vec<SettingChange> = Vec::new();
-    let mut seen = HashSet::new();
-    for change in changes {
-        let id = change
-            .get("id")
-            .and_then(Value::as_str)
-            .ok_or_else(|| ToolError::new("INVALID_INPUT", "电源设置项缺少 id。"))?;
-        let setting = setting_by_id(id).ok_or_else(|| {
-            ToolError::new("INVALID_INPUT", format!("不支持的电源设置：{id}"))
-        })?;
-        if !seen.insert(setting.id) {
-            return Err(ToolError::new(
-                "INVALID_INPUT",
-                format!("{} 重复出现。", setting.label),
-            ));
-        }
-        let ac = change.get("ac").and_then(Value::as_u64).ok_or_else(|| {
-            ToolError::new(
-                "INVALID_INPUT",
-                format!("{}缺少交流电取值。", setting.label),
-            )
-        })?;
-        let dc = change.get("dc").and_then(Value::as_u64).ok_or_else(|| {
-            ToolError::new("INVALID_INPUT", format!("{}缺少电池取值。", setting.label))
-        })?;
-        parsed.push(SettingChange {
-            setting,
-            ac: validate_value(setting, ac)?,
-            dc: validate_value(setting, dc)?,
-        });
-    }
-
     let started_at = tool_protocol::now_ms();
+    // 先记录原值，再一次性提权写入整批：用户只会被问一次 UAC。
+    let before = parsed
+        .iter()
+        .map(|change| {
+            (
+                read_setting(&active, change.setting, true),
+                read_setting(&active, change.setting, false),
+            )
+        })
+        .collect::<Vec<_>>();
+    let write = write_targets(&parsed)?;
+
     let mut results: Vec<ItemResult> = Vec::with_capacity(parsed.len());
-    for change in &parsed {
+    for (index, change) in parsed.iter().enumerate() {
         let target_ac = raw_value(change.setting, change.ac);
         let target_dc = raw_value(change.setting, change.dc);
-        let before_ac = read_setting(&active, change.setting, true);
-        let before_dc = read_setting(&active, change.setting, false);
-        let rc_ac = write_setting(&active, change.setting, true, target_ac);
-        let rc_dc = write_setting(&active, change.setting, false, target_dc);
         let after_ac = read_setting(&active, change.setting, true);
         let after_dc = read_setting(&active, change.setting, false);
+        let helper_error = write.errors[index].clone();
+        let (rc_ac, rc_dc) = if helper_error.is_some() { (1, 1) } else { (0, 0) };
         results.push(ItemResult {
             setting: change.setting,
-            before_ac,
-            before_dc,
+            before_ac: before[index].0,
+            before_dc: before[index].1,
             target_ac,
             target_dc,
             rc_ac,
@@ -778,17 +1074,16 @@ fn apply_settings(request: &Request) -> Result<Value, ToolError> {
             after_ac,
             after_dc,
             status: item_status(rc_ac, rc_dc, after_ac, after_dc, target_ac, target_dc),
+            helper_error,
         });
     }
 
-    // 任一项写入成功就激活当前计划；激活失败不回滚已写入项，交由用户重试。
+    // 提权助手在写入后重新激活当前计划；激活失败不回滚已写入项，交由用户重试。
     let any_written = results
         .iter()
         .any(|result| result.rc_ac == 0 || result.rc_dc == 0);
     let activation_error = if any_written {
-        // SAFETY: active 来自系统返回的活动计划 GUID。
-        let rc = unsafe { PowerSetActiveScheme(std::ptr::null_mut(), &active) };
-        (rc != 0).then_some(rc)
+        write.activation_error.clone()
     } else {
         None
     };
@@ -835,6 +1130,7 @@ fn apply_settings(request: &Request) -> Result<Value, ToolError> {
                     result.after_dc,
                     result.target_ac,
                     result.target_dc,
+                    result.helper_error.as_deref(),
                 ),
             })
         })
@@ -860,7 +1156,7 @@ fn apply_settings(request: &Request) -> Result<Value, ToolError> {
     let snapshot = json!({
         "tool": "pc_optimizer",
         "version": env!("CARGO_PKG_VERSION"),
-        "action": ACTION_SETTINGS,
+        "action": action,
         "startedAt": started_at,
         "finishedAt": finished_at,
         "planGuid": active.to_text(),
@@ -888,7 +1184,7 @@ fn apply_settings(request: &Request) -> Result<Value, ToolError> {
 
     let _ = tool_protocol::append_audit_log(json!({
         "tool": "pc_optimizer",
-        "action": ACTION_SETTINGS,
+        "action": action,
         "planGuid": active.to_text(),
         "planName": plan_name,
         "applied": applied,
@@ -903,7 +1199,8 @@ fn apply_settings(request: &Request) -> Result<Value, ToolError> {
         "未执行".to_string()
     } else {
         activation_error
-            .map(|rc| format!("失败（{rc}）"))
+            .as_ref()
+            .map(|error| format!("失败（{error}）"))
             .unwrap_or_else(|| "正常".into())
     };
     let activation_note = if !any_written {
@@ -945,13 +1242,14 @@ fn apply_settings(request: &Request) -> Result<Value, ToolError> {
             "powerSettings".into(),
             Value::Array(collect_settings(&active)),
         );
+        // 结果页要能继续用预设（再切一次），所以预设清单也随结果带回去。
+        map.insert("powerPresets".into(), Value::Array(presets_json()));
         map.insert("undoChanges".into(), Value::Array(undo));
     }
     let plans_after = enumerate_plans();
     if let Some(current) = active_plan() {
-        if let Ok(token) =
-            tool_protocol::issue_token(ACTION_SETTINGS, &token_digest(&plans_after, Some(current)))
-        {
+        // 续签的令牌必须与校验时用同一个动作名，否则「撤销本次修改」会被判动作不匹配。
+        if let Some(token) = issue_continue_token(&token_digest(&plans_after, Some(current))) {
             attach_token(&mut data, token);
         }
     }
@@ -962,11 +1260,12 @@ fn main() {
     tool_protocol::serve_with_request(
         "pc_optimizer",
         env!("CARGO_PKG_VERSION"),
-        &["preview", ACTION, ACTION_SETTINGS],
+        &["preview", ACTION, ACTION_SETTINGS, ACTION_PRESET],
         |request| match request.action.as_str() {
             "preview" => preview(),
             ACTION => apply(request),
             ACTION_SETTINGS => apply_settings(request),
+            ACTION_PRESET => apply_preset(request),
             other => Err(ToolError::unsupported(other)),
         },
     );
@@ -1069,12 +1368,75 @@ mod tests {
     fn item_reason_reports_per_channel_failures() {
         let setting = setting_by_id("processor-max").expect("processor setting");
         assert_eq!(
-            item_reason(setting, 0, 0, Some(100), Some(100), 100, 100),
+            item_reason(setting, 0, 0, Some(100), Some(100), 100, 100, None),
             ""
         );
 
-        let reason = item_reason(setting, 5, 0, Some(100), Some(80), 100, 100);
+        let reason = item_reason(setting, 5, 0, Some(100), Some(80), 100, 100, None);
         assert!(reason.contains("交流写入错误码 5"));
         assert!(reason.contains("电池回读"));
+    }
+
+    #[test]
+    fn item_reason_prefers_the_helper_message() {
+        let setting = setting_by_id("processor-max").expect("processor setting");
+        let reason = item_reason(setting, 1, 1, None, None, 100, 100, Some("powercfg 失败"));
+        assert_eq!(reason, "powercfg 失败");
+    }
+
+    #[test]
+    fn presets_stay_inside_setting_ranges() {
+        for preset in PRESETS.iter() {
+            assert_eq!(
+                preset.items.len(),
+                SETTINGS.len(),
+                "预设 {} 必须覆盖全部设置项",
+                preset.id
+            );
+            for (id, ac, dc) in preset.items {
+                let setting = setting_by_id(id).expect("known setting");
+                assert!(
+                    *ac >= setting.min && *ac <= setting.max,
+                    "{} 的交流值越界",
+                    preset.id
+                );
+                assert!(
+                    *dc >= setting.min && *dc <= setting.max,
+                    "{} 的电池值越界",
+                    preset.id
+                );
+            }
+            // 预设也要能通过与逐项修改同一套校验。
+            let changes = preset_changes(preset).expect("preset changes");
+            assert_eq!(changes.len(), SETTINGS.len());
+        }
+    }
+
+    #[test]
+    fn preset_ids_are_stable() {
+        assert!(preset_by_id("saver").is_some());
+        assert!(preset_by_id("balanced").is_some());
+        assert!(preset_by_id("performance").is_some());
+        assert!(preset_by_id("turbo").is_none());
+    }
+
+    #[test]
+    fn continue_token_can_be_used_by_the_next_write() {
+        // 「撤销本次修改」用的就是续签令牌：签发与校验的动作名必须一致，
+        // 否则撤销会被判「确认令牌与当前动作不匹配」而永远失败。
+        std::env::set_var(
+            "SYSTEM_LENS_TOKEN_SECRET",
+            "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+        );
+        let token = issue_continue_token("digest-a").expect("continue token");
+        assert!(
+            tool_protocol::verify_token(&token, TOKEN_ACTION, "digest-a").is_ok(),
+            "续签令牌必须能通过下一次写操作的校验"
+        );
+        assert!(
+            tool_protocol::verify_token(&token, "apply_settings", "digest-a").is_err(),
+            "续签令牌不应被当成别的动作"
+        );
+        std::env::remove_var("SYSTEM_LENS_TOKEN_SECRET");
     }
 }

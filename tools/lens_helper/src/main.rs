@@ -17,14 +17,35 @@ const OP_HOSTS_APPLY: &str = "hosts_apply";
 const OP_HOSTS_RESTORE: &str = "hosts_restore";
 const OP_CRASH_DUMP: &str = "crash_dump_set";
 const OP_WINOPT: &str = "winopt_set";
+const OP_WINOPT_BATCH: &str = "winopt_set_batch";
 const OP_EXPAND: &str = "expand_volume";
 const OP_RESTORE_POINT: &str = "restore_point_create";
 const OP_PM_RESTORE: &str = "pm_restore";
 const OP_POWER_LIMIT: &str = "power_limit_set";
+const OP_POWER_SETTINGS: &str = "power_settings_write";
+const OP_POWER_PLAN: &str = "power_plan_activate";
 const HOSTS_BEGIN: &str = "# BEGIN SystemLens AdBlock";
 const HOSTS_END: &str = "# END SystemLens AdBlock";
 const SERVICE_PATH: &str = "SYSTEM\\CurrentControlSet\\Services";
 const START_TYPES: [u32; 3] = [2, 3, 4];
+
+/// `powercfg` 只接受下面这些别名：别名会直接拼进命令行，
+/// 白名单之外的任何输入一律拒绝，避免把外部字符串带进提权进程。
+const POWER_ALIASES: [&str; 9] = [
+    "SUB_PROCESSOR",
+    "SUB_VIDEO",
+    "SUB_SLEEP",
+    "SUB_DISK",
+    "PROCTHROTTLEMIN",
+    "PROCTHROTTLEMAX",
+    "VIDEOIDLE",
+    "STANDBYIDLE",
+    "DISKIDLE",
+];
+
+fn valid_power_alias(alias: &str) -> bool {
+    POWER_ALIASES.contains(&alias)
+}
 
 fn valid_service_name(name: &str) -> bool {
     !name.trim().is_empty()
@@ -340,10 +361,13 @@ fn run(request: &Value) -> Result<Outcome, String> {
         OP_HOSTS_RESTORE => run_hosts_restore(),
         OP_CRASH_DUMP => run_crash_dump(request),
         OP_WINOPT => run_winopt(request),
+        OP_WINOPT_BATCH => run_winopt_batch(request),
         OP_EXPAND => run_expand(request),
         OP_RESTORE_POINT => run_restore_point(),
         OP_PM_RESTORE => run_pm_restore(request),
         OP_POWER_LIMIT => run_power_limit(request),
+        OP_POWER_SETTINGS => run_power_settings(request),
+        OP_POWER_PLAN => run_power_plan_activate(request),
         _ => Err(format!("不支持的操作：{op}")),
     }
 }
@@ -373,21 +397,147 @@ fn run_power_limit(request: &Value) -> Result<Outcome, String> {
         return Err("percent 必须在 30–100 之间。".into());
     }
     let script = format!(
-        "$ErrorActionPreference='Stop'; powercfg /setacvalueindex SCHEME_CURRENT SUB_PROCESSOR PROCTHROTTLEMAX {percent}; if($LASTEXITCODE -ne 0){{ throw '设置交流电源上限失败' }}; powercfg /setdcvalueindex SCHEME_CURRENT SUB_PROCESSOR PROCTHROTTLEMAX {percent}; if($LASTEXITCODE -ne 0){{ throw '设置电池上限失败' }}; powercfg /setactive SCHEME_CURRENT; if($LASTEXITCODE -ne 0){{ throw '激活电源方案失败' }}; 'ok'"
+        "$ErrorActionPreference='Stop'; powercfg /setacvalueindex SCHEME_CURRENT SUB_PROCESSOR PROCTHROTTLEMAX {percent}; if($LASTEXITCODE -ne 0){{ Write-Output \"RC=$LASTEXITCODE\"; exit 1 }}; powercfg /setdcvalueindex SCHEME_CURRENT SUB_PROCESSOR PROCTHROTTLEMAX {percent}; if($LASTEXITCODE -ne 0){{ Write-Output \"RC=$LASTEXITCODE\"; exit 1 }}; powercfg /setactive SCHEME_CURRENT; if($LASTEXITCODE -ne 0){{ Write-Output \"RC=$LASTEXITCODE\"; exit 1 }}; 'ok'"
     );
-    let output = Command::new("powershell.exe")
-        .creation_flags(CREATE_NO_WINDOW)
-        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
-        .output()
-        .map_err(|error| format!("无法启动 powercfg：{error}"))?;
-    if !output.status.success() {
-        let text = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(format!("设置处理器上限失败：{text}"));
-    }
+    run_powershell(&script).map_err(|error| format!("设置处理器上限失败：{error}"))?;
     Ok(Outcome {
         message: format!("处理器最大状态已设为 {percent}%"),
         data: Some(json!({"percent": percent})),
     })
+}
+
+/// 在提权进程里执行 powercfg 命令，返回失败原因。
+///
+/// PowerShell 的错误输出是系统控制台编码（GBK），直接读会变成乱码，
+/// 所以脚本统一回传 ASCII 错误码 `RC=<code>`，这里再翻译成中文原因。
+fn run_powershell(script: &str) -> Result<(), String> {
+    let output = Command::new("powershell.exe")
+        .creation_flags(CREATE_NO_WINDOW)
+        .args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .output()
+        .map_err(|error| format!("无法启动 powercfg：{error}"))?;
+    if !output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let code = stdout
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("RC=").map(str::to_string));
+        return Err(match code {
+            Some(code) => format!(
+                "powercfg 返回错误码 {code}（常见原因：权限不足，或该设置不被当前计划支持）"
+            ),
+            None => format!("命令执行失败（退出码 {:?}）", output.status.code()),
+        });
+    }
+    Ok(())
+}
+
+/// 写入电源计划的 AC/DC 取值。
+///
+/// 电源计划的取值存放在 HKLM，普通权限写入只会拿到 ERROR_ACCESS_DENIED，
+/// 所以这个操作只能在提权助手里做。整批设置一次写完、一次激活，
+/// 用户只会被问一次 UAC。
+fn run_power_settings(request: &Value) -> Result<Outcome, String> {
+    let items = request
+        .get("settings")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if items.is_empty() {
+        return Err("缺少 settings。".into());
+    }
+    if items.len() > 16 {
+        return Err("单次最多写入 16 个电源设置项。".into());
+    }
+    let mut written = 0usize;
+    let mut results: Vec<Value> = Vec::new();
+    for item in &items {
+        let id = item.get("id").and_then(Value::as_str).unwrap_or_default();
+        let subgroup = item.get("subgroup").and_then(Value::as_str).unwrap_or_default();
+        let setting = item.get("setting").and_then(Value::as_str).unwrap_or_default();
+        if !valid_item_id(id) {
+            results.push(json!({"id": id, "ok": false, "error": "电源设置项标识无效。"}));
+            continue;
+        }
+        if !valid_power_alias(subgroup) || !valid_power_alias(setting) {
+            results.push(json!({
+                "id": id,
+                "ok": false,
+                "error": format!("不支持的电源设置别名：{subgroup}/{setting}"),
+            }));
+            continue;
+        }
+        let ac = item.get("ac").and_then(Value::as_u64).unwrap_or(0);
+        let dc = item.get("dc").and_then(Value::as_u64).unwrap_or(0);
+        // powercfg 的时间单位是秒。
+        let script = format!(
+            "$ErrorActionPreference='Stop'; powercfg /setacvalueindex SCHEME_CURRENT {subgroup} {setting} {ac}; if($LASTEXITCODE -ne 0){{ Write-Output \"RC=$LASTEXITCODE\"; exit 1 }}; powercfg /setdcvalueindex SCHEME_CURRENT {subgroup} {setting} {dc}; if($LASTEXITCODE -ne 0){{ Write-Output \"RC=$LASTEXITCODE\"; exit 1 }}; 'ok'"
+        );
+        match run_powershell(&script) {
+            Ok(()) => {
+                written += 1;
+                results.push(json!({"id": id, "ok": true, "error": null}));
+            }
+            Err(error) => results.push(json!({"id": id, "ok": false, "error": error})),
+        }
+    }
+    // 写完必须重新激活计划，改动才会生效；激活失败要单独报出来。
+    let mut activation_error: Option<String> = None;
+    if written > 0 {
+        if let Err(error) = run_powershell(
+            "$ErrorActionPreference='Stop'; powercfg /setactive SCHEME_CURRENT; if($LASTEXITCODE -ne 0){ Write-Output \"RC=$LASTEXITCODE\"; exit 1 }; 'ok'",
+        ) {
+            activation_error = Some(error);
+        }
+    }
+    Ok(Outcome {
+        message: format!("已写入 {written} 个电源设置项"),
+        data: Some(json!({
+            "written": written,
+            "items": results,
+            "activationError": activation_error,
+        })),
+    })
+}
+
+/// 切换当前使用的电源计划。计划 GUID 会直接拼进 powercfg 命令行，
+/// 因此只接受标准 GUID 文本。
+fn run_power_plan_activate(request: &Value) -> Result<Outcome, String> {
+    let guid = request.get("guid").and_then(Value::as_str).unwrap_or_default();
+    if !valid_guid_text(guid) {
+        return Err("电源计划 GUID 无效。".into());
+    }
+    run_powershell(&format!(
+        "$ErrorActionPreference='Stop'; powercfg /setactive {guid}; if($LASTEXITCODE -ne 0){{ Write-Output \"RC=$LASTEXITCODE\"; exit 1 }}; 'ok'"
+    ))
+    .map_err(|error| format!("切换电源计划失败：{error}"))?;
+    Ok(Outcome {
+        message: format!("已切换到电源计划 {guid}"),
+        data: Some(json!({"guid": guid})),
+    })
+}
+
+/// 标准 GUID 文本：8-4-4-4-12 位十六进制。
+fn valid_guid_text(text: &str) -> bool {
+    let parts = text.split('-').collect::<Vec<_>>();
+    if parts.len() != 5 {
+        return false;
+    }
+    let lengths = [8usize, 4, 4, 4, 12];
+    for (part, expected) in parts.iter().zip(lengths.iter()) {
+        if part.len() != *expected || !part.chars().all(|c| c.is_ascii_hexdigit()) {
+            return false;
+        }
+    }
+    true
+}
+
+/// 电源设置项的标识符：只允许小写字母、数字与连字符。
+fn valid_item_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 64
+        && id
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
 fn run_pm_restore(request: &Value) -> Result<Outcome, String> {
@@ -732,7 +882,74 @@ fn run_winopt(request: &Value) -> Result<Outcome, String> {
     let setting = request.get("setting").and_then(Value::as_str).unwrap_or_default();
     let value = request.get("value").and_then(Value::as_u64).ok_or_else(|| "缺少 value。".to_string())?;
     let value = u32::try_from(value).map_err(|_| "value 超出范围。".to_string())?;
+    let (before, after) = winopt_apply_one(setting, value)?;
+    Ok(Outcome {
+        message: "系统设置已更新".into(),
+        data: Some(json!({"setting": setting, "before": before, "after": after})),
+    })
+}
 
+/// 批量应用管理员级设置：一次提权、一次 UAC，逐项隔离失败。
+///
+/// 单项授权意味着用户要为一组设置反复点 UAC；这里把整批放进同一个提权进程，
+/// 逐项返回写入前后值，失败只影响该项。
+fn run_winopt_batch(request: &Value) -> Result<Outcome, String> {
+    let items = request
+        .get("settings")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if items.is_empty() {
+        return Err("缺少 settings。".into());
+    }
+    if items.len() > 16 {
+        return Err("单次最多修改 16 项系统设置。".into());
+    }
+    let mut applied = 0usize;
+    let mut results: Vec<Value> = Vec::new();
+    for item in &items {
+        let id = item.get("id").and_then(Value::as_str).unwrap_or_default();
+        let value = match item.get("value").and_then(Value::as_u64) {
+            Some(value) => match u32::try_from(value) {
+                Ok(value) => value,
+                Err(_) => {
+                    results.push(json!({"id": id, "ok": false, "before": null, "after": null, "error": "value 超出范围。"}));
+                    continue;
+                }
+            },
+            None => {
+                results.push(json!({"id": id, "ok": false, "before": null, "after": null, "error": "缺少 value。"}));
+                continue;
+            }
+        };
+        match winopt_apply_one(id, value) {
+            Ok((before, after)) => {
+                applied += 1;
+                results.push(json!({
+                    "id": id,
+                    "ok": true,
+                    "before": before,
+                    "after": after,
+                    "error": null,
+                }));
+            }
+            Err(error) => results.push(json!({
+                "id": id,
+                "ok": false,
+                "before": null,
+                "after": null,
+                "error": error,
+            })),
+        }
+    }
+    Ok(Outcome {
+        message: format!("已应用 {applied} 项系统设置"),
+        data: Some(json!({"applied": applied, "items": results})),
+    })
+}
+
+/// 应用一项管理员级设置，返回写入前后的值。
+fn winopt_apply_one(setting: &str, value: u32) -> Result<(Value, Value), String> {
     if setting == "searchService" {
         if ![2u32, 3, 4].contains(&value) {
             return Err("searchService 只接受 2/3/4。".into());
@@ -748,10 +965,7 @@ fn run_winopt(request: &Value) -> Result<Outcome, String> {
         if after != value {
             return Err("写入后回读服务启动类型不一致。".into());
         }
-        return Ok(Outcome {
-            message: "Windows 搜索服务启动类型已更新".into(),
-            data: Some(json!({"setting": setting, "before": before, "after": after})),
-        });
+        return Ok((json!(before), json!(after)));
     }
 
     if setting == "hibernate" {
@@ -759,6 +973,7 @@ fn run_winopt(request: &Value) -> Result<Outcome, String> {
             return Err("hibernate 只接受 0/1。".into());
         }
         let flag = if value == 1 { "on" } else { "off" };
+        let before = read_hibernate_enabled().map(|value| json!(value));
         let output = Command::new("powercfg.exe")
             .creation_flags(CREATE_NO_WINDOW)
             .args(["/hibernate", flag])
@@ -769,10 +984,7 @@ fn run_winopt(request: &Value) -> Result<Outcome, String> {
             return Err(format!("powercfg 执行失败：{text}"));
         }
         let after = read_hibernate_enabled().unwrap_or(0);
-        return Ok(Outcome {
-            message: "休眠设置已更新".into(),
-            data: Some(json!({"setting": setting, "before": null, "after": after})),
-        });
+        return Ok((before.unwrap_or(Value::Null), json!(after)));
     }
 
     let (path, name, min, max) = winopt_registry_spec(setting)
@@ -791,10 +1003,7 @@ fn run_winopt(request: &Value) -> Result<Outcome, String> {
     if after != value {
         return Err("写入后回读系统设置不一致。".into());
     }
-    Ok(Outcome {
-        message: "系统设置已更新".into(),
-        data: Some(json!({"setting": setting, "before": before, "after": after})),
-    })
+    Ok((json!(before), json!(after)))
 }
 
 fn crash_dump_value(mode: &str) -> Option<u32> {
@@ -962,6 +1171,32 @@ fn now_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn power_alias_whitelist_rejects_arbitrary_input() {
+        // 别名会直接拼进 powercfg 命令行，白名单之外一律拒绝。
+        assert!(valid_power_alias("SUB_PROCESSOR"));
+        assert!(valid_power_alias("PROCTHROTTLEMAX"));
+        assert!(!valid_power_alias("SUB_PROCESSOR & calc"));
+        assert!(!valid_power_alias(""));
+        assert!(!valid_power_alias("sub_processor"));
+    }
+
+    #[test]
+    fn guid_text_must_be_standard_format() {
+        assert!(valid_guid_text("381b4222-f694-41f0-9685-ff5bb260df2e"));
+        assert!(!valid_guid_text("381b4222-f694-41f0-9685"));
+        assert!(!valid_guid_text("381b4222-f694-41f0-9685-ff5bb260df2e; calc"));
+        assert!(!valid_guid_text("zzzzzzzz-f694-41f0-9685-ff5bb260df2e"));
+    }
+
+    #[test]
+    fn item_ids_are_restricted_to_safe_characters() {
+        assert!(valid_item_id("processor-min"));
+        assert!(!valid_item_id("Processor Min"));
+        assert!(!valid_item_id("a;calc"));
+        assert!(!valid_item_id(""));
+    }
 
     #[test]
     fn nonce_requires_32_hex_characters() {
