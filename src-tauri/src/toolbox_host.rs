@@ -347,6 +347,28 @@ pub struct ToolRunStatEntry {
     pub timeout_percent: Option<f64>,
     /// 耗时 P95（毫秒）。
     pub duration_p95_ms: Option<u64>,
+    /// 该工具的达标状态：ok / degraded / insufficient。
+    pub status: String,
+    /// 未达标的具体原因（给用户看的原话，不是错误码）。
+    pub issues: Vec<String>,
+}
+
+/// 达标判定：把 §8 的两条验收线变成一个可读的结论。
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolboxStatsVerdict {
+    /// 总体状态：pass 达标 / warn 未达标 / unknown 样本不足无法判定。
+    pub status: String,
+    /// 握手成功率是否达标；样本不足时为 null。
+    pub handshake_ok: Option<bool>,
+    /// 超时率是否达标；样本不足时为 null。
+    pub timeout_ok: Option<bool>,
+    /// 未达标的工具 id。
+    pub degraded_tools: Vec<String>,
+    /// 样本不足、暂不判定的工具 id。
+    pub insufficient_tools: Vec<String>,
+    /// 一句话结论。
+    pub summary: String,
 }
 
 /// 工具执行统计汇总。
@@ -371,6 +393,8 @@ pub struct ToolboxStatsReport {
     pub tool_count: usize,
     /// 逐工具明细，按执行次数从多到少。
     pub tools: Vec<ToolRunStatEntry>,
+    /// 对照 §8 验收线的达标判定。
+    pub verdict: ToolboxStatsVerdict,
 }
 
 /// 比率（%）：分母为 0 时返回 null，不拿 0 冒充「没有失败」。
@@ -392,6 +416,126 @@ fn percentile(values: &[u64], p: f64) -> Option<u64> {
     Some(sorted[rank - 1])
 }
 
+/// 判定握手成功率是否达标：样本不足时返回 None（既不是达标也不是未达标）。
+fn check_handshake_target(handshakes: u64, handshake_attempts: u64) -> Option<bool> {
+    if handshake_attempts < MIN_VERDICT_SAMPLES {
+        return None;
+    }
+    let rate = ratio_percent(handshakes, handshake_attempts)?;
+    Some(rate >= TARGET_HANDSHAKE_SUCCESS_PERCENT)
+}
+
+/// 判定超时率是否达标：样本不足时返回 None。
+fn check_timeout_target(timeouts: u64, attempts: u64) -> Option<bool> {
+    if attempts < MIN_VERDICT_SAMPLES {
+        return None;
+    }
+    let rate = ratio_percent(timeouts, attempts)?;
+    Some(rate < TARGET_TIMEOUT_PERCENT)
+}
+
+/// 逐工具判定：返回状态（ok / degraded / insufficient）与给用户看的原因。
+fn evaluate_tool(stat: &ToolRunStat) -> (String, Vec<String>) {
+    let mut issues = Vec::new();
+    // 跑够次数却没有一次进入握手阶段：工具根本没能启动起来，比「握手率低」更严重。
+    if stat.attempts >= MIN_VERDICT_SAMPLES && stat.handshake_attempts == 0 {
+        issues.push(format!(
+            "{} 次执行没有一次进入握手阶段",
+            stat.attempts
+        ));
+    }
+    if check_handshake_target(stat.handshakes, stat.handshake_attempts) == Some(false) {
+        let rate = ratio_percent(stat.handshakes, stat.handshake_attempts).unwrap_or(0.0);
+        issues.push(format!(
+            "握手成功率 {:.1}% 低于目标 {:.0}%",
+            rate, TARGET_HANDSHAKE_SUCCESS_PERCENT
+        ));
+    }
+    if check_timeout_target(stat.timeouts, stat.attempts) == Some(false) {
+        let rate = ratio_percent(stat.timeouts, stat.attempts).unwrap_or(0.0);
+        issues.push(format!(
+            "超时率 {:.1}% 高于上限 {:.0}%",
+            rate, TARGET_TIMEOUT_PERCENT
+        ));
+    }
+    if !issues.is_empty() {
+        return ("degraded".to_string(), issues);
+    }
+    let handshake_ok = check_handshake_target(stat.handshakes, stat.handshake_attempts);
+    let timeout_ok = check_timeout_target(stat.timeouts, stat.attempts);
+    if handshake_ok.is_none() && timeout_ok.is_none() {
+        return (
+            "insufficient".to_string(),
+            vec![format!(
+                "执行 {} 次，不足 {} 次，暂不判定",
+                stat.attempts, MIN_VERDICT_SAMPLES
+            )],
+        );
+    }
+    ("ok".to_string(), Vec::new())
+}
+
+/// 汇总达标判定：两条 §8 验收线 + 逐工具归因。
+fn build_verdict(
+    handshake_ok: Option<bool>,
+    timeout_ok: Option<bool>,
+    handshake_percent: Option<f64>,
+    timeout_percent: Option<f64>,
+    degraded_tools: &[String],
+    insufficient_tools: &[String],
+) -> ToolboxStatsVerdict {
+    let mut parts: Vec<String> = Vec::new();
+    match (handshake_ok, handshake_percent) {
+        (Some(true), Some(rate)) => parts.push(format!(
+            "握手成功率 {:.2}% 达标（目标 ≥{:.0}%）",
+            rate, TARGET_HANDSHAKE_SUCCESS_PERCENT
+        )),
+        (Some(false), Some(rate)) => parts.push(format!(
+            "握手成功率 {:.2}% 未达标（目标 ≥{:.0}%）",
+            rate, TARGET_HANDSHAKE_SUCCESS_PERCENT
+        )),
+        _ => parts.push("握手成功率样本不足，未判定".to_string()),
+    }
+    match (timeout_ok, timeout_percent) {
+        (Some(true), Some(rate)) => parts.push(format!(
+            "超时率 {:.2}% 达标（上限 <{:.0}%）",
+            rate, TARGET_TIMEOUT_PERCENT
+        )),
+        (Some(false), Some(rate)) => parts.push(format!(
+            "超时率 {:.2}% 未达标（上限 <{:.0}%）",
+            rate, TARGET_TIMEOUT_PERCENT
+        )),
+        _ => parts.push("超时率样本不足，未判定".to_string()),
+    }
+    let failed = handshake_ok == Some(false) || timeout_ok == Some(false) || !degraded_tools.is_empty();
+    // 只有两条验收线都判过且都达标、也没有工具掉链子，才敢说「达标」。
+    let status = if failed {
+        "warn"
+    } else if handshake_ok == Some(true) && timeout_ok == Some(true) {
+        "pass"
+    } else {
+        "unknown"
+    };
+    let mut summary = parts.join("；");
+    if !degraded_tools.is_empty() {
+        summary.push_str(&format!("；未达标工具：{}", degraded_tools.join("、")));
+    }
+    if !insufficient_tools.is_empty() {
+        summary.push_str(&format!(
+            "；{} 个工具样本不足暂不判定",
+            insufficient_tools.len()
+        ));
+    }
+    ToolboxStatsVerdict {
+        status: status.to_string(),
+        handshake_ok,
+        timeout_ok,
+        degraded_tools: degraded_tools.to_vec(),
+        insufficient_tools: insufficient_tools.to_vec(),
+        summary,
+    }
+}
+
 /// 把逐工具统计汇总成一份报告。
 pub fn build_stats_report(stats: &HashMap<String, ToolRunStat>) -> ToolboxStatsReport {
     let mut attempts = 0u64;
@@ -400,12 +544,20 @@ pub fn build_stats_report(stats: &HashMap<String, ToolRunStat>) -> ToolboxStatsR
     let mut timeouts = 0u64;
     let mut durations: Vec<u64> = Vec::new();
     let mut tools = Vec::new();
+    let mut degraded_tools: Vec<String> = Vec::new();
+    let mut insufficient_tools: Vec<String> = Vec::new();
     for (tool_id, stat) in stats {
         attempts += stat.attempts;
         handshake_attempts += stat.handshake_attempts;
         handshakes += stat.handshakes;
         timeouts += stat.timeouts;
         durations.extend(stat.durations_ms.iter().copied());
+        let (status, issues) = evaluate_tool(stat);
+        match status.as_str() {
+            "degraded" => degraded_tools.push(tool_id.clone()),
+            "insufficient" => insufficient_tools.push(tool_id.clone()),
+            _ => {}
+        }
         tools.push(ToolRunStatEntry {
             tool_id: tool_id.clone(),
             attempts: stat.attempts,
@@ -418,6 +570,8 @@ pub fn build_stats_report(stats: &HashMap<String, ToolRunStat>) -> ToolboxStatsR
             handshake_success_percent: ratio_percent(stat.handshakes, stat.handshake_attempts),
             timeout_percent: ratio_percent(stat.timeouts, stat.attempts),
             duration_p95_ms: percentile(&stat.durations_ms, 0.95),
+            status,
+            issues,
         });
     }
     tools.sort_by(|left, right| {
@@ -426,16 +580,30 @@ pub fn build_stats_report(stats: &HashMap<String, ToolRunStat>) -> ToolboxStatsR
             .cmp(&left.attempts)
             .then_with(|| left.tool_id.cmp(&right.tool_id))
     });
+    // HashMap 遍历顺序不固定，归因列表要排序，否则界面每次刷新顺序都在跳。
+    degraded_tools.sort();
+    insufficient_tools.sort();
+    let handshake_success_percent = ratio_percent(handshakes, handshake_attempts);
+    let timeout_percent = ratio_percent(timeouts, attempts);
+    let verdict = build_verdict(
+        check_handshake_target(handshakes, handshake_attempts),
+        check_timeout_target(timeouts, attempts),
+        handshake_success_percent,
+        timeout_percent,
+        &degraded_tools,
+        &insufficient_tools,
+    );
     ToolboxStatsReport {
         attempts,
         handshake_attempts,
         handshakes,
-        handshake_success_percent: ratio_percent(handshakes, handshake_attempts),
+        handshake_success_percent,
         timeouts,
-        timeout_percent: ratio_percent(timeouts, attempts),
+        timeout_percent,
         duration_p95_ms: percentile(&durations, 0.95),
         tool_count: tools.len(),
         tools,
+        verdict,
     }
 }
 
@@ -1327,5 +1495,113 @@ mod tests {
         assert_eq!(restored.attempts, 1);
         assert_eq!(restored.handshakes, 1);
         assert_eq!(restored.durations_ms, vec![321]);
+    }
+
+    #[test]
+    fn verdict_needs_enough_samples_before_it_judges() {
+        // 4 次执行不够判定：既不判达标，也不判未达标。
+        assert_eq!(check_handshake_target(4, 4), None);
+        assert_eq!(check_timeout_target(0, 4), None);
+        // 5 次起才给结论。
+        assert_eq!(check_handshake_target(5, 5), Some(true));
+        assert_eq!(check_timeout_target(0, 5), Some(true));
+        // 99% 是目标线，低于就要报不达标。
+        assert_eq!(check_handshake_target(99, 100), Some(true));
+        assert_eq!(check_handshake_target(98, 100), Some(false));
+        // 超时率上限是 1%（严格小于）。
+        assert_eq!(check_timeout_target(0, 100), Some(true));
+        assert_eq!(check_timeout_target(1, 100), Some(false));
+    }
+
+    #[test]
+    fn verdict_passes_when_both_targets_are_met() {
+        let mut stats = HashMap::new();
+        let mut stat = ToolRunStat::default();
+        for _ in 0..100 {
+            stat.record(ToolRunOutcome::Ok, &traced(true, true), 100);
+        }
+        stats.insert("alpha".to_string(), stat);
+        let report = build_stats_report(&stats);
+        assert_eq!(report.verdict.status, "pass");
+        assert_eq!(report.verdict.handshake_ok, Some(true));
+        assert_eq!(report.verdict.timeout_ok, Some(true));
+        assert!(report.verdict.degraded_tools.is_empty());
+        assert_eq!(report.tools[0].status, "ok");
+        assert!(report.tools[0].issues.is_empty());
+        assert!(report.verdict.summary.contains("达标"));
+    }
+
+    #[test]
+    fn verdict_warns_and_names_the_degraded_tool() {
+        let mut stats = HashMap::new();
+        // 健康工具
+        let mut healthy = ToolRunStat::default();
+        for _ in 0..50 {
+            healthy.record(ToolRunOutcome::Ok, &traced(true, true), 100);
+        }
+        stats.insert("alpha".to_string(), healthy);
+        // 一半都超时的工具
+        let mut flaky = ToolRunStat::default();
+        for _ in 0..5 {
+            flaky.record(ToolRunOutcome::TimedOut, &traced(true, true), 9_000);
+        }
+        stats.insert("beta".to_string(), flaky);
+
+        let report = build_stats_report(&stats);
+        assert_eq!(report.verdict.status, "warn");
+        assert_eq!(report.verdict.timeout_ok, Some(false));
+        assert_eq!(report.verdict.degraded_tools, vec!["beta".to_string()]);
+        let beta = report
+            .tools
+            .iter()
+            .find(|entry| entry.tool_id == "beta")
+            .expect("beta entry");
+        assert_eq!(beta.status, "degraded");
+        assert!(beta.issues.iter().any(|issue| issue.contains("超时率")));
+        // 归因要指名道姓，不能只说「有问题」。
+        assert!(report.verdict.summary.contains("beta"));
+    }
+
+    #[test]
+    fn verdict_flags_a_tool_that_never_handshook() {
+        let mut stats = HashMap::new();
+        let mut stat = ToolRunStat::default();
+        for _ in 0..6 {
+            stat.record(ToolRunOutcome::Failed, &traced(false, false), 10);
+        }
+        stats.insert("gamma".to_string(), stat);
+        let report = build_stats_report(&stats);
+        assert_eq!(report.verdict.status, "warn");
+        assert_eq!(report.verdict.degraded_tools, vec!["gamma".to_string()]);
+        assert_eq!(report.tools[0].status, "degraded");
+        assert!(report.tools[0].issues[0].contains("握手阶段"));
+    }
+
+    #[test]
+    fn verdict_stays_unknown_without_enough_samples() {
+        let mut stats = HashMap::new();
+        let mut stat = ToolRunStat::default();
+        for _ in 0..3 {
+            stat.record(ToolRunOutcome::Ok, &traced(true, true), 100);
+        }
+        stats.insert("delta".to_string(), stat);
+        let report = build_stats_report(&stats);
+        // 样本不足不是「达标」，也不是「坏了」。
+        assert_eq!(report.verdict.status, "unknown");
+        assert_eq!(report.verdict.handshake_ok, None);
+        assert_eq!(report.verdict.timeout_ok, None);
+        assert_eq!(report.verdict.insufficient_tools, vec!["delta".to_string()]);
+        assert_eq!(report.tools[0].status, "insufficient");
+        assert!(report.tools[0].issues[0].contains("暂不判定"));
+    }
+
+    #[test]
+    fn empty_report_is_unknown_not_pass() {
+        let report = build_stats_report(&HashMap::new());
+        assert_eq!(report.verdict.status, "unknown");
+        assert_eq!(report.verdict.handshake_ok, None);
+        assert_eq!(report.verdict.timeout_ok, None);
+        assert!(report.verdict.degraded_tools.is_empty());
+        assert!(report.verdict.summary.contains("样本不足"));
     }
 }

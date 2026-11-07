@@ -337,6 +337,26 @@ export interface ToolRunStatEntry {
   handshakeSuccessPercent: number | null;
   timeoutPercent: number | null;
   durationP95Ms: number | null;
+  /** 该工具的达标状态：ok 达标 / degraded 未达标 / insufficient 样本不足。 */
+  status: string;
+  /** 未达标的具体原因（给用户看的话）。 */
+  issues: string[];
+}
+
+/** 工具箱达标判定：对照 §8 的两条验收线。 */
+export interface ToolboxStatsVerdict {
+  /** pass 达标 / warn 未达标 / unknown 样本不足无法判定。 */
+  status: string;
+  /** 握手成功率是否达标；样本不足时为 null。 */
+  handshakeOk: boolean | null;
+  /** 超时率是否达标；样本不足时为 null。 */
+  timeoutOk: boolean | null;
+  /** 未达标的工具 id。 */
+  degradedTools: string[];
+  /** 样本不足、暂不判定的工具 id。 */
+  insufficientTools: string[];
+  /** 一句话结论。 */
+  summary: string;
 }
 
 /** 工具执行统计汇总（握手成功率、超时率、耗时 P95）。 */
@@ -350,6 +370,7 @@ export interface ToolboxStatsReport {
   durationP95Ms: number | null;
   toolCount: number;
   tools: ToolRunStatEntry[];
+  verdict: ToolboxStatsVerdict;
 }
 
 export interface BenchmarkPreflight {

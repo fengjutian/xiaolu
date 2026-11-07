@@ -413,6 +413,8 @@ export async function getToolboxStats(): Promise<ToolboxStatsReport> {
           handshakeSuccessPercent: 100,
           timeoutPercent: 0,
           durationP95Ms: 980,
+          status: "ok",
+          issues: [],
         },
         {
           toolId: "omni_zip",
@@ -426,6 +428,8 @@ export async function getToolboxStats(): Promise<ToolboxStatsReport> {
           handshakeSuccessPercent: 100,
           timeoutPercent: 2.5,
           durationP95Ms: 2100,
+          status: "degraded",
+          issues: ["超时率 2.5% 高于上限 1%"],
         },
         {
           toolId: "master_pdf",
@@ -439,8 +443,19 @@ export async function getToolboxStats(): Promise<ToolboxStatsReport> {
           handshakeSuccessPercent: 95.8333,
           timeoutPercent: 0,
           durationP95Ms: 320,
+          status: "degraded",
+          issues: ["握手成功率 95.8% 低于目标 99%"],
         },
       ],
+      verdict: {
+        status: "warn",
+        handshakeOk: true,
+        timeoutOk: true,
+        degradedTools: ["master_pdf", "omni_zip"],
+        insufficientTools: [],
+        summary:
+          "握手成功率 99.22% 达标（目标 ≥99%）；超时率 0.78% 达标（上限 <1%）；未达标工具：master_pdf、omni_zip",
+      },
     };
   }
   return invoke<ToolboxStatsReport>("get_toolbox_stats");

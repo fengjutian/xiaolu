@@ -5669,9 +5669,28 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
         <Card className="glass-card" radius="lg">
           <Group justify="space-between" align="flex-start" wrap="wrap">
             <Box>
-              <Text size="xs" c="dimmed" fw={800}>
-                工具运行统计
-              </Text>
+              <Group gap="xs">
+                <Text size="xs" c="dimmed" fw={800}>
+                  工具运行统计
+                </Text>
+                <Badge
+                  size="xs"
+                  variant="light"
+                  color={
+                    toolboxStats.verdict.status === "pass"
+                      ? "green"
+                      : toolboxStats.verdict.status === "warn"
+                        ? "red"
+                        : "gray"
+                  }
+                >
+                  {toolboxStats.verdict.status === "pass"
+                    ? "达标"
+                    : toolboxStats.verdict.status === "warn"
+                      ? "未达标"
+                      : "样本不足"}
+                </Badge>
+              </Group>
               <Group gap="xl" mt={8}>
                 <Box>
                   <Text size="xs" c="dimmed">
@@ -5683,7 +5702,7 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                       : `${toolboxStats.handshakeSuccessPercent.toFixed(2)}%`}
                   </Text>
                   <Text size="xs" c="dimmed">
-                    {toolboxStats.handshakes} / {toolboxStats.handshakeAttempts} 次
+                    {toolboxStats.handshakes} / {toolboxStats.handshakeAttempts} 次 · 目标 ≥ 99%
                   </Text>
                 </Box>
                 <Box>
@@ -5696,7 +5715,7 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                       : `${toolboxStats.timeoutPercent.toFixed(2)}%`}
                   </Text>
                   <Text size="xs" c="dimmed">
-                    {toolboxStats.timeouts} / {toolboxStats.attempts} 次
+                    {toolboxStats.timeouts} / {toolboxStats.attempts} 次 · 上限 &lt; 1%
                   </Text>
                 </Box>
                 <Box>
@@ -5713,6 +5732,9 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                   </Text>
                 </Box>
               </Group>
+              <Text size="xs" c="dimmed" mt={6}>
+                {toolboxStats.verdict.summary}
+              </Text>
             </Box>
             <Button
               size="xs"
@@ -5722,6 +5744,24 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
               {statsDetail ? "收起明细" : "查看明细"}
             </Button>
           </Group>
+          {toolboxStats.verdict.status === "warn" && (
+            <Alert color="red" icon={<IconAlertCircle />} mt="sm" title="有工具没达到验收线">
+              <Stack gap={4}>
+                {toolboxStats.tools
+                  .filter((tool) => tool.status === "degraded")
+                  .map((tool) => (
+                    <Text size="xs" key={tool.toolId}>
+                      <b>{tool.toolId}</b>：{tool.issues.join("；")}
+                    </Text>
+                  ))}
+              </Stack>
+            </Alert>
+          )}
+          {toolboxStats.verdict.status === "unknown" && (
+            <Alert color="gray" mt="sm">
+              执行次数还不够，暂时无法判定是否达标：每个工具至少执行 5 次才会参与判定。
+            </Alert>
+          )}
           {statsDetail && (
             <>
               {toolboxStats.tools.length === 0 ? (
@@ -5730,10 +5770,11 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                 </Alert>
               ) : (
                 <ScrollArea type="auto" mt="md">
-                  <Table miw={720} highlightOnHover verticalSpacing="xs">
+                  <Table miw={760} highlightOnHover verticalSpacing="xs">
                     <Table.Thead>
                       <Table.Tr>
                         <Table.Th>工具</Table.Th>
+                        <Table.Th>状态</Table.Th>
                         <Table.Th>执行</Table.Th>
                         <Table.Th>成功</Table.Th>
                         <Table.Th>超时</Table.Th>
@@ -5745,7 +5786,33 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                     <Table.Tbody>
                       {toolboxStats.tools.map((tool) => (
                         <Table.Tr key={tool.toolId}>
-                          <Table.Td>{tool.toolId}</Table.Td>
+                          <Table.Td>
+                            <Text size="xs">{tool.toolId}</Text>
+                            {tool.issues.length > 0 && (
+                              <Text size="xs" c="dimmed">
+                                {tool.issues.join("；")}
+                              </Text>
+                            )}
+                          </Table.Td>
+                          <Table.Td>
+                            <Badge
+                              size="xs"
+                              variant="light"
+                              color={
+                                tool.status === "ok"
+                                  ? "green"
+                                  : tool.status === "degraded"
+                                    ? "red"
+                                    : "gray"
+                              }
+                            >
+                              {tool.status === "ok"
+                                ? "达标"
+                                : tool.status === "degraded"
+                                  ? "未达标"
+                                  : "样本不足"}
+                            </Badge>
+                          </Table.Td>
                           <Table.Td>{tool.attempts}</Table.Td>
                           <Table.Td>{tool.completed}</Table.Td>
                           <Table.Td>{tool.timeouts}</Table.Td>
@@ -5767,7 +5834,7 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
                 </ScrollArea>
               )}
               <Text size="xs" c="dimmed" mt="sm">
-                统计只记录本机工具执行，不上传任何数据；样本为 0 时显示「暂无样本」，不会用 100% 冒充成功。
+                统计只记录本机工具执行，不上传任何数据；样本为 0 时显示「暂无样本」，不会用 100% 冒充成功。验收线为握手成功率 ≥ 99%、超时率 &lt; 1%，每个工具至少执行 5 次才参与判定。
               </Text>
             </>
           )}
