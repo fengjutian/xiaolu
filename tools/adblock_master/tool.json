@@ -14,7 +14,7 @@
     "writePaths": ["%WINDIR%\\System32\\drivers\\etc\\hosts"],
     "registry": [],
     "network": false,
-    "elevation": "none"
+    "elevation": "uac"
   },
   "actions": [
     { "id": "preview", "label": "审计", "write": false },

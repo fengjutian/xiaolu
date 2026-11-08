@@ -334,6 +334,9 @@ const FOF_SILENT: u16 = 0x0004;
 const FOF_NOCONFIRMATION: u16 = 0x0010;
 const FOF_ALLOWUNDO: u16 = 0x0040;
 const FOF_NOERRORUI: u16 = 0x0400;
+/// 无法进回收站（超配额/卷不支持）时必须弹确认，而不是悄悄永久删除。
+/// 该标志会覆盖 `FOF_NOCONFIRMATION`，只在这种情况下才提示。
+const FOF_WANTNUKEWARNING: u16 = 0x4000;
 
 /// 把文件移入回收站（FOF_ALLOWUNDO），失败时返回错误码。
 pub fn recycle_files(paths: &[PathBuf]) -> Result<(), String> {
@@ -352,7 +355,8 @@ pub fn recycle_files(paths: &[PathBuf]) -> Result<(), String> {
         w_func: FO_DELETE,
         p_from: from.as_ptr(),
         p_to: std::ptr::null(),
-        f_flags: FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI,
+        f_flags: FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI
+            | FOF_WANTNUKEWARNING,
         f_any_operations_aborted: 0,
         h_name_mappings: std::ptr::null_mut(),
         lpsz_progress_title: std::ptr::null(),

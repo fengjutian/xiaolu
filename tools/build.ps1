@@ -29,6 +29,9 @@ $profileDir = if ($Configuration -eq "release") { "release" } else { "debug" }
 New-Item -ItemType Directory -Force -Path $outRoot | Out-Null
 
 $fingerprints = @{}
+# Packaged executable hashes: the source fingerprint proves the exe was built
+# from these sources, but not that the exe itself is intact.
+$binaries = @{}
 
 Get-ChildItem -Path $toolsRoot -Directory | Where-Object { $_.Name -notlike "_*" } | ForEach-Object {
     $tool = $_
@@ -59,6 +62,7 @@ Get-ChildItem -Path $toolsRoot -Directory | Where-Object { $_.Name -notlike "_*"
     Copy-Item (Join-Path $tool.FullName "README.md") $destination -Force -ErrorAction SilentlyContinue
     # Record the fingerprint so a later verify can tell a fresh package from a stale one.
     $fingerprints[$manifest.id] = Get-ToolFingerprint -RepoRoot $root -ToolDir $tool.FullName
+    $binaries[$manifest.id] = (Get-FileHash -Path (Join-Path $destination $manifest.entry) -Algorithm SHA256).Hash.ToLowerInvariant()
     # The elevation helper now lives once at <dist>/lens_helper; drop stale per-tool copies.
     $staleHelper = Join-Path $destination "lens_helper.exe"
     if (Test-Path $staleHelper) {
@@ -83,6 +87,7 @@ if (Test-Path $helperProject) {
     $helperDir = Join-Path $outRoot "lens_helper"
     New-Item -ItemType Directory -Force -Path $helperDir | Out-Null
     Copy-Item $helperBinary $helperDir -Force
+    $binaries["lens_helper"] = (Get-FileHash -Path (Join-Path $helperDir "lens_helper.exe") -Algorithm SHA256).Hash.ToLowerInvariant()
     Write-Host "  -> $helperDir\lens_helper.exe"
 }
 
@@ -92,6 +97,13 @@ Write-Host "Tool packaging complete: $outRoot"
 [IO.File]::WriteAllText(
     (Join-Path $outRoot ".fingerprints.json"),
     ($fingerprints | ConvertTo-Json -Compress),
+    (New-Object System.Text.UTF8Encoding($false))
+)
+
+# One package-level hash map: tool id -> packaged executable SHA-256.
+[IO.File]::WriteAllText(
+    (Join-Path $outRoot ".binaries.json"),
+    ($binaries | ConvertTo-Json -Compress),
     (New-Object System.Text.UTF8Encoding($false))
 )
 

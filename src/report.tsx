@@ -175,7 +175,9 @@ function redactValue(
     }
     if (
       options.userName &&
-      /^(username|user_name|user|owner|registereduser)$/i.test(key)
+      /^(username|user_name|user|useraccount|account|owner|registereduser|runasuser|author)$/i.test(
+        key,
+      )
     ) {
       return REDACTED;
     }
@@ -630,7 +632,8 @@ function downloadFile(filename: string, content: string, type: string) {
   anchor.href = url;
   anchor.download = filename;
   anchor.click();
-  URL.revokeObjectURL(url);
+  // 立刻 revoke 会与浏览器「开始下载」竞速，偶发导出空文件。
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 export function buildHtmlReport(markdown: string, payload: ReportPayload): string {
@@ -710,26 +713,35 @@ export default function ReportPanel() {
   const [sections, setSections] = useState(DEFAULT_SECTIONS);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [payload, setPayload] = useState<ReportPayload | null>(null);
-  const [json, setJson] = useState("");
-  const [markdown, setMarkdown] = useState("");
+  // 只保存原始 payload，脱敏结果全部由当前开关派生：否则生成预览后再改开关，
+  // 导出用的还是旧数据（预览已脱敏、文件里却是原文）。
+  const [raw, setRaw] = useState<ReportPayload | null>(null);
 
-  const fields = useMemo(() => {
-    if (!payload) return [];
-    return flattenFields(
-      redactValue(payload, "", redaction),
-      "",
-      [],
-      0,
-    );
-  }, [payload, redaction]);
+  const payload = useMemo<ReportPayload | null>(() => {
+    if (!raw) return null;
+    const redacted = redactValue(raw, "", redaction) as ReportPayload;
+    return { ...redacted, privacy: { ...redacted.privacy, redaction } };
+  }, [raw, redaction]);
+
+  const fields = useMemo(
+    () => (payload ? flattenFields(payload, "", [], 0) : []),
+    [payload],
+  );
+
+  const json = useMemo(
+    () => (payload ? JSON.stringify(payload, null, 2) : ""),
+    [payload],
+  );
+
+  const markdown = useMemo(
+    () => (payload ? buildMarkdown(payload, redaction) : ""),
+    [payload, redaction],
+  );
 
   const generate = async () => {
     setLoading(true);
     setError(null);
-    setPayload(null);
-    setJson("");
-    setMarkdown("");
+    setRaw(null);
     try {
       const results = await Promise.allSettled([
         getSystemSnapshot(),
@@ -780,10 +792,7 @@ export default function ReportPanel() {
         errors,
       };
 
-      const redacted = redactValue(next, "", redaction) as ReportPayload;
-      setPayload(redacted);
-      setJson(JSON.stringify(redacted, null, 2));
-      setMarkdown(buildMarkdown(redacted, redaction));
+      setRaw(next);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {

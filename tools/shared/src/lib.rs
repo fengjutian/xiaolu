@@ -174,6 +174,64 @@ pub fn verify_token(token: &str, action: &str, digest: &str) -> Result<(), ToolE
     verify_token_with_secret(&secret, token, action, digest, now_ms())
 }
 
+/// 用宿主下发的密钥对任意载荷签名（十六进制 HMAC-SHA256）。
+///
+/// 用于「本工具自己写、之后要信任」的本地文件（例如回滚点）：同用户的其它进程
+/// 也能往这些目录里写文件，但拿不到运行中工具进程的密钥，无法伪造签名。
+pub fn sign_payload(payload: &str) -> Result<String, ToolError> {
+    let secret = secret_from_env()?;
+    Ok(encode_hex(&hmac_sha256(&secret, payload.as_bytes())))
+}
+
+/// 校验载荷签名（常量时间比较）。
+pub fn verify_payload_signature(payload: &str, signature: &str) -> Result<(), ToolError> {
+    let secret = secret_from_env()?;
+    let signature = decode_hex(signature.trim()).map_err(|_| {
+        ToolError::new("INVALID_SIGNATURE", "签名格式无效，文件可能被篡改。")
+    })?;
+    let mut mac = Hmac::<Sha256>::new_from_slice(&secret)
+        .map_err(|_| ToolError::new("INVALID_SIGNATURE", "签名密钥无效。"))?;
+    mac.update(payload.as_bytes());
+    mac.verify_slice(&signature)
+        .map_err(|_| ToolError::new("INVALID_SIGNATURE", "签名不匹配，文件可能被篡改。"))
+}
+
+/// 写入提权请求文件：独占创建 + 其他进程只读。
+///
+/// 返回的句柄必须一直持有到提权助手进程退出。共享模式里没有
+/// `FILE_SHARE_WRITE`/`FILE_SHARE_DELETE`，所以同用户的其它进程既不能改写内容，
+/// 也不能通过改名/删除把文件换掉；`create_new` 同时挡住预先放好的同名文件。
+#[cfg(windows)]
+pub fn write_request_exclusive(path: &std::path::Path, body: &str) -> Result<std::fs::File, String> {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_SHARE_READ: u32 = 0x0000_0001;
+    let open = || {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .share_mode(FILE_SHARE_READ)
+            .open(path)
+    };
+    let mut file = match open() {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            // 上一次异常退出可能留下同名请求；先删除再独占创建。
+            std::fs::remove_file(path).map_err(|error| format!("无法清理旧请求：{error}"))?;
+            open().map_err(|error| format!("无法创建提权请求：{error}"))?
+        }
+        Err(error) => return Err(format!("无法创建提权请求：{error}")),
+    };
+    file.write_all(body.as_bytes())
+        .map_err(|error| format!("无法写入提权请求：{error}"))?;
+    file.flush().ok();
+    Ok(file)
+}
+
+#[cfg(not(windows))]
+pub fn write_request_exclusive(_path: &std::path::Path, _body: &str) -> Result<std::fs::File, String> {
+    Err("提权请求写入仅支持 Windows。".into())
+}
+
 /// 把确认令牌附加到结果对象，供宿主在用户确认后回传。
 pub fn attach_token(data: &mut Value, token: String) {
     if let Value::Object(map) = data {
@@ -455,6 +513,16 @@ mod tests {
             "TOKEN_EXPIRED"
         );
         assert!(verify_token_with_secret(SECRET, "not-a-token", "apply", "x", now_ms()).is_err());
+    }
+
+    #[test]
+    fn payload_signature_detects_tampering() {
+        std::env::set_var(TOKEN_SECRET_ENV, "0f".repeat(32));
+        let signature = sign_payload("rollback-body").expect("sign");
+        assert!(verify_payload_signature("rollback-body", &signature).is_ok());
+        assert!(verify_payload_signature("rollback-body ", &signature).is_err());
+        assert!(verify_payload_signature("rollback-body", "zz").is_err());
+        std::env::remove_var(TOKEN_SECRET_ENV);
     }
 
     #[test]

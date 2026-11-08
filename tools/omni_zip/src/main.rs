@@ -349,13 +349,19 @@ fn preview(parameters: &Value) -> Result<Value, ToolError> {
     Ok(data)
 }
 
+/// 与目标同目录的临时文件：只有 `rename` 才能保证「旧文件要么完好、要么被新文件
+/// 完整替换」，不会出现半截文件。
+fn temp_sibling(target: &Path, tag: &str) -> PathBuf {
+    let name = target
+        .file_name()
+        .map(|value| value.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "output".into());
+    target.with_file_name(format!(".{name}.{tag}-{}.tmp", std::process::id()))
+}
+
 fn compress(plan: &Plan) -> Result<Value, ToolError> {
-    if plan.archive.exists() {
-        if !plan.overwrite {
-            return Err(ToolError::new("INVALID_INPUT", "目标文件已存在。"));
-        }
-        fs::remove_file(&plan.archive)
-            .map_err(|error| ToolError::new("INTERNAL", format!("无法覆盖目标文件：{error}")))?;
+    if plan.archive.exists() && !plan.overwrite {
+        return Err(ToolError::new("INVALID_INPUT", "目标文件已存在。"));
     }
     if let Some(parent) = plan.archive.parent() {
         if !parent.is_dir() {
@@ -369,7 +375,54 @@ fn compress(plan: &Plan) -> Result<Value, ToolError> {
     let total = entries.len();
     let step = progress_step(total);
 
-    let file = File::create(&plan.archive)
+    // 先写临时文件，成功后再替换目标：取消/出错时旧压缩包原封不动。
+    let temp = temp_sibling(&plan.archive, "compress");
+    let _ = fs::remove_file(&temp);
+    let written = match write_archive(&temp, &entries, total, step) {
+        Ok(written) => written,
+        Err(error) => {
+            let _ = fs::remove_file(&temp);
+            return Err(error);
+        }
+    };
+    let (files, bytes) = written;
+    if let Err(error) = fs::rename(&temp, &plan.archive) {
+        let _ = fs::remove_file(&temp);
+        return Err(ToolError::new(
+            "INTERNAL",
+            format!("无法写入目标压缩包：{error}"),
+        ));
+    }
+
+    let archive_size = fs::metadata(&plan.archive).map(|m| m.len()).unwrap_or(0);
+    Ok(table(
+        json!([
+            item("结果", "压缩完成"),
+            item("文件数", files.to_string()),
+            item("原始大小", human_bytes(bytes)),
+            item("压缩包大小", human_bytes(archive_size)),
+            item("目标", plan.archive.to_string_lossy()),
+        ]),
+        json!([column("name", "项目"), column("value", "值")]),
+        json!([
+            {"name": "目标文件", "value": plan.archive.to_string_lossy()},
+            {"name": "文件数", "value": files.to_string()},
+        ]),
+        json!([
+            "压缩包已写入目标位置；原文件保持不变。",
+            "本次操作已写入本地工具操作日志。",
+        ]),
+    ))
+}
+
+/// 把条目写进临时压缩包；失败时由调用方删除临时文件。
+fn write_archive(
+    temp: &Path,
+    entries: &[(PathBuf, String)],
+    total: usize,
+    step: usize,
+) -> Result<(usize, u64), ToolError> {
+    let file = File::create(temp)
         .map_err(|error| ToolError::new("INTERNAL", format!("无法创建压缩包：{error}")))?;
     let mut writer = ZipWriter::new(file);
     let mut files = 0usize;
@@ -377,11 +430,8 @@ fn compress(plan: &Plan) -> Result<Value, ToolError> {
 
     for (index, (path, name)) in entries.iter().enumerate() {
         if tool_protocol::cancel_requested() {
-            // 先释放文件句柄再删除：Windows 下仍被打开的文件删不掉。
-            drop(writer);
-            let _ = fs::remove_file(&plan.archive);
             return Err(tool_protocol::cancelled_error(
-                "压缩已取消，未完成的压缩包已删除。",
+                "压缩已取消，未完成的压缩包已删除，原压缩包未受影响。",
             ));
         }
         let metadata = match fs::metadata(path) {
@@ -391,11 +441,9 @@ fn compress(plan: &Plan) -> Result<Value, ToolError> {
         files += 1;
         bytes = bytes.saturating_add(metadata.len());
         if files > MAX_FILES || bytes > MAX_TOTAL_BYTES {
-            drop(writer);
-            let _ = fs::remove_file(&plan.archive);
             return Err(ToolError::new(
                 "INVALID_INPUT",
-                "压缩过程中超过文件数或大小上限，已删除未完成的压缩包。",
+                "压缩过程中超过文件数或大小上限，已放弃本次压缩。",
             ));
         }
         let options = SimpleFileOptions::default()
@@ -421,10 +469,8 @@ fn compress(plan: &Plan) -> Result<Value, ToolError> {
             chunks += 1;
             // 大文件也要能及时响应取消：每 1 MiB 检查一次标记文件。
             if chunks % 16 == 0 && tool_protocol::cancel_requested() {
-                drop(writer);
-                let _ = fs::remove_file(&plan.archive);
                 return Err(tool_protocol::cancelled_error(
-                    "压缩已取消，未完成的压缩包已删除。",
+                    "压缩已取消，未完成的压缩包已删除，原压缩包未受影响。",
                 ));
             }
         }
@@ -442,26 +488,7 @@ fn compress(plan: &Plan) -> Result<Value, ToolError> {
     writer
         .finish()
         .map_err(|error| ToolError::new("INTERNAL", format!("完成压缩包失败：{error}")))?;
-
-    let archive_size = fs::metadata(&plan.archive).map(|m| m.len()).unwrap_or(0);
-    Ok(table(
-        json!([
-            item("结果", "压缩完成"),
-            item("文件数", files.to_string()),
-            item("原始大小", human_bytes(bytes)),
-            item("压缩包大小", human_bytes(archive_size)),
-            item("目标", plan.archive.to_string_lossy()),
-        ]),
-        json!([column("name", "项目"), column("value", "值")]),
-        json!([
-            {"name": "目标文件", "value": plan.archive.to_string_lossy()},
-            {"name": "文件数", "value": files.to_string()},
-        ]),
-        json!([
-            "压缩包已写入目标位置；原文件保持不变。",
-            "本次操作已写入本地工具操作日志。",
-        ]),
-    ))
+    Ok((files, bytes))
 }
 
 /// 处理压缩包里的单个条目。
@@ -493,11 +520,10 @@ fn extract_entry(
         *skipped += 1;
         return Ok(());
     }
-    *bytes = bytes.saturating_add(entry.size());
-    if *bytes > MAX_TOTAL_BYTES || *files >= MAX_FILES {
+    if *files >= MAX_FILES {
         return Err(ToolError::new(
             "INVALID_INPUT",
-            "解压超过文件数或大小上限，已停止。",
+            "解压超过文件数上限，已停止。",
         ));
     }
     let target = destination.join(&relative);
@@ -512,27 +538,75 @@ fn extract_entry(
     if let Some(parent) = target.parent() {
         fs::create_dir_all(parent)
             .map_err(|error| ToolError::new("INTERNAL", format!("无法创建目录：{error}")))?;
+        // 词法检查挡不住目标目录里预先放好的符号链接/目录联接：再用真实路径复核一次。
+        match parent.canonicalize() {
+            Ok(resolved) if resolved.starts_with(destination) => {}
+            _ => {
+                *unsafe_entries += 1;
+                return Ok(());
+            }
+        }
     }
-    let mut output = File::create(&target)
-        .map_err(|error| ToolError::new("INTERNAL", format!("无法写入文件：{error}")))?;
+    // 与压缩一样先写临时文件：取消或出错时不会留下被截断的目标文件。
+    let temp = temp_sibling(&target, "extract");
+    let _ = fs::remove_file(&temp);
+    let mut output = match File::create(&temp) {
+        Ok(file) => file,
+        Err(error) => return Err(ToolError::new("INTERNAL", format!("无法写入文件：{error}"))),
+    };
     let mut buffer = [0u8; 64 * 1024];
     let mut chunks = 0u64;
+    let mut entry_bytes = 0u64;
     loop {
-        let read = entry
-            .read(&mut buffer)
-            .map_err(|error| ToolError::new("INTERNAL", format!("读取条目失败：{error}")))?;
+        let read = match entry.read(&mut buffer) {
+            Ok(read) => read,
+            Err(error) => {
+                let _ = fs::remove_file(&temp);
+                return Err(ToolError::new("INTERNAL", format!("读取条目失败：{error}")));
+            }
+        };
         if read == 0 {
             break;
         }
-        output
-            .write_all(&buffer[..read])
-            .map_err(|error| ToolError::new("INTERNAL", format!("写入文件失败：{error}")))?;
+        // 上限必须按「实际解出的字节」算：压缩包头里的声明大小可以撒谎。
+        entry_bytes = entry_bytes.saturating_add(read as u64);
+        *bytes = bytes.saturating_add(read as u64);
+        if entry_bytes > MAX_ENTRY_BYTES {
+            drop(output);
+            let _ = fs::remove_file(&temp);
+            return Err(ToolError::new(
+                "INVALID_INPUT",
+                "单个条目解压后超过大小上限，已停止。",
+            ));
+        }
+        if *bytes > MAX_TOTAL_BYTES {
+            drop(output);
+            let _ = fs::remove_file(&temp);
+            return Err(ToolError::new(
+                "INVALID_INPUT",
+                "解压超过总量上限，已停止。",
+            ));
+        }
+        if let Err(error) = output.write_all(&buffer[..read]) {
+            let _ = fs::remove_file(&temp);
+            return Err(ToolError::new("INTERNAL", format!("写入文件失败：{error}")));
+        }
         chunks += 1;
         if chunks % 16 == 0 && tool_protocol::cancel_requested() {
+            drop(output);
+            let _ = fs::remove_file(&temp);
             return Err(tool_protocol::cancelled_error(&format!(
-                "解压已取消，已写出 {files} 个文件（已解出的文件保留）。"
+                "解压已取消，已解出的文件保留，当前文件未写入（{files} 个文件已完成）。"
             )));
         }
+    }
+    drop(output);
+    if let Err(error) = fs::rename(&temp, &target) {
+        let _ = fs::remove_file(&temp);
+        return Err(ToolError::new(
+            "INTERNAL",
+            format!("无法写入目标文件：{error}"),
+        ));
     }
     *files += 1;
     Ok(())
@@ -936,6 +1010,40 @@ mod tests {
         assert!(
             !archive.exists(),
             "取消后不允许留下半成品压缩包"
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn cancel_keeps_the_existing_archive_when_overwriting() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+        let base = test_dir("overwrite-cancel");
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join("src")).expect("create dir");
+        std::fs::write(base.join("src").join("a.txt"), b"data").expect("write file");
+        let archive = base.join("out.zip");
+        std::fs::write(&archive, b"original-archive-bytes").expect("seed archive");
+
+        let marker = base.join("job.cancel");
+        std::fs::write(&marker, b"1").expect("write marker");
+        std::env::set_var("SYSTEM_LENS_CANCEL_FILE", &marker);
+
+        let plan = Plan {
+            mode: "compress".into(),
+            sources: vec![base.join("src")],
+            archive: archive.clone(),
+            destination: PathBuf::new(),
+            overwrite: true,
+        };
+        let (outcome, _) = with_progress_capture(|| compress(&plan));
+        std::env::remove_var("SYSTEM_LENS_CANCEL_FILE");
+
+        assert_eq!(outcome.expect_err("取消后必须报错").code, "CANCELLED");
+        // 覆盖模式取消后，用户原来的压缩包必须原封不动。
+        assert_eq!(
+            std::fs::read(&archive).expect("original archive must survive"),
+            b"original-archive-bytes"
         );
 
         let _ = std::fs::remove_dir_all(&base);

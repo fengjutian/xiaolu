@@ -483,9 +483,10 @@ fn push_sensor_facts(
             } else {
                 Severity::Info
             },
-            format!("SMART 预测：{}", truncate_text(&device.instance_name, 80)),
+            // 不发送设备实例名：它是稳定的 PnP 标识（常含序列号），
+            // docs/AI_IMPLEMENTATION.md 明确承诺不返回序列号与设备实例名。
+            format!("SMART 设备 {index}"),
             json!({
-                "instance": truncate_text(&device.instance_name, 80),
                 "predictFailure": device.predict_failure,
                 "healthLevel": device.assessment.level,
                 "attributeCount": device.attributes.len(),

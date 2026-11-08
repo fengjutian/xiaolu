@@ -163,8 +163,12 @@ fn build_messages_inner(
     }
     let (redacted, mut redaction) = redact_payload(&payload);
     redaction.excluded_facts = excluded + snapshot.excluded_fact_count;
-    let question_text = question
-        .map(|value| value.trim())
+    // 追问只从脱敏后的 payload 取：早期实现在这里又拼了一份原始字符串，
+    // 结果预览显示已脱敏、真正发出去的却含原始路径。
+    let question_text = redacted
+        .get("question")
+        .and_then(Value::as_str)
+        .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(|value| format!("\n用户追问：{value}"))
         .unwrap_or_default();
@@ -286,6 +290,22 @@ mod tests {
         let items = payload["history"].as_array().unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0]["content"], "新问题");
+    }
+
+    #[test]
+    fn follow_up_question_is_redacted_in_the_actual_message() {
+        // 预览只展示脱敏后的 payload；早期实现把原始追问又拼进消息，
+        // 于是预览干净、真正发出去的却带本机路径。
+        let question = "打开 C:\\Users\\alice\\Downloads\\dump.dmp 时卡住";
+        let (messages, payload, _, _) = build_messages(&snapshot(), Some(question), &[]);
+        assert_eq!(payload["question"], "[本地路径已脱敏]");
+        assert!(
+            !messages[1].content.contains("alice"),
+            "追问原文不允许出现在最终发送内容里：{}",
+            messages[1].content
+        );
+        assert!(!messages[1].content.contains("C:\\Users"));
+        assert!(messages[1].content.contains("[本地路径已脱敏]"));
     }
 
     #[test]

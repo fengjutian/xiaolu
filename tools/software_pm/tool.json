@@ -23,7 +23,7 @@
       "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Notifications\\Settings"
     ],
     "network": false,
-    "elevation": "none"
+    "elevation": "uac"
   },
   "actions": [
     { "id": "preview", "label": "预览", "write": false },

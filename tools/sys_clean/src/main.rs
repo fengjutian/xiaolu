@@ -227,8 +227,10 @@ fn run_elevated(mut payload: Value) -> Result<Value, ToolError> {
     }
     let serialized = serde_json::to_string(&payload)
         .map_err(|error| ToolError::new("INTERNAL", format!("无法序列化提权请求：{error}")))?;
-    std::fs::write(&request_path, serialized)
-        .map_err(|error| ToolError::new("INTERNAL", format!("无法写入提权请求：{error}")))?;
+    // 请求文件用「独占创建 + 其它进程只读」打开：内容写完后就无法被替换，
+    // 也挡住了预先放好的同名文件（含硬链接）。句柄要保持到助手退出。
+    let request_file = tool_protocol::write_request_exclusive(&request_path, &serialized)
+        .map_err(|error| ToolError::new("INTERNAL", error))?;
     let helper = helper_path()?;
     let script = format!(
         "$ErrorActionPreference='Stop'; try {{ $p = Start-Process -FilePath {} -ArgumentList ('--request',('\"' + {} + '\"')) -Verb RunAs -PassThru -Wait -WindowStyle Hidden; exit $p.ExitCode }} catch {{ exit 1223 }}",
@@ -240,6 +242,8 @@ fn run_elevated(mut payload: Value) -> Result<Value, ToolError> {
         .args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", &script])
         .status()
         .map_err(|error| ToolError::new("INTERNAL", format!("无法启动提权助手：{error}")))?;
+    // 先释放请求文件的独占句柄，随后才能删除它。
+    drop(request_file);
     let result_text = std::fs::read_to_string(&result_path).ok();
     let _ = std::fs::remove_file(&request_path);
     let _ = std::fs::remove_file(&result_path);

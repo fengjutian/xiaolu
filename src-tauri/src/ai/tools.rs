@@ -208,6 +208,17 @@ fn truncate_text(value: &str, max: usize) -> String {
     value.chars().take(max).collect()
 }
 
+/// 截断并脱敏：工具报错文本会作为证据回传给模型，不能带本机路径。
+fn redact_text(value: &str, max: usize) -> String {
+    let payload = serde_json::json!({ "text": truncate_text(value, max) });
+    let (redacted, _) = super::redact::redact_payload(&payload);
+    redacted
+        .get("text")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_string()
+}
+
 async fn blocking<T, F>(task: F) -> Result<T, String>
 where
     T: Send + 'static,
@@ -723,7 +734,8 @@ pub async fn execute_checks(
         let (ok, summary, error) = match outcome {
             Ok(value) => (true, cap_summary(value), None),
             Err(error) if error == CANCELLED => return Err(error),
-            Err(error) => (false, Value::Null, Some(truncate_text(&error, 300))),
+            // 错误文本同样要脱敏：PowerShell/采集器的报错经常带本机路径。
+            Err(error) => (false, Value::Null, Some(redact_text(&error, 300))),
         };
         let run = AiToolRun {
             tool_id: spec.id.to_string(),

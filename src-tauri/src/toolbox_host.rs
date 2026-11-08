@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::ffi::c_void;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{mpsc, Mutex, OnceLock};
@@ -15,7 +15,9 @@ use std::os::windows::process::CommandExt;
 use crate::toolbox::{ToolActionDescriptor, ToolDescriptor};
 
 static TOKEN_SECRET: OnceLock<String> = OnceLock::new();
-static USED_TOKENS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+static USED_TOKENS: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
+/// 令牌重放记录保留时长：远大于令牌本身的 5 分钟有效期，过期记录直接淘汰。
+const TOKEN_MEMORY: Duration = Duration::from_secs(15 * 60);
 
 /// 工具进度事件名：界面按 jobId 关联到具体的一次执行。
 const PROGRESS_EVENT: &str = "toolbox-progress";
@@ -859,11 +861,10 @@ fn authorize_action(
         .iter()
         .find(|candidate| candidate.id == action)
         .ok_or_else(|| format!("工具 {} 不支持动作 {}", manifest.id, action))?;
-    if action == "preview" {
-        return Ok(());
-    }
+    // 只读动作（list / info / pages / import_rules / open_official / save_rollback 等）
+    // 只要清单声明过就直接放行，不需要确认令牌：它们不改系统状态。
     if !declared.write {
-        return Err(format!("动作 {action} 未声明为写操作"));
+        return Ok(());
     }
     if manifest.risk == "read_only" {
         return Err("只读工具不允许写操作".into());
@@ -874,20 +875,37 @@ fn authorize_action(
     }
 }
 
+/// 确认令牌的结构：`hex(claims).hex(hmac-sha256)`。
+///
+/// 宿主不做签名校验（那是工具侧的事），但至少要挡住「随便一串字符串」——
+/// 否则任意非空串都能进重放表，把真实令牌的记录挤掉。
+fn looks_like_token(token: &str) -> bool {
+    let Some((payload, signature)) = token.split_once('.') else {
+        return false;
+    };
+    let hex = |text: &str| {
+        !text.is_empty() && text.len() % 2 == 0 && text.bytes().all(|byte| byte.is_ascii_hexdigit())
+    };
+    hex(payload) && payload.len() >= 32 && signature.len() == 64 && hex(signature)
+}
+
 /// 记录并拒绝重复使用的确认令牌；令牌过期由工具侧校验。
 fn consume_token(confirmation: &str) -> Result<(), String> {
-    let tokens = USED_TOKENS.get_or_init(|| Mutex::new(HashSet::new()));
+    let token = confirmation.trim();
+    if !looks_like_token(token) {
+        return Err("确认令牌格式无效，请重新预览".into());
+    }
+    let tokens = USED_TOKENS.get_or_init(|| Mutex::new(HashMap::new()));
     let mut used = tokens
         .lock()
         .map_err(|_| "确认令牌状态不可用，请重启应用".to_string())?;
-    let token = confirmation.trim().to_string();
-    if used.contains(&token) {
+    // 按时间淘汰过期记录，而不是整体 clear()：整体清空会把真实令牌的一次性
+    // 保证一并抹掉，攻击者只要先塞满表就能重放。
+    used.retain(|_, recorded| recorded.elapsed() < TOKEN_MEMORY);
+    if used.contains_key(token) {
         return Err("确认令牌已使用，请重新预览".into());
     }
-    if used.len() > 512 {
-        used.clear();
-    }
-    used.insert(token);
+    used.insert(token.to_string(), Instant::now());
     Ok(())
 }
 
@@ -1001,15 +1019,48 @@ fn run_action_inner(
         marker: job.as_ref().map(|(_, marker)| marker.clone()),
     };
 
-    let mut stdin = child.stdin.take().ok_or("无法写入工具进程")?;
-    let stdout = child.stdout.take().ok_or("无法读取工具进程")?;
-    let (sender, receiver) = mpsc::channel::<String>();
+    let mut stdin = match child.stdin.take() {
+        Some(stdin) => stdin,
+        None => {
+            child.kill().ok();
+            return Err("无法写入工具进程".into());
+        }
+    };
+    let stdout = match child.stdout.take() {
+        Some(stdout) => stdout,
+        None => {
+            child.kill().ok();
+            return Err("无法读取工具进程".into());
+        }
+    };
+    // 有界队列 + 单行上限：工具洪水输出时宿主内存不会无界增长。
+    const MAX_LINE_BYTES: usize = 512 * 1024;
+    let (sender, receiver) = mpsc::sync_channel::<String>(64);
     std::thread::spawn(move || {
-        let reader = BufReader::new(stdout);
-        for line in reader.lines() {
-            match line {
-                Ok(line) => {
-                    if sender.send(line).is_err() {
+        let mut reader = BufReader::new(stdout);
+        let mut buffer = Vec::new();
+        loop {
+            buffer.clear();
+            match reader
+                .by_ref()
+                .take(MAX_LINE_BYTES as u64)
+                .read_until(b'\n', &mut buffer)
+            {
+                Ok(0) => break,
+                Ok(_) => {
+                    if buffer.len() >= MAX_LINE_BYTES && !buffer.ends_with(b"\n") {
+                        let _ = sender.send(
+                            serde_json::json!({
+                                "type": "error",
+                                "code": "OUTPUT_TOO_LARGE",
+                                "message": "工具单行输出超过上限，已中止",
+                            })
+                            .to_string(),
+                        );
+                        break;
+                    }
+                    let line = String::from_utf8_lossy(&buffer).trim_end().to_string();
+                    if !line.is_empty() && sender.send(line).is_err() {
                         break;
                     }
                 }
@@ -1019,8 +1070,22 @@ fn run_action_inner(
     });
 
     trace.handshake_attempted = true;
-    let hello = receive(&receiver, Duration::from_secs(5), "工具握手")?;
-    let hello: Value = serde_json::from_str(&hello).map_err(|_| "工具握手格式无效".to_string())?;
+    let hello = match receive(&receiver, Duration::from_secs(5), "工具握手") {
+        Ok(value) => value,
+        Err(error) => {
+            // 握手失败的工具往往根本不读 stdin，不会因为管道关闭自行退出，
+            // 这里必须显式结束进程，否则会一直残留到应用退出。
+            child.kill().ok();
+            return Err(error);
+        }
+    };
+    let hello: Value = match serde_json::from_str(&hello) {
+        Ok(value) => value,
+        Err(_) => {
+            child.kill().ok();
+            return Err("工具握手格式无效".into());
+        }
+    };
     if hello.get("type").and_then(Value::as_str) != Some("hello")
         || hello.get("protocol").and_then(Value::as_u64) != Some(1)
         || hello.get("toolId").and_then(Value::as_str) != Some(tool_id)
@@ -1037,7 +1102,10 @@ fn run_action_inner(
         "parameters": parameters.unwrap_or_else(|| serde_json::json!({})),
         "confirmation": confirmation,
     });
-    writeln!(stdin, "{request}").map_err(|error| format!("无法发送工具请求：{error}"))?;
+    if let Err(error) = writeln!(stdin, "{request}") {
+        child.kill().ok();
+        return Err(format!("无法发送工具请求：{error}"));
+    }
     stdin.flush().ok();
 
     let timeout = Duration::from_millis(manifest.limits.timeout_ms.max(1_000));
@@ -1307,9 +1375,46 @@ mod tests {
 
     #[test]
     fn tokens_are_single_use() {
-        let token = format!("unit-test-{}", std::process::id());
+        let token = format!("{}.{}", "ab".repeat(40), "cd".repeat(32));
         assert!(consume_token(&token).is_ok());
         assert!(consume_token(&token).unwrap_err().contains("已使用"));
+    }
+
+    #[test]
+    fn rejects_tokens_that_are_not_structurally_valid() {
+        // 任意非空字符串不应该进重放表：否则可以把真实令牌的记录挤掉。
+        assert!(consume_token("token").is_err());
+        assert!(consume_token(&format!("{}.{}", "zz", "cd".repeat(32))).is_err());
+        assert!(consume_token(&format!("{}.", "ab".repeat(40))).is_err());
+    }
+
+    #[test]
+    fn declared_read_only_actions_run_without_a_token() {
+        // list / info / pages / import_rules 这类动作原本会被当成写动作拒绝。
+        let manifest = manifest(
+            "write",
+            serde_json::json!([
+                {"id": "preview", "write": false},
+                {"id": "list", "write": false},
+                {"id": "apply", "write": true}
+            ]),
+        );
+        assert!(authorize_action(&manifest, "list", None).is_ok());
+        assert!(authorize_action(&manifest, "apply", None).is_err());
+    }
+
+    #[test]
+    fn read_only_risk_still_blocks_write_actions() {
+        let manifest = manifest(
+            "read_only",
+            serde_json::json!([
+                {"id": "preview", "write": false},
+                {"id": "list", "write": false},
+                {"id": "apply", "write": true}
+            ]),
+        );
+        assert!(authorize_action(&manifest, "list", None).is_ok());
+        assert!(authorize_action(&manifest, "apply", Some(&format!("{}.{}", "ab".repeat(40), "cd".repeat(32)))).is_err());
     }
 
     #[test]

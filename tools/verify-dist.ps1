@@ -34,6 +34,18 @@ if (Test-Path $fingerprintPath) {
     }
 }
 
+# Packaged executable hashes: the source fingerprint proves the exe was built
+# from these sources, but not that the exe itself is intact.
+$binariesPath = Join-Path $outRoot ".binaries.json"
+$recordedBinaries = @{}
+if (Test-Path $binariesPath) {
+    $binariesText = [IO.File]::ReadAllText($binariesPath, [Text.Encoding]::UTF8)
+    if ($binariesText.Trim()) {
+        $parsedBinaries = $binariesText | ConvertFrom-Json
+        $parsedBinaries.PSObject.Properties | ForEach-Object { $recordedBinaries[$_.Name] = $_.Value }
+    }
+}
+
 Get-ChildItem -Path $toolsRoot -Directory | Where-Object { $_.Name -notlike "_*" } | ForEach-Object {
     $tool = $_
     $manifestPath = Join-Path $tool.FullName "tool.json"
@@ -71,6 +83,18 @@ Get-ChildItem -Path $toolsRoot -Directory | Where-Object { $_.Name -notlike "_*"
         $problems += "$($manifest.id): sources changed after packaging (rebuild required)"
     }
 
+    # ...and it must still be the exact binary that was packaged.
+    if (Test-Path $entry) {
+        if (-not $recordedBinaries.ContainsKey($manifest.id)) {
+            $problems += "$($manifest.id): no executable hash recorded (rebuild required)"
+        } else {
+            $actualHash = (Get-FileHash -Path $entry -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actualHash -ne $recordedBinaries[$manifest.id]) {
+                $problems += "$($manifest.id): packaged executable hash mismatch (rebuild required)"
+            }
+        }
+    }
+
     # A tool that references the elevation helper must be able to reach it.
     # The runtime lookup is: <tool dir>/lens_helper.exe first, then
     # <tool dir>/../lens_helper/lens_helper.exe. Verify the same contract.
@@ -93,6 +117,18 @@ if ($elevatedTools.Count -gt 0) {
     }
     if (-not (Test-Path $helper) -and -not $packagedPerTool) {
         $problems += "elevation helper not packaged at $helper and not copied per tool (required by: $($elevatedTools -join ', '))"
+    }
+    # The elevation helper has no manifest, so check its packaged hash directly:
+    # a stale helper silently misses new operations added by the tools.
+    if (Test-Path $helper) {
+        if (-not $recordedBinaries.ContainsKey("lens_helper")) {
+            $problems += "lens_helper: no executable hash recorded (rebuild required)"
+        } else {
+            $helperHash = (Get-FileHash -Path $helper -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($helperHash -ne $recordedBinaries["lens_helper"]) {
+                $problems += "lens_helper: packaged executable hash mismatch (rebuild required)"
+            }
+        }
     }
 }
 

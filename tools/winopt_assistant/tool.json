@@ -24,7 +24,7 @@
       "HKLM\\SYSTEM\\CurrentControlSet\\Services\\WSearch"
     ],
     "network": false,
-    "elevation": "none"
+    "elevation": "uac"
   },
   "actions": [
     { "id": "preview", "label": "体检", "write": false },

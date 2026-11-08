@@ -4690,7 +4690,8 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
   const [gpuPref, setGpuPref] = useState(2);
   const [lockDelay, setLockDelay] = useState(5);
   const [lockRemaining, setLockRemaining] = useState(0);
-  const lockTimerRef = useRef<number | null>(null);
+  // 计时器由 effect 驱动：页面卸载时自动清理，不会「离开页面还锁屏」。
+  const [lockArmed, setLockArmed] = useState(false);
   const [expandAck, setExpandAck] = useState<Record<string, boolean>>({});
   const [dumpDraft, setDumpDraft] = useState("");
 
@@ -5192,32 +5193,33 @@ function ToolboxPanel({ onOpenEyeCare, onOpenStartMenu, onOpenDesktopQuick }: { 
   };
 
   const startLockTimer = () => {
-    if (lockTimerRef.current !== null) {
-      window.clearInterval(lockTimerRef.current);
-    }
     setLockRemaining(Math.max(1, lockDelay) * 60);
-    lockTimerRef.current = window.setInterval(() => {
-      setLockRemaining((previous) => {
-        if (previous <= 1) {
-          if (lockTimerRef.current !== null) {
-            window.clearInterval(lockTimerRef.current);
-            lockTimerRef.current = null;
-          }
-          void performLock();
-          return 0;
-        }
-        return previous - 1;
-      });
-    }, 1000);
+    setLockArmed(true);
   };
 
   const cancelLockTimer = () => {
-    if (lockTimerRef.current !== null) {
-      window.clearInterval(lockTimerRef.current);
-      lockTimerRef.current = null;
-    }
+    setLockArmed(false);
     setLockRemaining(0);
   };
+
+  // 倒计时：只在「已武装」时创建 interval，卸载/取消时由 cleanup 清掉。
+  useEffect(() => {
+    if (!lockArmed) return;
+    const timer = window.setInterval(() => {
+      setLockRemaining((previous) => (previous <= 1 ? 0 : previous - 1));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [lockArmed]);
+
+  // 归零后触发锁定。用 effect 而不是在 setState 的 updater 里做副作用：
+  // StrictMode 下 updater 会被重复调用，旧写法会发两次锁屏请求。
+  useEffect(() => {
+    if (!lockArmed || lockRemaining > 0) return;
+    setLockArmed(false);
+    void performLock();
+    // performLock 依赖当前 generic，不能进依赖数组，否则每次渲染都会重新触发。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lockArmed, lockRemaining]);
 
   const runSysBoost = async (
     tool: ToolDescriptor,

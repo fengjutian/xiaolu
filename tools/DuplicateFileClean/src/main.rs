@@ -55,9 +55,13 @@ fn signature(path: &Path, size: u64) -> Option<u64> {
 }
 
 /// 完整内容哈希，用于删除前的最终确认。
-fn full_hash(path: &Path) -> Result<u64, String> {
+///
+/// 必须是抗碰撞的哈希：早先用的 64 位 FNV-1a 可以被构造成「同大小、首尾
+/// 64 KiB 相同」的碰撞文件，一旦被判成重复就会被真正删掉。
+fn full_hash(path: &Path) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
     let mut file = File::open(path).map_err(|error| format!("无法读取：{error}"))?;
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut hasher = Sha256::new();
     let mut buffer = vec![0u8; HASH_BUFFER];
     loop {
         let read = file
@@ -66,12 +70,13 @@ fn full_hash(path: &Path) -> Result<u64, String> {
         if read == 0 {
             break;
         }
-        for byte in &buffer[..read] {
-            hash ^= *byte as u64;
-            hash = hash.wrapping_mul(0x100_0000_01b3);
-        }
+        hasher.update(&buffer[..read]);
     }
-    Ok(hash)
+    Ok(hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>())
 }
 
 struct Group {
@@ -204,6 +209,8 @@ const FOF_SILENT: u16 = 0x0004;
 const FOF_NOCONFIRMATION: u16 = 0x0010;
 const FOF_ALLOWUNDO: u16 = 0x0040;
 const FOF_NOERRORUI: u16 = 0x0400;
+/// 无法进回收站时弹确认，避免「静默永久删除」与「可还原」的承诺相反。
+const FOF_WANTNUKEWARNING: u16 = 0x4000;
 
 fn recycle_file(path: &Path) -> Result<(), String> {
     let mut from: Vec<u16> = path.to_string_lossy().encode_utf16().collect();
@@ -214,7 +221,8 @@ fn recycle_file(path: &Path) -> Result<(), String> {
         w_func: FO_DELETE,
         p_from: from.as_ptr(),
         p_to: std::ptr::null(),
-        f_flags: FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI,
+        f_flags: FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI
+            | FOF_WANTNUKEWARNING,
         f_any_operations_aborted: 0,
         h_name_mappings: std::ptr::null_mut(),
         lpsz_progress_title: std::ptr::null(),

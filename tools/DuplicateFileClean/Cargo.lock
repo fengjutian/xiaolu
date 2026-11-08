@@ -52,6 +52,7 @@ name = "duplicate-file-tool"
 version = "0.2.1"
 dependencies = [
  "serde_json",
+ "sha2",
  "tool-protocol",
  "walkdir",
 ]

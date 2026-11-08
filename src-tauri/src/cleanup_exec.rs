@@ -189,15 +189,20 @@ pub fn execute_cleanup(
     if aborted {
         errors.push("操作被系统中止，可能只移动了部分内容".into());
     }
-
+    let completed = code == 0 && !aborted;
     let audit_log = write_audit(&app, &pending, code, aborted, &errors);
     Ok(CleanupResult {
-        moved_items: children.len(),
-        moved_bytes: pending.total_bytes,
+        // 失败/中止时不能拿预览数量冒充「已移动」：这里如实归零并给出失败文案。
+        moved_items: if completed { children.len() } else { 0 },
+        moved_bytes: if completed { pending.total_bytes } else { 0 },
         aborted,
         errors,
         audit_log,
-        note: "内容已移动到回收站；可在回收站中恢复。目录结构保留，未删除系统更新缓存或回收站本身。".into(),
+        note: if completed {
+            "内容已移动到回收站；可在回收站中恢复。目录结构保留，未删除系统更新缓存或回收站本身。".into()
+        } else {
+            "回收站操作未完整完成：可能只移动了部分内容，请核对错误信息后再决定是否重试。".into()
+        },
     })
 }
 
@@ -269,8 +274,10 @@ fn recycle_paths(paths: &[PathBuf]) -> Result<(u32, bool), String> {
         w_func: 3, // FO_DELETE
         p_from: from.as_ptr(),
         p_to: std::ptr::null(),
-        // FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI
-        f_flags: 0x0040 | 0x0010 | 0x0004 | 0x0400,
+        // FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI | FOF_WANTNUKEWARNING
+        // 最后一项很关键：无法进回收站（超配额/卷不支持）时，Shell 必须提示而不是
+        // 直接永久删除，否则「可还原」的承诺就是假的。
+        f_flags: 0x0040 | 0x0010 | 0x0004 | 0x0400 | 0x4000,
         any_aborted: 0,
         name_mappings: std::ptr::null_mut(),
         progress_title: std::ptr::null(),

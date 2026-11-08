@@ -46,7 +46,7 @@ try {
     try {
       $trigger=(@($_.Triggers | ForEach-Object { $_.CimClass.CimClassName -replace '^MSFT_Task','' -replace 'Trigger$','' }) | Where-Object { $_ } | Select-Object -Unique) -join '/'
     } catch {}
-    $tasks += @{name=[string]$_.TaskName; path=[string]$_.TaskPath; author=[string]$_.Author; state=[string]$_.State; trigger=$trigger}
+    $tasks += @{name=[string]$_.TaskName; path=([string]$_.TaskPath + [string]$_.TaskName); author=[string]$_.Author; state=[string]$_.State; trigger=$trigger}
   }
 } catch { $errors += ('计划任务查询失败：' + $_.Exception.Message) }
 
@@ -1101,8 +1101,10 @@ fn run_elevated(mut payload: Value) -> Result<Value, ToolError> {
     }
     let serialized = serde_json::to_string(&payload)
         .map_err(|error| ToolError::new("INTERNAL", format!("无法序列化提权请求：{error}")))?;
-    std::fs::write(&request_path, serialized)
-        .map_err(|error| ToolError::new("INTERNAL", format!("无法写入提权请求：{error}")))?;
+    // 请求文件用「独占创建 + 其它进程只读」打开：内容写完后就无法被替换，
+    // 也挡住了预先放好的同名文件（含硬链接）。句柄要保持到助手退出。
+    let request_file = tool_protocol::write_request_exclusive(&request_path, &serialized)
+        .map_err(|error| ToolError::new("INTERNAL", error))?;
 
     let helper = helper_path()?;
     let script = format!(
@@ -1123,6 +1125,8 @@ fn run_elevated(mut payload: Value) -> Result<Value, ToolError> {
         .status()
         .map_err(|error| ToolError::new("INTERNAL", format!("无法启动提权助手：{error}")))?;
 
+    // 先释放请求文件的独占句柄，随后才能删除它。
+    drop(request_file);
     let result_text = std::fs::read_to_string(&result_path).ok();
     let _ = std::fs::remove_file(&request_path);
     let _ = std::fs::remove_file(&result_path);
@@ -1493,8 +1497,41 @@ fn set_task_enabled(request: &Request) -> Result<Value, ToolError> {
     Ok(data)
 }
 
+/// 最新的回滚点文件。
+fn latest_rollback_path() -> Option<std::path::PathBuf> {
+    let mut files = std::fs::read_dir(snapshot_dir())
+        .ok()?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name.starts_with("rollback-") && name.ends_with(".json"))
+                .unwrap_or(false)
+        })
+        .collect::<Vec<_>>();
+    files.sort();
+    files.pop()
+}
+
+/// 令牌摘要绑定到「具体这一份回滚点文件」：换文件或改内容都会让旧令牌失效。
+fn rollback_digest_of(text: &str) -> String {
+    tool_protocol::digest_of(&["software_pm_rollback", text])
+}
+
 fn rollback_digest() -> String {
-    tool_protocol::digest_of(&["software_pm_rollback"])
+    match latest_rollback_path().and_then(|path| std::fs::read_to_string(path).ok()) {
+        Some(text) => rollback_digest_of(&text),
+        None => tool_protocol::digest_of(&["software_pm_rollback", "none"]),
+    }
+}
+
+/// 回滚点带签名落盘：目录是用户可写的，必须能分辨「本工具写的」与「别人塞的」。
+fn signed_rollback(body: &Value) -> Result<Value, ToolError> {
+    let canonical = serde_json::to_string(body)
+        .map_err(|error| ToolError::new("INTERNAL", format!("无法序列化回滚点：{error}")))?;
+    let signature = tool_protocol::sign_payload(&canonical)?;
+    Ok(json!({ "snapshot": body, "signature": signature }))
 }
 
 fn save_rollback() -> Result<Value, ToolError> {
@@ -1537,12 +1574,20 @@ fn save_rollback() -> Result<Value, ToolError> {
         "tasks": tasks_value,
         "startup": startup_value,
     });
-    std::fs::write(
-        &path,
-        serde_json::to_vec_pretty(&body)
-            .map_err(|error| ToolError::new("INTERNAL", format!("无法序列化回滚点：{error}")))?,
-    )
-    .map_err(|error| ToolError::new("INTERNAL", format!("无法写入回滚点：{error}")))?;
+    let stored = signed_rollback(&body)?;
+    let bytes = serde_json::to_vec_pretty(&stored)
+        .map_err(|error| ToolError::new("INTERNAL", format!("无法序列化回滚点：{error}")))?;
+    // 临时文件 + rename：磁盘写满或崩溃时不会留下半份回滚点。
+    let temp = path.with_extension("json.tmp");
+    std::fs::write(&temp, &bytes)
+        .map_err(|error| ToolError::new("INTERNAL", format!("无法写入回滚点：{error}")))?;
+    if let Err(error) = std::fs::rename(&temp, &path) {
+        let _ = std::fs::remove_file(&temp);
+        return Err(ToolError::new(
+            "INTERNAL",
+            format!("无法写入回滚点：{error}"),
+        ));
+    }
     let _ = tool_protocol::append_audit_log(json!({
         "tool": "software_pm",
         "action": "save_rollback",
@@ -1571,30 +1616,28 @@ fn restore_rollback(request: &Request) -> Result<Value, ToolError> {
     let token = request.confirmation.as_deref().ok_or_else(|| {
         ToolError::new("CONFIRMATION_REQUIRED", "恢复回滚点需要确认令牌，请先预览。")
     })?;
-    tool_protocol::verify_token(token, ACTION_ROLLBACK, &rollback_digest())?;
-    let dir = snapshot_dir();
-    let mut files = std::fs::read_dir(&dir)
-        .map_err(|error| ToolError::new("INTERNAL", format!("无法读取回滚点目录：{error}")))?
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.file_name()
-                .and_then(|name| name.to_str())
-                .map(|name| name.starts_with("rollback-") && name.ends_with(".json"))
-                .unwrap_or(false)
-        })
-        .collect::<Vec<_>>();
-    files.sort();
-    let path = files
-        .last()
-        .ok_or_else(|| ToolError::new("CONFLICT", "还没有保存过回滚点。"))?
-        .clone();
+    let path = latest_rollback_path()
+        .ok_or_else(|| ToolError::new("CONFLICT", "还没有保存过回滚点。"))?;
     let text = std::fs::read_to_string(&path)
         .map_err(|error| ToolError::new("INTERNAL", format!("无法读取回滚点：{error}")))?;
-    let body: Value = serde_json::from_str(&text)
+    // 两步都过才允许提权写：令牌绑定到「这一份文件」，签名证明文件出自本工具。
+    tool_protocol::verify_token(token, ACTION_ROLLBACK, &rollback_digest_of(&text))?;
+    let stored: Value = serde_json::from_str(&text)
         .map_err(|error| ToolError::new("INTERNAL", format!("无法解析回滚点：{error}")))?;
-    let services = body.get("services").cloned().unwrap_or(json!([]));
-    let tasks = body.get("tasks").cloned().unwrap_or(json!([]));
+    let snapshot = stored.get("snapshot").ok_or_else(|| {
+        ToolError::new("INVALID_SIGNATURE", "回滚点缺少内容，请重新保存回滚点。")
+    })?;
+    let signature = stored
+        .get("signature")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            ToolError::new("INVALID_SIGNATURE", "回滚点缺少签名，可能不是本工具生成的。")
+        })?;
+    let canonical = serde_json::to_string(snapshot)
+        .map_err(|error| ToolError::new("INTERNAL", format!("无法序列化回滚点：{error}")))?;
+    tool_protocol::verify_payload_signature(&canonical, signature)?;
+    let services = snapshot.get("services").cloned().unwrap_or(json!([]));
+    let tasks = snapshot.get("tasks").cloned().unwrap_or(json!([]));
     let result = run_elevated(json!({
         "op": "pm_restore",
         "services": services,
@@ -1609,7 +1652,7 @@ fn restore_rollback(request: &Request) -> Result<Value, ToolError> {
         .cloned()
         .unwrap_or_default();
     let mut startup_count = 0usize;
-    let snapshot_startup = body
+    let snapshot_startup = snapshot
         .get("startup")
         .and_then(Value::as_array)
         .cloned()

@@ -445,6 +445,7 @@ export default function AiPanel({
 
   useEffect(() => {
     let unlisten: UnlistenFn | undefined;
+    let cancelled = false;
     void listenAiStream((event) => {
       if (event.requestId !== activeRequest.current) return;
       if (event.stage === "delta") {
@@ -452,10 +453,18 @@ export default function AiPanel({
       } else if (event.message) {
         setStreamMessage(event.message);
       }
-    }).then((fn) => {
-      unlisten = fn;
-    });
+    })
+      .then((fn) => {
+        // listen() 是异步的：若它 resolve 之前组件已卸载，必须立刻退订，
+        // 否则监听器会活到进程结束并继续 setState。
+        if (cancelled) fn();
+        else unlisten = fn;
+      })
+      .catch(() => {
+        // 监听失败不应该变成未处理的 rejection；流式进度只是增强信息。
+      });
     return () => {
+      cancelled = true;
       unlisten?.();
     };
   }, []);

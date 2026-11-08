@@ -14,7 +14,7 @@
     "writePaths": [],
     "registry": ["HKLM\\SYSTEM\\CurrentControlSet\\Control\\CrashControl"],
     "network": false,
-    "elevation": "none"
+    "elevation": "uac"
   },
   "actions": [
     { "id": "preview", "label": "预览", "write": false },

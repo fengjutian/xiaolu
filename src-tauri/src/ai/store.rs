@@ -46,7 +46,15 @@ fn write_sessions(app: &AppHandle, sessions: &[AiSessionRecord]) -> Result<(), S
     let path = sessions_path(app)?;
     let bytes = serde_json::to_vec_pretty(sessions)
         .map_err(|error| format!("无法序列化 AI 会话：{error}"))?;
-    std::fs::write(path, bytes).map_err(|error| format!("无法保存 AI 会话：{error}"))
+    // 先写同目录临时文件再替换：崩溃/写满时不会留下半个 JSON，也不会让
+    // read_sessions 把整份历史当成损坏数据丢掉。
+    let temp = path.with_extension("json.tmp");
+    std::fs::write(&temp, bytes).map_err(|error| format!("无法保存 AI 会话：{error}"))?;
+    if let Err(error) = std::fs::rename(&temp, &path) {
+        let _ = std::fs::remove_file(&temp);
+        return Err(format!("无法保存 AI 会话：{error}"));
+    }
+    Ok(())
 }
 
 pub fn append(app: &AppHandle, question: Option<String>, answer: &AiAnswer) -> Result<(), String> {

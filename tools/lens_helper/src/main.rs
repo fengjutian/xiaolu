@@ -110,6 +110,15 @@ fn same_dir(left: &Path, right: &Path) -> bool {
     }
 }
 
+/// 重解析点（符号链接/目录联接）：提权进程不读不写这类路径。
+fn is_reparse_point(path: &Path) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
+    std::fs::symlink_metadata(path)
+        .map(|metadata| metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0)
+        .unwrap_or(true)
+}
+
 /// 结果文件必须是 `%LOCALAPPDATA%\SystemLens\elevated\res-<nonce>.json`。
 fn result_path(request: &Value, dir: &Path) -> Option<PathBuf> {
     let path = PathBuf::from(request.get("resultPath")?.as_str()?);
@@ -229,8 +238,28 @@ fn set_service_start(service: &str, start_type: u32, expect: u32) -> Result<Stri
 fn write_result(path: &Path, payload: &Value) -> Result<(), String> {
     let text = serde_json::to_string_pretty(payload)
         .map_err(|error| format!("无法序列化结果：{error}"))?;
-    std::fs::write(path, text).map_err(|error| format!("无法写入结果：{error}"))?;
-    Ok(())
+    // 必须独占创建：结果文件位于用户可写目录，若攻击者预先放一个同名文件
+    // （甚至是指向系统文件的硬链接），普通 open 会让提权进程写穿到别处。
+    let mut file = match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            // 上一次异常退出可能留下同名结果；先删除再独占创建。
+            std::fs::remove_file(path).map_err(|error| format!("无法清理旧结果：{error}"))?;
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(path)
+                .map_err(|error| format!("无法写入结果：{error}"))?
+        }
+        Err(error) => return Err(format!("无法写入结果：{error}")),
+    };
+    use std::io::Write;
+    file.write_all(text.as_bytes())
+        .map_err(|error| format!("无法写入结果：{error}"))
 }
 
 fn main() {
@@ -289,6 +318,10 @@ fn main() {
             .unwrap_or(false)
     {
         eprintln!("lens_helper: 请求文件位置不受信任");
+        std::process::exit(2);
+    }
+    if is_reparse_point(&request_path) {
+        eprintln!("lens_helper: 请求文件不能是符号链接");
         std::process::exit(2);
     }
 
