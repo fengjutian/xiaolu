@@ -4,8 +4,6 @@ import ProductPreview from "../components/ProductPreview";
 import { SITE } from "../config/site";
 import {
   Activity,
-  ArrowDown,
-  ArrowDownRight,
   ArrowRight,
   Check,
   Cpu,
@@ -13,6 +11,7 @@ import {
   ExternalLink,
   FileArchive,
   Gauge,
+  HardDrive,
   ShieldCheck,
   SlidersHorizontal,
   Sparkles,
@@ -20,70 +19,103 @@ import {
 } from "lucide-react";
 
 const features = [
-  { icon: Activity, title: "实时状态", text: "CPU、内存、磁盘、网络每 2 秒刷新，配合实时上传下载速度与进程排行。", href: "/features#monitor" },
-  { icon: Cpu, title: "硬件与健康", text: "主板、显卡、硬盘、电池、显示器详情，配合 SMART、温度与驱动签名状态。", href: "/features#hardware" },
-  { icon: Stethoscope, title: "问题诊断", text: "蓝屏转储、崩溃事件、DNS 与连接异常、驱动缺失，整理成可读结论。", href: "/features#diagnostics" },
-  { icon: Gauge, title: "性能测试", text: "CPU 单核多核、内存带宽、磁盘读写与 WebGL2 GPU 跑分，并给出本机基线。", href: "/features#benchmark" },
-  { icon: Eraser, title: "空间与清理", text: "盘符级 Treemap 与目录钻取定位大文件，清理前逐项预览、清理后进回收站。", href: "/toolbox/" },
-  { icon: Sparkles, title: "AI 解读", text: "默认关闭。开启后基于本机诊断快照给出结论，每条结论都附证据与置信度。", href: "/ai/" },
+  { icon: Activity, title: "实时状态", label: "LIVE", text: "CPU、内存、磁盘和网络每 2 秒刷新，变化不再藏在任务管理器深处。", href: "/features/#monitor", className: "feature-wide" },
+  { icon: Cpu, title: "硬件健康", label: "HEALTH", text: "温度、SMART、驱动签名和设备状态，集中到一张清晰的健康视图。", href: "/features/#hardware", className: "" },
+  { icon: Stethoscope, title: "问题诊断", label: "DIAGNOSE", text: "把蓝屏、崩溃、网络和驱动异常整理成能读懂、能追查的结论。", href: "/features/#diagnostics", className: "" },
+  { icon: Gauge, title: "性能基线", label: "BENCHMARK", text: "不只给一个跑分，还记录本机历史基线，让每次变快或变慢都有参照。", href: "/features/#benchmark", className: "feature-wide" },
+  { icon: Eraser, title: "空间与清理", label: "STORAGE", text: "Treemap、目录钻取和大文件定位；清理前预览，清理后进入回收站。", href: "/toolbox/#cleanup", className: "" },
+  { icon: Sparkles, title: "AI 解读", label: "OPTIONAL", text: "默认关闭。开启后只读取脱敏快照，每条结论都必须附上证据。", href: "/ai/", className: "" },
 ];
 
-const facts = ["本地优先", "不安装后台服务", "写操作可回滚", "报告自动脱敏"];
+const guarantees = ["本地优先", "无需注册", "不装后台服务", "写操作可回滚"];
 ---
 
 <Layout title="小鲁 · 系统透镜 — 看清你的电脑" description="面向 Windows 的本地系统信息、健康检查、性能诊断与 AI 解读工具。">
-  <main id="top">
-    <section class="hero section-shell">
-      <div class="hero-glow"></div>
-      <div class="eyebrow"><i></i> 为 Windows 11 设计 · 当前版本 {SITE.version}</div>
-      <h1>电脑的状态，<br /><em>终于一目了然。</em></h1>
-      <p class="hero-copy">小鲁把分散、晦涩的系统信息整理成清晰的健康视图：温度、存储健康、驱动状态、跑分基线与空间占用都在一处。无需成为专家，也能读懂电脑此刻的状态。</p>
-      <div class="hero-actions">
-        <a class="button primary" href="/download/">下载 Windows 版 <span><ArrowDown size={16} /></span></a>
-        <a class="button secondary" href="/features/">浏览全部功能 <span><ArrowDownRight size={16} /></span></a>
-      </div>
-      <div class="trust-row">{facts.map((fact) => <span><i><Check size={11} strokeWidth={2.5} /></i>{fact}</span>)}</div>
-      <div id="preview" class="hero-preview"><ProductPreview client:visible /></div>
-    </section>
+  <main class="home" id="top">
+    <section class="home-hero section-shell">
+      <div class="hero-orb hero-orb-one"></div>
+      <div class="hero-orb hero-orb-two"></div>
 
-    <section id="features" class="features section-shell">
-      <div class="section-label">核心能力 / CAPABILITIES</div>
-      <div class="section-heading"><h2>少一些术语，<br />多一些答案。</h2><p>从概览到细节，小鲁用一致的方式呈现电脑的关键状态，让每一次判断都有依据。</p></div>
-      <div class="feature-grid">
-        {features.map(({ icon: Icon, ...feature }, index) => <article class:list={["feature-card", index === 0 && "featured"]}>
-          <span class="feature-index">0{index + 1}</span><span class="feature-icon"><Icon size={28} strokeWidth={1.65} /></span><h3><a href={feature.href}>{feature.title}</a></h3><p>{feature.text}</p>
-        </article>)}
-      </div>
-    </section>
-
-    <section class="insight section-shell">
-      <div class="insight-panel">
-        <div class="insight-copy"><div class="section-label">不止是数字</div><h2>发现变化，<br />也看懂原因。</h2><p>实时数据、历史趋势和健康评估放在同一个上下文里。温度升高、磁盘空间减少，或系统出现异常时，你知道下一步该看哪里。</p></div>
-        <div class="chart-card" aria-label="性能趋势示意图">
-          <div class="chart-head"><span>性能趋势</span><small><i></i> 实时</small></div>
-          <div class="chart-value">27.4% <span>CPU 使用率</span></div>
-          <svg viewBox="0 0 560 190" role="img" aria-label="CPU使用率趋势模拟图"><defs><linearGradient id="area" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#7585ff" stop-opacity=".35"/><stop offset="1" stop-color="#7585ff" stop-opacity="0"/></linearGradient></defs><path class="grid" d="M0 40H560M0 90H560M0 140H560"/><path class="area" d="M0 145 C45 130 58 90 95 112 S145 165 185 118 S245 62 285 94 S340 150 380 120 S430 62 470 82 S525 120 560 70 V190H0Z"/><path class="line" d="M0 145 C45 130 58 90 95 112 S145 165 185 118 S245 62 285 94 S340 150 380 120 S430 62 470 82 S525 120 560 70"/></svg>
-          <div class="chart-legend"><span>过去 60 分钟</span><span>现在</span></div>
+      <div class="home-hero-copy">
+        <div class="eyebrow"><i></i> WINDOWS 11 · VERSION {SITE.version}</div>
+        <h1>别再猜电脑<br />哪里<em>不对劲。</em></h1>
+        <p>小鲁把硬件状态、实时性能、问题诊断和空间占用放进同一个清晰视图。你看到的不只是数字，还有它意味着什么。</p>
+        <div class="hero-actions home-actions">
+          <a class="button primary" href="/download/">下载 Windows 版 <ArrowRight size={17} /></a>
+          <a class="button secondary" href="/features/">查看全部能力</a>
+        </div>
+        <div class="hero-proof">
+          {guarantees.map((item) => <span><Check size={14} strokeWidth={2.5} />{item}</span>)}
         </div>
       </div>
-    </section>
 
-    <section class="page-section section-shell">
-      <div class="section-head"><div class="section-label">工具箱 / TOOLBOX</div><h2>25 个独立工具，<br />每个都看得懂。</h2><p>工具箱里的每个工具都是独立进程，能力、权限和风险等级写在清单里。只读工具只扫描不改写，写操作一律先预览再确认，执行记录留在本机。</p></div>
-      <div class="mini-grid">
-        <article class="mini-card"><span class="mini-icon"><Eraser size={20} /></span><h3>清理与空间</h3><p>清理大师、C 盘瘦身、重复文件清理与 Windows 系统瘦身共用同一套扫描与回收站机制，清掉的文件可还原。</p><a href="/toolbox/#cleanup">查看清理类工具 <ArrowRight size={14} /></a></article>
-        <article class="mini-card"><span class="mini-icon"><SlidersHorizontal size={20} /></span><h3>系统优化</h3><p>Windows 优化助手体检 11 项设置，电脑性能优化切换电源计划与逐项读写，系统优化大师一键加速并可快照撤销。</p><a href="/toolbox/#optimize">查看优化类工具 <ArrowRight size={14} /></a></article>
-        <article class="mini-card"><span class="mini-icon"><FileArchive size={20} /></span><h3>日常文件工具</h3><p>Windows 压缩工具实时进度可随时取消，PDF 大师支持逐页预览、合并拆分、输出加密与权限限制。</p><a href="/toolbox/#utility">查看文件类工具 <ArrowRight size={14} /></a></article>
+      <div class="product-stage">
+        <div class="stage-label stage-label-top"><Activity size={14} /> 实时数据</div>
+        <div class="stage-label stage-label-bottom"><ShieldCheck size={14} /> 本地运行</div>
+        <ProductPreview client:visible />
       </div>
     </section>
 
-    <section id="security" class="security section-shell">
-      <div class="shield" aria-hidden="true"><ShieldCheck strokeWidth={1.2} /></div>
-      <div><div class="section-label">LOCAL-FIRST</div><h2>你的电脑数据，<br />留在你的电脑。</h2><p>小鲁优先使用 Windows 标准接口读取信息，不要求注册账户，也不安装额外的后台服务。导出的诊断报告会自动隐藏敏感信息。</p><div class="security-points"><span><i>01</i>默认本地运行</span><span><i>02</i>清理前明确预览</span><span><i>03</i>写操作需要确认</span></div><p style="margin-top:22px"><a href="/security/" style="color:#9aa5ff;font-weight:600">查看完整安全说明 →</a></p></div>
+    <section class="value-strip section-shell" aria-label="产品原则">
+      <div><strong>01</strong><span>读数有来源</span><small>拿不到就明确说明，不用估算值填空。</small></div>
+      <div><strong>02</strong><span>判断有证据</span><small>从实时曲线一路追到事件与硬件状态。</small></div>
+      <div><strong>03</strong><span>改动有退路</span><small>先预览、再确认，并保留审计和回滚路径。</small></div>
     </section>
 
-    <section id="download" class="download section-shell">
-      <div class="download-card"><div><div class="section-label">开始使用</div><h2>更了解电脑，<br />从现在开始。</h2><p>适用于 Windows 11 · 当前版本 {SITE.version}</p></div><div class="download-actions"><a class="button light" href={SITE.releasesUrl}>前往 GitHub Releases <span><ExternalLink size={16} /></span></a><small>安装包发布后将在此提供下载</small></div></div>
+    <section class="home-section section-shell" id="features">
+      <div class="home-section-head">
+        <div><div class="section-label">CAPABILITIES / 核心能力</div><h2>从“发生了什么”，<br />到“接下来怎么办”。</h2></div>
+        <p>不把专业术语丢给你。每个视图都围绕一个问题展开，让系统状态真正可以被理解和行动。</p>
+      </div>
+      <div class="bento-grid">
+        {features.map(({ icon: Icon, ...feature }) => (
+          <a class:list={["bento-card", feature.className]} href={feature.href}>
+            <div class="bento-top"><span class="bento-icon"><Icon size={22} strokeWidth={1.7} /></span><small>{feature.label}</small></div>
+            <div><h3>{feature.title}</h3><p>{feature.text}</p></div>
+            <ArrowRight className="bento-arrow" size={18} />
+          </a>
+        ))}
+      </div>
+    </section>
+
+    <section class="insight-v2 section-shell">
+      <div class="insight-v2-copy">
+        <div class="section-label">CONTEXT / 趋势与上下文</div>
+        <h2>一次读数没意义，<br />变化才有。</h2>
+        <p>实时数据、历史趋势和健康评估被放在同一个上下文里。温度升高、磁盘空间减少或系统开始不稳定时，你能看见变化发生的过程。</p>
+        <a href="/features/#monitor">了解实时监控 <ArrowRight size={15} /></a>
+      </div>
+      <div class="chart-card chart-card-v2" aria-label="CPU 使用率趋势示意图">
+        <div class="chart-head"><span><Activity size={15} /> CPU 使用率</span><small><i></i> 实时</small></div>
+        <div class="chart-value">27.4% <span>状态平稳</span></div>
+        <svg viewBox="0 0 560 190" role="img" aria-label="CPU 使用率趋势模拟图"><defs><linearGradient id="area" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#7585ff" stop-opacity=".35"/><stop offset="1" stop-color="#7585ff" stop-opacity="0"/></linearGradient></defs><path class="grid" d="M0 40H560M0 90H560M0 140H560"/><path class="area" d="M0 145 C45 130 58 90 95 112 S145 165 185 118 S245 62 285 94 S340 150 380 120 S430 62 470 82 S525 120 560 70 V190H0Z"/><path class="line" d="M0 145 C45 130 58 90 95 112 S145 165 185 118 S245 62 285 94 S340 150 380 120 S430 62 470 82 S525 120 560 70"/></svg>
+        <div class="chart-legend"><span>过去 60 分钟</span><span>现在</span></div>
+      </div>
+    </section>
+
+    <section class="tools-v2 section-shell">
+      <div class="tools-title">
+        <div class="section-label">TOOLBOX / 独立工具</div>
+        <h2>需要动手时，<br />边界依然清楚。</h2>
+        <p>25 个工具各自声明权限和风险。只读能力不写入系统；写操作必须经过预览、确认和记录。</p>
+        <a class="text-link" href="/toolbox/">浏览完整工具箱 <ArrowRight size={15} /></a>
+      </div>
+      <div class="tool-stack">
+        <a href="/toolbox/#cleanup"><span><Eraser size={22} /></span><div><h3>清理与空间</h3><p>定位大文件、重复文件和固定白名单内的可清理项。</p></div><ArrowRight size={17} /></a>
+        <a href="/toolbox/#optimize"><span><SlidersHorizontal size={22} /></span><div><h3>系统优化</h3><p>逐项体检与预览，保留原值和一键撤销路径。</p></div><ArrowRight size={17} /></a>
+        <a href="/toolbox/#utility"><span><FileArchive size={22} /></span><div><h3>文件工具</h3><p>压缩、PDF 和日常文件处理，进度透明且可取消。</p></div><ArrowRight size={17} /></a>
+      </div>
+    </section>
+
+    <section class="privacy-v2 section-shell">
+      <div class="privacy-mark"><ShieldCheck size={38} strokeWidth={1.5} /></div>
+      <div><div class="section-label">LOCAL-FIRST / 安全边界</div><h2>电脑数据，留在电脑。</h2><p>默认本地运行，不要求注册账户，不安装额外后台服务。报告导出时自动隐藏主机名、用户名、序列号和本地路径等敏感信息。</p></div>
+      <a href="/security/">查看安全说明 <ArrowRight size={15} /></a>
+    </section>
+
+    <section class="download-v2 section-shell">
+      <div><span>适用于 Windows 11 · v{SITE.version}</span><h2>把电脑的状态，<br />真正看明白。</h2></div>
+      <a class="button download-button" href={SITE.releasesUrl}>前往 GitHub Releases <ExternalLink size={17} /></a>
     </section>
   </main>
 </Layout>
