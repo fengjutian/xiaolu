@@ -557,7 +557,7 @@ function HardwarePanel({ details }: { details: HardwareDetails | null }) {
     <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
       {Object.entries(details).map(([section, value]) => (
         <Card key={section} className="glass-card" radius="lg">
-          <Text tt="uppercase" size="xs" c="indigo.3" fw={800} mb="md">
+          <Text tt="uppercase" size="xs" c="verdant.4" fw={800} mb="md">
             {section}
           </Text>
           <pre className="hardware-json">{JSON.stringify(value, null, 2)}</pre>
