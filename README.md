@@ -1,133 +1,188 @@
-# 小鲁 · System Lens
+# 小鲁 · 系统透镜
 
-一个使用 Tauri 2、React 和 Rust 构建的本地优先 Windows 系统信息与健康检查应用。
+小鲁是一款面向 Windows 11 的本地系统信息、硬件健康与问题诊断工具。项目使用 Tauri 2、React 和 Rust 构建，优先在本机读取、分析并保存数据，不要求注册账户，也不安装后台服务。
 
-完整功能路线图：[docs/FULL_FEATURE_ROADMAP.md](docs/FULL_FEATURE_ROADMAP.md)
+当前版本：`0.57.0`
 
-产品对标与验收标准（含 25 个工具的优化顺序与验收线）：[docs/PRODUCT_PARITY_STANDARD.md](docs/PRODUCT_PARITY_STANDARD.md)
+## 能做什么
 
-提权助手设计（系统级操作）：[docs/ELEVATED_HELPER.md](docs/ELEVATED_HELPER.md)
+### 系统与硬件
 
-## 当前功能
+- 实时查看 CPU、内存、磁盘和网络状态
+- 查看主板、BIOS、显卡、内存、硬盘、网卡及显示设备详情
+- 读取硬盘 SMART、温度、电池健康、驱动签名与设备异常
+- 查看高占用进程、启动项、计划任务、服务和已安装软件
 
-- 系统与 CPU 概览
-- CPU、内存、磁盘和网络实时曲线（每 2 秒刷新）
-- 实时上传/下载速度及累计流量
-- 主板、BIOS、显卡、内存、硬盘和网卡详情
-- 磁盘和分区空间、实时读写速度
-- 资源占用最高的 30 个进程
-- Windows 当前用户启动项启停管理（系统级启动项只读）
-- 系统托盘常驻、关闭窗口后后台运行
-- NVIDIA GPU 温度、风扇、功耗与频率（硬件支持时）
-- Windows ACPI 热区与物理磁盘健康/温度
-- Windows 设备与驱动清单、签名状态、缺失驱动和 PnP 异常检测
-- ATA SMART 原始属性、当前值、最差值、原始计数和预测故障状态
-- CPU 单核/多核、内存带宽和磁盘顺序读写性能测试
-- 本地跑分历史和版本化综合评分
-- 本机跑分基线：按项目统计同机同版本的中位数基线与波动幅度，给出可信度；复检时直接显示与基线的偏差
-- WebGL2 离屏 GPU 着色器跑分和 GPU 像素吞吐
-- Windows Update 官方驱动候选只读扫描
-- 电池健康、待重启状态与最近 24 小时关键系统事件
-- DNS、网关、代理、Hosts 统计和活动 TCP 连接诊断
-- Windows 已安装软件、版本、发布者、位置与登记空间清单
-- 下载、文档和桌面目录的隐私友好型空间分析
-- 蓝屏转储元数据、崩溃事件和自动启动服务异常诊断
-- 自动脱敏的 JSON 诊断报告
-- AI 健康解读（默认关闭）：不可变诊断快照、本地规则回退、OpenAI 兼容模型、流式取消、证据校验与发送前脱敏预览
-- 温度告警桌面通知（冷却时间与免打扰时段，可发送测试通知）
-- 设备详情：显示器 EDID、音频、USB、蓝牙与摄像头只读清单
-- 全盘空间分析：盘符级 Treemap、目录钻取与系统目录排除
-- 工具箱 25 个独立工具进程（6 个纯只读 + 19 个含写操作，写操作带确认令牌与本地操作日志）
-- 工具运行统计：记录每次工具执行的握手成功率、超时率与耗时 P95，逐工具明细，全部留在本机不上传；对照验收线直接给「达标 / 未达标 / 样本不足」结论并指名是哪个工具掉链子
-- 软件权限管理：查看启动项/服务/计划任务/通知；用户级启动项批量启停与一键恢复，系统级启动项与服务启动类型经 UAC + 独立助手修改
-- 清理大师与 C 盘瘦身：共用同一套清理引擎（唯一白名单 + 唯一扫描器），固定白名单扫描 + 勾选清理，逐文件清单与本地日志，文件移入回收站可还原
-- Windows 优化助手：11 项系统设置体检，5 项用户级设置可直接应用与一键撤销，6 项系统级（HKLM）设置可勾选后整批一次 UAC 写入
-- 电脑性能优化：电源计划切换、逐项电源设置读写与省电/均衡/性能一键预设（写入经独立提权助手，逐项回读、本地快照与一键撤销）
-- 护眼模式：Gamma Ramp 色温滤镜、定时休息提醒与应用内时间段设置
-- 设置页：刷新间隔、指标历史保留、数据目录与一键清理
-- 软件卸载入口：启动系统卸载程序，安装目录缺失项标记为残留候选；启动结果与失败原因当场回执
-- Windows 压缩工具：压缩/解压/查看 ZIP，实时进度条与「随时取消」（取消时删掉半成品压缩包），含 Zip-Slip 防护、覆盖保护与 ZIP64 大文件支持
-- PDF 大师：逐页预览（页码 / 尺寸 / 旋转 / 文本摘要）、查看信息、合并、按页拆分与旋转；输出可加密并限制权限，同名输出可选报错 / 覆盖 / 自动改名
-- 快捷启动：搜索并启动开始菜单快捷方式与系统应用（不注入 Explorer）
-- 桌面助手：查看并打开桌面项目与常用文件夹（应用内、不常驻）
-- 无痕模式：只读扫描浏览器、最近文件、跳转列表、剪贴板与 DNS 痕迹
-- 系统优化大师：只读汇总启动项、服务、计划任务、休眠与临时文件候选
-- 广告拦截：只读审计 Hosts、DNS、浏览器扩展与防火墙状态
-- 安装拦截：只读检查近期安装包签名与捆绑风险，不运行安装包
-- C 盘瘦身与扩容：只读分析右侧未分配空间与扩容可行性（不实际扩盘）
-- 报告导出：JSON / Markdown / 自包含 HTML（可浏览器打印为 PDF）
-- 浏览器演示模式与 Tauri 真实数据模式
+### 性能与诊断
 
-## AI 解读
+- CPU、内存、磁盘与 WebGL2 GPU 性能测试
+- 建立本机历史基线并比较性能变化
+- 分析蓝屏转储、崩溃事件、网络连接和驱动问题
+- 提供磁盘空间 Treemap、大文件、重复文件与目录分析
+- 导出经过脱敏的 JSON、Markdown 和自包含 HTML 报告
 
-AI 默认关闭，关闭时全部检测、规则诊断和报告保持可用。启用后：
+### 工具箱
 
-- 页面“AI 解读”先生成一份不可变的本机健康快照（系统指标、温度/SMART、驱动、系统诊断、24 小时趋势与本地规则结论）；
-- 模型只接收脱敏后的事实列表；发送前可在界面中预览完整载荷；
-- 结论必须引用快照中存在的 `evidenceRefs`，缺少证据的模型输出会被丢弃；
-- 支持流式进度和取消；模型不可用、超时或输出非法时自动退回本地规则诊断；
-- API 密钥使用 Windows DPAPI（当前用户）加密保存，不写入设置文件或日志；
-- 回答默认保存为本机会话记录（最多 50 条），支持逐条删除、全部清除和“有帮助/无帮助/不准确”反馈；
-- 可配置输入/输出 token 单价，按模型实际返回的 usage 在本地估算费用；
-- AI 可请求白名单内最多 3 项只读检查（事件元数据、驱动问题、网络摘要、启动项、计划任务、温度与存储健康、系统诊断），由宿主校验参数、限时执行、脱敏结果并记录审计；
-- AI 可给出受控修复建议并生成只读预览（风险、回滚、清理目标），但不会执行写操作或签发确认令牌；
-- 支持原生 `tool_calls`（最多 2 轮、共 6 项检查）与受控 `requestedChecks` 计划协议，可在设置页探测模型能力；
-- AI 结论可导出为独立的 Markdown/JSON 解读报告，也可在诊断报告页勾选“AI 解读”并入主报告；
-- 没有 AI 写操作或命令执行通道，所有写操作仍需本地 UI 预览、二次确认和确认令牌。
+应用包含 25 个独立工具进程，覆盖清理、系统优化、压缩、PDF、软件管理、隐私检查等场景。
 
-实现说明与安全边界见 [docs/AI_IMPLEMENTATION.md](docs/AI_IMPLEMENTATION.md)。
+- 只读工具只扫描和展示，不修改系统
+- 写操作必须经过预览、二次确认和一次性确认令牌
+- 需要管理员权限的操作由独立提权助手按次执行
+- 清理操作优先移入回收站，优化操作保留回滚快照
+- 每次执行都会生成本地操作记录
 
-## 开发
+### AI 解读
+
+AI 功能默认关闭，关闭后不影响检测、诊断、跑分和报告功能。启用后，模型只接收经过筛选和脱敏的诊断快照。
+
+- 支持 OpenAI 兼容接口和流式取消
+- API 密钥使用 Windows DPAPI 加密保存
+- 发送前可以预览完整载荷
+- AI 结论必须引用真实存在的诊断证据
+- 模型不可用时自动回退到本地规则诊断
+- AI 只能请求白名单内的只读检查，不能执行命令或写操作
+
+详细设计见 [AI 实现说明](docs/AI_IMPLEMENTATION.md)。
+
+## 技术栈
+
+| 层级 | 技术 |
+| --- | --- |
+| 桌面框架 | Tauri 2 |
+| 前端 | React 19、TypeScript、Vite |
+| UI 与图表 | Mantine、Recharts、Tabler Icons |
+| 本地能力 | Rust、SQLite、Windows API |
+| 产品官网 | Astro、React |
+
+## 环境要求
+
+桌面端目前仅面向 Windows。开始前请安装：
+
+- Node.js 与 npm
+- Rust stable 工具链
+- Visual Studio Build Tools，包含“使用 C++ 的桌面开发”
+- Windows 10/11 SDK
+- Microsoft Edge WebView2 Runtime
+
+## 本地开发
 
 ```powershell
+cd D:\github\xiaolu
 npm install
 npm run tauri:dev
 ```
 
-仅构建前端：
+仅启动浏览器前端：
+
+```powershell
+npm run dev
+```
+
+## 构建与发布
+
+### 完整桌面安装包
+
+```powershell
+npm run release
+```
+
+该命令会依次完成：
+
+1. 编译 25 个工具及提权助手
+2. 生成并校验 `tools-dist/`
+3. 构建 React 前端
+4. 编译 Rust/Tauri 桌面程序
+5. 生成 MSI 和 NSIS 安装程序
+
+安装包位于：
+
+```text
+target/release/bundle/msi/
+target/release/bundle/nsis/
+```
+
+当前 MSI 使用简体中文，NSIS 安装程序支持简体中文和英文选择。
+
+### 仅构建桌面端
+
+如果 `tools-dist/` 已经是最新且校验完整，可以执行：
+
+```powershell
+npm run tauri:build
+```
+
+以下情况会中止打包：
+
+- 工具或入口程序缺失
+- `tool.json` 与源码不一致
+- 工具源码修改后没有重新构建
+- 需要提权的工具缺少 `lens_helper.exe`
+
+### 工具箱命令
+
+```powershell
+npm run toolbox:build   # 编译工具并生成 tools-dist
+npm run toolbox:verify  # 校验工具、清单和源码指纹
+npm run toolbox:test    # 运行全部工具 crate 测试
+```
+
+### 常规检查
+
+```powershell
+npm run build
+cargo test --manifest-path src-tauri/Cargo.toml
+```
+
+## 产品官网
+
+官网位于 `website/`，与桌面应用独立构建：
+
+```powershell
+cd website
+npm install
+npm run dev
+```
+
+生成静态站点：
 
 ```powershell
 npm run build
 ```
 
-检查 Rust：
+产物位于 `website/dist/`。官网支持深色与浅色主题，并会记住用户选择。
 
-```powershell
-cargo test --manifest-path src-tauri/Cargo.toml
+## 项目结构
+
+```text
+xiaolu/
+├─ src/                 React 桌面界面
+├─ src-tauri/           Tauri 配置与 Rust 宿主
+├─ tools/               独立工具、共享协议和提权助手
+├─ tools-dist/          工具箱构建产物，不提交到仓库
+├─ website/             Astro 产品官网
+├─ docs/                需求、设计与实现文档
+├─ public/              桌面前端静态资源
+└─ package.json         开发和发布脚本
 ```
 
-### 工具箱与打包
+## 安全与隐私原则
 
-25 个工具是独立进程，安装包必须带上它们。工具箱产物落在 `tools-dist/`（不入库），构建与校验分开：
+- 默认本地运行，不要求登录
+- 不静默上传系统数据
+- 不安装内核驱动或后台服务
+- 无法读取的指标明确显示不可用，不使用估算值冒充
+- 写操作必须可预览、可审计，并尽可能可回滚
+- 报告默认隐藏主机名、用户名、序列号、MAC 和本地路径等敏感信息
 
-```powershell
-npm run toolbox:build   # 逐个构建工具并复制到 tools-dist/，结束后自动校验
-npm run toolbox:verify  # 只校验：工具是否齐备、清单是否一致、源码是否已过期
-npm run toolbox:test    # 跑全部工具 crate 的测试（含 shared 协议库）
-npm run release         # 完整发布：重建工具箱 -> 校验 -> 前端 -> tauri build
-```
+## 进一步阅读
 
-所有工具 crate 共用一个构建目录 `.cargo-target/tools/`：26 个 crate 的 release profile 完全一致（`panic=abort` / `strip` / `lto` / `opt-level=s`），依赖版本也完全锁定一致（serde_json 1.0.154、hmac 0.12.1、winreg 0.55.0），所以 `serde_json` / `hmac` / `sha2` / `winreg` 只编译一次而不是 25 次。
+- [完整功能路线图](docs/FULL_FEATURE_ROADMAP.md)
+- [产品对标与验收标准](docs/PRODUCT_PARITY_STANDARD.md)
+- [工具包规范](docs/TOOL_PACKAGE_SPEC.md)
+- [AI 实现说明](docs/AI_IMPLEMENTATION.md)
+- [传感器 Helper 设计](docs/SENSOR_HELPER_DESIGN.md)
+- [项目需求](PROJECT_REQUIREMENTS.md)
 
-`npm run tauri:build` 只跑快速校验（约 1 秒），校验不通过就会中止打包：
+## 项目边界
 
-- 工具目录 / 入口程序缺失；
-- 打包的 `tool.json` 与源码不一致；
-- **工具源码改动后没有重建**（按源码指纹比对，防止把旧二进制打进安装包）；
-- 需要提权的工具找不到 `lens_helper.exe`。
-
-提权助手只存一份在 `tools-dist/lens_helper/`，工具按 `<工具目录>/../lens_helper/lens_helper.exe` 查找。
-
-安装包把 `tools-dist/` 映射到安装目录下的 `tools/`，与宿主查找路径 `current_exe/../tools` 对应；MSI 安装器语言为 zh-CN（MSI 数据库代码页 1252 装不下中文产品名）。
-
-本项目不复用鲁大师的代码、商标或视觉资源，也不安装驱动或后台服务。
-
-## 界面技术
-
-- Mantine：桌面端组件、主题与布局
-- Recharts：实时性能曲线
-- Tabler Icons：一致的矢量图标
-
-## 传感器限制
-
-0.3.0 使用 Windows 标准接口和已安装的 NVIDIA 厂商工具，不额外安装内核驱动。部分机器不会通过这些接口公开 CPU 温度，界面会明确显示不可用；后续版本计划提供可选、独立且经过审查的传感器 helper。
+本项目不复用鲁大师的代码、商标或视觉资源。小鲁不会静默安装第三方软件、驱动或后台服务。
