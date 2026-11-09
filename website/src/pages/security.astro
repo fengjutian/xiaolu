@@ -1,18 +1,18 @@
 ---
 import Layout from "../layouts/Layout.astro";
+import PageHero from "../components/PageHero.astro";
 ---
 
 <Layout title="安全与隐私 · 小鲁 · 系统透镜" description="小鲁的安全边界：本地优先、写操作确认令牌、提权助手隔离、本地审计日志与可回滚设计。">
   <main>
-    <section class="page-hero section-shell">
-      <div class="eyebrow"><i></i> 安全与隐私</div>
-      <h1>能改的都留后路，<br /><em>不能改的一律不改。</em></h1>
-      <p class="hero-copy">小鲁的第一条原则是默认离线、只读、以普通用户权限运行。需要提权的动作被单独隔离，每一次写操作都要经过预览、确认与记录。</p>
-      <div class="hero-actions">
-        <a class="button primary" href="/toolbox/">查看工具风险分级 <span>↓</span></a>
-        <a class="button secondary" href="/download/">下载 Windows 版 <span>↘</span></a>
-      </div>
-    </section>
+    <PageHero
+      eyebrow="安全与隐私"
+      title="能改的都留后路，"
+      accent="不能改的一律不改。"
+      description="小鲁的第一条原则是默认离线、只读、以普通用户权限运行。需要提权的动作被单独隔离，每一次写操作都要经过预览、确认与记录。"
+      primary={{ href: "/toolbox/", label: "查看工具风险分级" }}
+      secondary={{ href: "/download/", label: "下载 Windows 版" }}
+    />
 
     <section class="page-section section-shell">
       <div class="section-head"><div class="section-label">PRINCIPLES / 设计原则</div><h2>四条贯穿全局的规则</h2></div>

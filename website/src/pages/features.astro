@@ -1,7 +1,7 @@
 ---
 import Layout from "../layouts/Layout.astro";
-
-const version = "0.57.0";
+import PageHero from "../components/PageHero.astro";
+import { SITE } from "../config/site";
 
 const groups = [
   {
@@ -170,15 +170,14 @@ const groups = [
 
 <Layout title="功能总览 · 小鲁 · 系统透镜" description="小鲁的全部功能：实时监控、硬件健康、性能跑分与基线、问题诊断、空间分析、工具箱与诊断报告。">
   <main>
-    <section class="page-hero section-shell">
-      <div class="eyebrow"><i></i> 功能总览 · 版本 {version}</div>
-      <h1>一个应用，<br /><em>覆盖电脑健康的全部侧面。</em></h1>
-      <p class="hero-copy">从实时曲线到蓝屏转储，从跑分基线到空间占用。下面是小鲁目前提供的全部能力，以及每一项能为你回答什么问题。</p>
-      <div class="hero-actions">
-        <a class="button primary" href="/download/">下载 Windows 版 <span>↓</span></a>
-        <a class="button secondary" href="/toolbox/">查看 25 个工具 <span>↘</span></a>
-      </div>
-    </section>
+    <PageHero
+      eyebrow={`功能总览 · 版本 ${SITE.version}`}
+      title="一个应用，"
+      accent="覆盖电脑健康的全部侧面。"
+      description="从实时曲线到蓝屏转储，从跑分基线到空间占用。下面是小鲁目前提供的全部能力，以及每一项能为你回答什么问题。"
+      primary={{ href: "/download/", label: "下载 Windows 版" }}
+      secondary={{ href: "/toolbox/", label: "查看 25 个工具" }}
+    />
 
     {groups.map((group) => (
       <section class="page-section section-shell" id={group.id}>

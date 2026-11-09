@@ -1,33 +1,33 @@
 ---
 import Layout from "../layouts/Layout.astro";
-
-const version = "0.57.0";
+import PageHero from "../components/PageHero.astro";
+import { SITE } from "../config/site";
 ---
 
-<Layout title="下载 · 小鲁 · 系统透镜" description="下载小鲁 · 系统透镜：面向 Windows 11 的本地系统信息与健康检查工具，当前版本 0.57.0。">
+<Layout title="下载 · 小鲁 · 系统透镜" description={`下载小鲁 · 系统透镜：面向 Windows 11 的本地系统信息与健康检查工具，当前版本 ${SITE.version}。`}>
   <main>
-    <section class="page-hero section-shell">
-      <div class="eyebrow"><i></i> 当前版本 {version} · 面向 Windows 11</div>
-      <h1>装上它，<br /><em>看清电脑此刻的状态。</em></h1>
-      <p class="hero-copy">安装后即可查看硬件详情、温度与存储健康、跑分基线、驱动状态与空间占用。所有数据留在本机，不需要注册账户。</p>
-      <div class="hero-actions">
-        <a class="button primary" href="https://github.com/fengjutian/xiaolu/releases">前往 GitHub Releases <span>↗</span></a>
-        <a class="button secondary" href="/features/">先看看能做什么 <span>↘</span></a>
-      </div>
+    <PageHero
+      eyebrow={`当前版本 ${SITE.version} · 面向 Windows 11`}
+      title="装上它，"
+      accent="看清电脑此刻的状态。"
+      description="安装后即可查看硬件详情、温度与存储健康、跑分基线、驱动状态与空间占用。所有数据留在本机，不需要注册账户。"
+      primary={{ href: SITE.releasesUrl, label: "前往 GitHub Releases", arrow: "↗", external: true }}
+      secondary={{ href: "/features/", label: "先看看能做什么" }}
+    >
       <div class="trust-row"><span><i>✓</i>免注册</span><span><i>✓</i>只读功能无需管理员权限</span><span><i>✓</i>无静默更新</span></div>
-    </section>
+    </PageHero>
 
     <section class="page-section section-shell">
       <div class="section-head"><div class="section-label">GET IT / 获取</div><h2>安装包公开发布后在这里直接下载</h2><p>目前安装包尚未对外发布，发布后可在本页直接获取。也可以先到 GitHub Releases 页面查看进展。</p></div>
       <table class="spec-table">
         <tbody>
-          <tr><td>当前版本</td><td>{version}</td></tr>
+          <tr><td>当前版本</td><td>{SITE.version}</td></tr>
           <tr><td>操作系统</td><td>Windows 11（64 位）</td></tr>
           <tr><td>安装包格式</td><td>MSI 与 NSIS 两种安装程序；MSI 为简体中文，NSIS 提供简体中文与英文并可选择语言</td></tr>
           <tr><td>权限要求</td><td>监控、诊断与报告等只读功能以普通用户权限运行；少数系统级工具在执行时单独请求 UAC 授权</td></tr>
           <tr><td>附带组件</td><td>工具箱的 25 个独立工具进程与提权助手随安装包一起安装</td></tr>
           <tr><td>更新方式</td><td>从 GitHub Releases 手动获取新版本，应用不会静默下载或自动安装更新</td></tr>
-          <tr><td>源代码</td><td>完整源码、构建说明与开发文档在 <a href="https://github.com/fengjutian/xiaolu" style="color:#9aa5ff">GitHub 仓库</a> 中公开</td></tr>
+          <tr><td>源代码</td><td>完整源码、构建说明与开发文档在 <a href={SITE.repositoryUrl} style="color:#9aa5ff">GitHub 仓库</a> 中公开</td></tr>
         </tbody>
       </table>
     </section>
@@ -50,7 +50,7 @@ const version = "0.57.0";
         <article class="spec-card"><h3>UAC 只在必要时出现</h3><p>只有涉及系统级设置或受保护路径的操作才会请求管理员授权，授权范围限定在当次具体动作。</p></article>
         <article class="spec-card"><h3>清理都可还原</h3><p>清理类工具把文件移入回收站而不是直接删除，出问题可以还原。优化类工具保留快照，支持一键撤销。</p></article>
       </div>
-      <div class="callout"><strong>遇到问题？</strong> 可以在 <a href="https://github.com/fengjutian/xiaolu/issues" style="color:#9aa5ff">GitHub Issues</a> 反馈。附上设置页里的诊断报告（默认已脱敏）能显著加快定位速度。</div>
+      <div class="callout"><strong>遇到问题？</strong> 可以在 <a href={SITE.issuesUrl} style="color:#9aa5ff">GitHub Issues</a> 反馈。附上设置页里的诊断报告（默认已脱敏）能显著加快定位速度。</div>
     </section>
   </main>
 </Layout>

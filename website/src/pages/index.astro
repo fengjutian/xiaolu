@@ -1,8 +1,7 @@
 ---
 import Layout from "../layouts/Layout.astro";
 import ProductPreview from "../components/ProductPreview";
-
-const version = "0.57.0";
+import { SITE } from "../config/site";
 
 const features = [
   { icon: "⌁", title: "实时状态", text: "CPU、内存、磁盘、网络每 2 秒刷新，配合实时上传下载速度与进程排行。", href: "/features#monitor" },
@@ -20,7 +19,7 @@ const facts = ["本地优先", "不安装后台服务", "写操作可回滚", "�
   <main id="top">
     <section class="hero section-shell">
       <div class="hero-glow"></div>
-      <div class="eyebrow"><i></i> 为 Windows 11 设计 · 当前版本 {version}</div>
+      <div class="eyebrow"><i></i> 为 Windows 11 设计 · 当前版本 {SITE.version}</div>
       <h1>电脑的状态，<br /><em>终于一目了然。</em></h1>
       <p class="hero-copy">小鲁把分散、晦涩的系统信息整理成清晰的健康视图：温度、存储健康、驱动状态、跑分基线与空间占用都在一处。无需成为专家，也能读懂电脑此刻的状态。</p>
       <div class="hero-actions">
@@ -68,7 +67,7 @@ const facts = ["本地优先", "不安装后台服务", "写操作可回滚", "�
     </section>
 
     <section id="download" class="download section-shell">
-      <div class="download-card"><div><div class="section-label">开始使用</div><h2>更了解电脑，<br />从现在开始。</h2><p>适用于 Windows 11 · 当前版本 {version}</p></div><div class="download-actions"><a class="button light" href="https://github.com/fengjutian/xiaolu/releases">前往 GitHub Releases <span>↗</span></a><small>安装包发布后将在此提供下载</small></div></div>
+      <div class="download-card"><div><div class="section-label">开始使用</div><h2>更了解电脑，<br />从现在开始。</h2><p>适用于 Windows 11 · 当前版本 {SITE.version}</p></div><div class="download-actions"><a class="button light" href={SITE.releasesUrl}>前往 GitHub Releases <span>↗</span></a><small>安装包发布后将在此提供下载</small></div></div>
     </section>
   </main>
 </Layout>

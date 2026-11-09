@@ -1,0 +1,34 @@
+---
+interface Action {
+  href: string;
+  label: string;
+  arrow?: string;
+  external?: boolean;
+}
+
+interface Props {
+  eyebrow: string;
+  title: string;
+  accent: string;
+  description: string;
+  primary: Action;
+  secondary: Action;
+}
+
+const { eyebrow, title, accent, description, primary, secondary } = Astro.props;
+---
+
+<section class="page-hero section-shell">
+  <div class="eyebrow"><i></i> {eyebrow}</div>
+  <h1>{title}<br /><em>{accent}</em></h1>
+  <p class="hero-copy">{description}</p>
+  <div class="hero-actions">
+    <a class="button primary" href={primary.href} target={primary.external ? "_blank" : undefined} rel={primary.external ? "noreferrer" : undefined}>
+      {primary.label} <span>{primary.arrow ?? "↓"}</span>
+    </a>
+    <a class="button secondary" href={secondary.href} target={secondary.external ? "_blank" : undefined} rel={secondary.external ? "noreferrer" : undefined}>
+      {secondary.label} <span>{secondary.arrow ?? "↘"}</span>
+    </a>
+  </div>
+  <slot />
+</section>

@@ -1,5 +1,6 @@
 ---
 import Layout from "../layouts/Layout.astro";
+import PageHero from "../components/PageHero.astro";
 
 type Risk = "read_only" | "write" | "system";
 
@@ -87,15 +88,14 @@ const groups: { id: string; label: string; title: string; desc: string; tools: T
 
 <Layout title="工具箱 · 小鲁 · 系统透镜" description="小鲁工具箱：25 个独立工具进程，标注能力边界与风险等级，写操作一律预览、确认、审计。">
   <main>
-    <section class="page-hero section-shell">
-      <div class="eyebrow"><i></i> 工具箱 · 25 个独立工具进程</div>
-      <h1>每个工具，<br /><em>都写清楚它能做什么。</em></h1>
-      <p class="hero-copy">工具箱里的工具是彼此独立的进程，各自声明读取路径、写入路径、注册表范围与所需权限。界面上先看能力，再按按钮。</p>
-      <div class="hero-actions">
-        <a class="button primary" href="/download/">下载 Windows 版 <span>↓</span></a>
-        <a class="button secondary" href="/security/">写操作如何被约束 <span>↘</span></a>
-      </div>
-    </section>
+    <PageHero
+      eyebrow="工具箱 · 25 个独立工具进程"
+      title="每个工具，"
+      accent="都写清楚它能做什么。"
+      description="工具箱里的工具是彼此独立的进程，各自声明读取路径、写入路径、注册表范围与所需权限。界面上先看能力，再按按钮。"
+      primary={{ href: "/download/", label: "下载 Windows 版" }}
+      secondary={{ href: "/security/", label: "写操作如何被约束" }}
+    />
 
     <section class="page-section section-shell">
       <div class="section-head"><div class="section-label">RISK / 风险分级</div><h2>三级能力标注</h2><p>每个工具卡片右上角的标签就是它的能力边界。写操作与系统级操作在执行前都会先给出预览。</p></div>

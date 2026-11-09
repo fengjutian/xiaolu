@@ -1,18 +1,18 @@
 ---
 import Layout from "../layouts/Layout.astro";
+import PageHero from "../components/PageHero.astro";
 ---
 
 <Layout title="AI 解读 · 小鲁 · 系统透镜" description="小鲁的 AI 健康解读：默认关闭，基于本机诊断快照给出结论，每条结论都附证据引用与置信度。">
   <main>
-    <section class="page-hero section-shell">
-      <div class="eyebrow"><i></i> AI 解读 · 默认关闭</div>
-      <h1>让结论有证据，<br /><em>而不是有语气。</em></h1>
-      <p class="hero-copy">AI 解读把本机诊断事实翻译成能读懂的话。它默认关闭，关掉时所有检测、规则诊断与报告功能都照常工作；打开后，每条结论都必须指得出依据。</p>
-      <div class="hero-actions">
-        <a class="button primary" href="/download/">下载 Windows 版 <span>↓</span></a>
-        <a class="button secondary" href="/security/">查看数据边界 <span>↘</span></a>
-      </div>
-    </section>
+    <PageHero
+      eyebrow="AI 解读 · 默认关闭"
+      title="让结论有证据，"
+      accent="而不是有语气。"
+      description="AI 解读把本机诊断事实翻译成能读懂的话。它默认关闭，关掉时所有检测、规则诊断与报告功能都照常工作；打开后，每条结论都必须指得出依据。"
+      primary={{ href: "/download/", label: "下载 Windows 版" }}
+      secondary={{ href: "/security/", label: "查看数据边界" }}
+    />
 
     <section class="page-section section-shell">
       <div class="section-head"><div class="section-label">FLOW / 工作流程</div><h2>一次解读，经过六步</h2><p>模型看不到你的整台电脑。它只拿到一份经过筛选和脱敏的事实清单，然后每句结论都要被本地校验。</p></div>
