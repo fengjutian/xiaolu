@@ -47,7 +47,7 @@ export default function ProductPreview() {
   return (
     <div className="preview-window" aria-label="小鲁产品界面演示">
       <div className="preview-titlebar">
-        <span className="preview-mark">鲁</span>
+        <img className="preview-mark" src="/favicon.png" alt="" width="26" height="26" />
         <span>小鲁 · 系统透镜</span>
         <span className="preview-status"><Activity size={13} /> 实时监测中</span>
       </div>

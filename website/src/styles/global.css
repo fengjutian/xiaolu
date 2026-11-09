@@ -48,6 +48,9 @@
 :root[data-theme="light"] .site-footer .brand strong{color:#252c3b}
 
 .button span,.mini-card a,.preview-status,.preview-heading h3{display:inline-flex;align-items:center}
+.brand-logo{display:block;width:36px;height:36px;border-radius:50%;object-fit:cover;box-shadow:0 4px 14px rgba(38,91,198,.2)}
+.site-footer .brand-logo{width:32px;height:32px}
+.preview-mark{display:block;width:26px;height:26px;padding:0;border-radius:50%;object-fit:cover;background:transparent}
 .button svg,.mini-card a svg{flex:none}
 .preview-status{gap:6px}
 .preview-heading h3{gap:9px}

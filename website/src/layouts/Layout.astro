@@ -38,7 +38,7 @@ const year = new Date().getFullYear();
   </head>
   <body>
     <header class="site-header">
-      <a class="brand" href="/" aria-label="小鲁首页"><span>鲁</span><strong>小鲁</strong><small>系统透镜</small></a>
+      <a class="brand" href="/" aria-label="小鲁首页"><img class="brand-logo" src="/favicon.png" alt="" width="36" height="36" /><strong>小鲁</strong><small>系统透镜</small></a>
       <nav aria-label="主导航">
         {NAV_ITEMS.map((item) => <a href={item.href} class:list={[current === item.href && "active"]}>{item.label}</a>)}
       </nav>
@@ -54,7 +54,7 @@ const year = new Date().getFullYear();
     <slot />
 
     <footer class="site-footer section-shell">
-      <a class="brand" href="/"><span>鲁</span><strong>小鲁</strong></a>
+      <a class="brand" href="/"><img class="brand-logo" src="/favicon.png" alt="" width="32" height="32" /><strong>小鲁</strong></a>
       <p>看清系统，安心使用。</p>
       <div class="footer-links">
         {NAV_ITEMS.map((item) => <a href={item.href}>{item.label}</a>)}
