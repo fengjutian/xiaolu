@@ -8881,7 +8881,7 @@ export default function App() {
         {tab === "overview" &&
           (snapshot ? (
             <Stack gap="md">
-            <SimpleGrid cols={{ base: 2, xl: 4 }}>
+            <div className="overview-stat-grid">
               <Stat
                 icon={IconCpu}
                 label="CPU 使用率"
@@ -8910,8 +8910,8 @@ export default function App() {
                 hint={`累计 ${bytes(snapshot.network.totalTransmittedBytes)}`}
                 color="yellow"
               />
-            </SimpleGrid>
-            <SimpleGrid cols={{ base: 1, lg: 2 }}>
+            </div>
+            <div className="overview-chart-grid">
               <Card className="glass-card" radius="lg">
                 <Group justify="space-between" mb="sm">
                   <Box>
@@ -8936,7 +8936,7 @@ export default function App() {
                 </Group>
                 <PerformanceChart data={history} mode="network" />
               </Card>
-            </SimpleGrid>
+            </div>
             <Card className="glass-card" radius="lg">
               <Group justify="space-between" mb="md">
                 <Box>

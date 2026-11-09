@@ -24,6 +24,10 @@ body::before { content:""; position:fixed; inset:0; pointer-events:none; backgro
 .history-controls { margin-left:auto; flex-wrap:nowrap; }
 .history-sensor-select { width:clamp(240px,24vw,350px); }
 .history-metrics { position:relative; display:grid; grid-template-columns:repeat(4,minmax(90px,150px)); gap:10px; margin-top:18px; }
+.overview-stat-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:var(--mantine-spacing-md); }
+.overview-chart-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:var(--mantine-spacing-md); }
+@media (max-width:1300px) { .overview-stat-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media (max-width:900px) { .overview-stat-grid,.overview-chart-grid { grid-template-columns:1fr; } }
 .toolbox-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; }
 @media (min-width:2500px) { .toolbox-grid { grid-template-columns:repeat(6,minmax(0,1fr)); } }
 @media (min-width:2200px) and (max-width:2499px) { .toolbox-grid { grid-template-columns:repeat(5,minmax(0,1fr)); } }

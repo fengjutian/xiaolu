@@ -74,3 +74,26 @@
 :root[data-theme="light"] .product-stage .preview-window{box-shadow:0 45px 110px rgba(52,65,103,.18)}:root[data-theme="light"] .stage-label{box-shadow:0 12px 35px rgba(52,65,103,.12)}:root[data-theme="light"] .value-strip{box-shadow:0 18px 55px rgba(52,65,103,.07)}:root[data-theme="light"] .bento-card:hover{box-shadow:0 20px 50px rgba(52,65,103,.1)}:root[data-theme="light"] .insight-v2{box-shadow:0 24px 80px rgba(52,65,103,.08)}
 @media(max-width:1100px){.home-hero{grid-template-columns:1fr;min-height:auto;padding-top:145px}.home-hero-copy{max-width:720px}.product-stage{width:100%;transform:none}.value-strip{margin-top:70px}.bento-grid{grid-template-columns:repeat(2,1fr)}.tools-v2{gap:55px}}
 @media(max-width:800px){.home-hero{gap:22px;padding-top:120px}.home-hero-copy{padding:25px 0}.home-hero h1{font-size:48px}.home-hero-copy>p{font-size:15px}.home-actions{align-items:stretch}.product-stage{width:calc(100vw - 30px)}.stage-label{display:none}.value-strip{grid-template-columns:1fr;margin-top:45px}.value-strip>div+div{border-top:1px solid var(--line);border-left:0}.home-section{padding-top:100px}.home-section-head,.insight-v2,.tools-v2{grid-template-columns:1fr;gap:35px}.home-section-head{margin-bottom:32px}.bento-grid{grid-template-columns:1fr}.bento-card.feature-wide{grid-column:auto}.bento-card{min-height:240px}.insight-v2{margin-top:100px;padding:30px 20px}.tools-v2{padding-top:100px}.privacy-v2{grid-template-columns:1fr;margin-top:100px;padding:30px 24px}.download-v2{display:block;margin-top:80px;padding:38px 24px}.download-v2 .button{margin-top:28px;width:100%}}
+
+/* 视觉 3.0：网站采用青绿与暖灰，应用蓝色只保留在真实产品截图中。 */
+:root{--brand:#37c6a3;--brand2:#72ddc5;--green:#37c6a3}
+:root[data-theme="light"]{--bg:#f5f5f1;--panel:#fffefa;--panel2:#eeefe9;--text:#18201e;--muted:#68736f;--line:#dfe3dc;--brand:#147d70;--brand2:#147d70;--green:#159576}
+.site-header{background:rgba(8,14,13,.82)}
+:root[data-theme="light"] .site-header{background:rgba(247,247,243,.9)}
+.eyebrow,.section-label{color:var(--brand2)}
+h1 em{background:linear-gradient(90deg,#42c5a4,#b8d96d);-webkit-background-clip:text;background-clip:text;color:transparent}
+:root[data-theme="light"] h1 em{background:linear-gradient(90deg,#0f766e,#87a83f);-webkit-background-clip:text;background-clip:text;color:transparent}
+.button.primary{background:linear-gradient(135deg,#188d79,#43b997);box-shadow:0 14px 38px rgba(20,125,112,.22)}
+.hero-orb-one{background:radial-gradient(circle,rgba(49,177,146,.16),transparent 68%)}
+.hero-orb-two{background:radial-gradient(circle,rgba(196,170,92,.12),transparent 70%)}
+.stage-label svg,.bento-arrow,.tool-stack>a>svg{color:var(--brand2)}
+.app-shot{overflow:hidden;margin:0;border:1px solid var(--line);border-radius:22px;background:var(--panel);box-shadow:0 40px 100px rgba(6,22,18,.22)}
+.app-shot img{display:block;width:100%;height:auto;aspect-ratio:1536/816;object-fit:cover;object-position:center top}
+.bento-icon,.tool-stack>a>span{background:rgba(20,125,112,.09);color:var(--brand2)}
+.bento-card::before{background:radial-gradient(circle,rgba(20,125,112,.1),transparent 70%)}
+.bento-card:hover,.tool-stack>a:hover{border-color:rgba(20,125,112,.38)}
+.insight-v2{background:linear-gradient(135deg,var(--panel),rgba(20,125,112,.055))}
+.privacy-v2{border-color:rgba(20,125,112,.24);background:linear-gradient(110deg,rgba(20,125,112,.09),rgba(196,170,92,.08))}
+.privacy-mark{background:rgba(20,125,112,.1)}
+.download-v2{background:linear-gradient(120deg,#155e55,#2d927e);box-shadow:0 30px 80px rgba(12,86,75,.2)}
+:root[data-theme="light"] .app-shot{box-shadow:0 40px 100px rgba(38,65,57,.15)}
