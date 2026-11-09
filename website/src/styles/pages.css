@@ -78,3 +78,14 @@
   .spec-table tr{border-bottom:1px solid var(--line);padding:8px 0}
   .spec-table td{border:0;padding:4px 0}
 }
+
+:root[data-theme="light"] .page-section+.page-section{border-top-color:rgba(23,27,40,.07)}
+:root[data-theme="light"] .section-head p,:root[data-theme="light"] .spec-card p,:root[data-theme="light"] .spec-list li,:root[data-theme="light"] .tool-card p,:root[data-theme="light"] .mini-card p,:root[data-theme="light"] .flow-step p{color:#667085}
+:root[data-theme="light"] .spec-card,:root[data-theme="light"] .tool-card,:root[data-theme="light"] .mini-card,:root[data-theme="light"] .flow-step,:root[data-theme="light"] .callout{box-shadow:0 8px 28px rgba(44,56,91,.045)}
+:root[data-theme="light"] .tool-card:hover{border-color:#b7c0d2}
+:root[data-theme="light"] .badge-cat{background:#eef1f7;color:#566074;border-color:#dce1eb}
+:root[data-theme="light"] .spec-table th{color:#667085}
+:root[data-theme="light"] .spec-table td{color:#515b70}
+:root[data-theme="light"] .spec-table td:first-child{color:#232a3a}
+:root[data-theme="light"] .flow-step>b{background:#edf0f8;color:#5367d9}
+:root[data-theme="light"] .site-footer .footer-links a:hover{color:#252c3b}
