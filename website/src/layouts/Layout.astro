@@ -2,6 +2,7 @@
 import "../styles/global.css";
 import "../styles/pages.css";
 import { NAV_ITEMS, SITE } from "../config/site";
+import { Moon, Sun } from "lucide-react";
 
 interface Props {
   title: string;
@@ -43,8 +44,8 @@ const year = new Date().getFullYear();
       </nav>
       <div class="header-actions">
         <button class="theme-toggle" type="button" aria-label="切换为浅色主题" title="切换颜色主题">
-          <span class="theme-icon theme-icon-light" aria-hidden="true">☀</span>
-          <span class="theme-icon theme-icon-dark" aria-hidden="true">☾</span>
+          <span class="theme-icon theme-icon-light" aria-hidden="true"><Sun size={17} strokeWidth={1.8} /></span>
+          <span class="theme-icon theme-icon-dark" aria-hidden="true"><Moon size={17} strokeWidth={1.8} /></span>
         </button>
         <a class="header-cta" href="/download/">免费下载</a>
       </div>

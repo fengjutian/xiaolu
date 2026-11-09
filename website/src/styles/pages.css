@@ -50,7 +50,7 @@
 .mini-card{border:1px solid var(--line);border-radius:14px;background:var(--panel);padding:22px}
 .mini-card h3{margin:0 0 8px;font-size:16px}
 .mini-card p{margin:0 0 14px;color:#98a0b3;font-size:14px;line-height:1.75}
-.mini-card a{font-size:13.5px;color:var(--brand2);font-weight:600}
+.mini-card a{gap:6px;font-size:13.5px;color:var(--brand2);font-weight:600}
 .mini-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px}
 
 .site-header nav a.active{color:#fff}

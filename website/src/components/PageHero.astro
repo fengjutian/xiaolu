@@ -2,9 +2,10 @@
 interface Action {
   href: string;
   label: string;
-  arrow?: string;
   external?: boolean;
 }
+
+import { ArrowDown, ArrowDownRight, ExternalLink } from "lucide-react";
 
 interface Props {
   eyebrow: string;
@@ -24,10 +25,10 @@ const { eyebrow, title, accent, description, primary, secondary } = Astro.props;
   <p class="hero-copy">{description}</p>
   <div class="hero-actions">
     <a class="button primary" href={primary.href} target={primary.external ? "_blank" : undefined} rel={primary.external ? "noreferrer" : undefined}>
-      {primary.label} <span>{primary.arrow ?? "↓"}</span>
+      {primary.label} <span>{primary.external ? <ExternalLink size={16} /> : <ArrowDown size={16} />}</span>
     </a>
     <a class="button secondary" href={secondary.href} target={secondary.external ? "_blank" : undefined} rel={secondary.external ? "noreferrer" : undefined}>
-      {secondary.label} <span>{secondary.arrow ?? "↘"}</span>
+      {secondary.label} <span>{secondary.external ? <ExternalLink size={16} /> : <ArrowDownRight size={16} />}</span>
     </a>
   </div>
   <slot />

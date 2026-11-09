@@ -1,8 +1,10 @@
 import { useState } from "react";
+import { Activity, HardDrive, LayoutDashboard, Thermometer } from "lucide-react";
 
 const views = {
   overview: {
     label: "系统概览",
+    icon: LayoutDashboard,
     score: "92",
     detail: "状态良好",
     metrics: [
@@ -13,6 +15,7 @@ const views = {
   },
   sensors: {
     label: "温度监控",
+    icon: Thermometer,
     score: "54°",
     detail: "温度正常",
     metrics: [
@@ -23,6 +26,7 @@ const views = {
   },
   storage: {
     label: "存储健康",
+    icon: HardDrive,
     score: "96%",
     detail: "健康度",
     metrics: [
@@ -38,31 +42,34 @@ type ViewKey = keyof typeof views;
 export default function ProductPreview() {
   const [active, setActive] = useState<ViewKey>("overview");
   const view = views[active];
+  const ActiveIcon = view.icon;
 
   return (
     <div className="preview-window" aria-label="小鲁产品界面演示">
       <div className="preview-titlebar">
         <span className="preview-mark">鲁</span>
         <span>小鲁 · 系统透镜</span>
-        <span className="preview-status"><i /> 实时监测中</span>
+        <span className="preview-status"><Activity size={13} /> 实时监测中</span>
       </div>
       <div className="preview-body">
         <nav className="preview-nav" aria-label="演示视图">
-          {(Object.keys(views) as ViewKey[]).map((key) => (
+          {(Object.keys(views) as ViewKey[]).map((key) => {
+            const Icon = views[key].icon;
+            return (
             <button
               className={active === key ? "active" : ""}
               key={key}
               onClick={() => setActive(key)}
               type="button"
             >
-              <span>{key === "overview" ? "◫" : key === "sensors" ? "⌁" : "▱"}</span>
+              <Icon size={17} strokeWidth={1.8} aria-hidden="true" />
               {views[key].label}
             </button>
-          ))}
+          )})}
         </nav>
         <section className="preview-content" aria-live="polite">
           <div className="preview-heading">
-            <div><small>设备状态</small><h3>{view.label}</h3></div>
+            <div><small>设备状态</small><h3><ActiveIcon size={22} aria-hidden="true" />{view.label}</h3></div>
             <span>刚刚更新</span>
           </div>
           <div className="score-card">

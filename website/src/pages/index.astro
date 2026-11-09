@@ -2,14 +2,30 @@
 import Layout from "../layouts/Layout.astro";
 import ProductPreview from "../components/ProductPreview";
 import { SITE } from "../config/site";
+import {
+  Activity,
+  ArrowDown,
+  ArrowDownRight,
+  ArrowRight,
+  Check,
+  Cpu,
+  Eraser,
+  ExternalLink,
+  FileArchive,
+  Gauge,
+  ShieldCheck,
+  SlidersHorizontal,
+  Sparkles,
+  Stethoscope,
+} from "lucide-react";
 
 const features = [
-  { icon: "⌁", title: "实时状态", text: "CPU、内存、磁盘、网络每 2 秒刷新，配合实时上传下载速度与进程排行。", href: "/features#monitor" },
-  { icon: "◇", title: "硬件与健康", text: "主板、显卡、硬盘、电池、显示器详情，配合 SMART、温度与驱动签名状态。", href: "/features#hardware" },
-  { icon: "◎", title: "问题诊断", text: "蓝屏转储、崩溃事件、DNS 与连接异常、驱动缺失，整理成可读结论。", href: "/features#diagnostics" },
-  { icon: "↗", title: "性能测试", text: "CPU 单核多核、内存带宽、磁盘读写与 WebGL2 GPU 跑分，并给出本机基线。", href: "/features#benchmark" },
-  { icon: "✦", title: "空间与清理", text: "盘符级 Treemap 与目录钻取定位大文件，清理前逐项预览、清理后进回收站。", href: "/toolbox/" },
-  { icon: "✧", title: "AI 解读", text: "默认关闭。开启后基于本机诊断快照给出结论，每条结论都附证据与置信度。", href: "/ai/" },
+  { icon: Activity, title: "实时状态", text: "CPU、内存、磁盘、网络每 2 秒刷新，配合实时上传下载速度与进程排行。", href: "/features#monitor" },
+  { icon: Cpu, title: "硬件与健康", text: "主板、显卡、硬盘、电池、显示器详情，配合 SMART、温度与驱动签名状态。", href: "/features#hardware" },
+  { icon: Stethoscope, title: "问题诊断", text: "蓝屏转储、崩溃事件、DNS 与连接异常、驱动缺失，整理成可读结论。", href: "/features#diagnostics" },
+  { icon: Gauge, title: "性能测试", text: "CPU 单核多核、内存带宽、磁盘读写与 WebGL2 GPU 跑分，并给出本机基线。", href: "/features#benchmark" },
+  { icon: Eraser, title: "空间与清理", text: "盘符级 Treemap 与目录钻取定位大文件，清理前逐项预览、清理后进回收站。", href: "/toolbox/" },
+  { icon: Sparkles, title: "AI 解读", text: "默认关闭。开启后基于本机诊断快照给出结论，每条结论都附证据与置信度。", href: "/ai/" },
 ];
 
 const facts = ["本地优先", "不安装后台服务", "写操作可回滚", "报告自动脱敏"];
@@ -23,10 +39,10 @@ const facts = ["本地优先", "不安装后台服务", "写操作可回滚", "�
       <h1>电脑的状态，<br /><em>终于一目了然。</em></h1>
       <p class="hero-copy">小鲁把分散、晦涩的系统信息整理成清晰的健康视图：温度、存储健康、驱动状态、跑分基线与空间占用都在一处。无需成为专家，也能读懂电脑此刻的状态。</p>
       <div class="hero-actions">
-        <a class="button primary" href="/download/">下载 Windows 版 <span>↓</span></a>
-        <a class="button secondary" href="/features/">浏览全部功能 <span>↘</span></a>
+        <a class="button primary" href="/download/">下载 Windows 版 <span><ArrowDown size={16} /></span></a>
+        <a class="button secondary" href="/features/">浏览全部功能 <span><ArrowDownRight size={16} /></span></a>
       </div>
-      <div class="trust-row">{facts.map((fact) => <span><i>✓</i>{fact}</span>)}</div>
+      <div class="trust-row">{facts.map((fact) => <span><i><Check size={11} strokeWidth={2.5} /></i>{fact}</span>)}</div>
       <div id="preview" class="hero-preview"><ProductPreview client:visible /></div>
     </section>
 
@@ -34,8 +50,8 @@ const facts = ["本地优先", "不安装后台服务", "写操作可回滚", "�
       <div class="section-label">核心能力 / CAPABILITIES</div>
       <div class="section-heading"><h2>少一些术语，<br />多一些答案。</h2><p>从概览到细节，小鲁用一致的方式呈现电脑的关键状态，让每一次判断都有依据。</p></div>
       <div class="feature-grid">
-        {features.map((feature, index) => <article class:list={["feature-card", index === 0 && "featured"]}>
-          <span class="feature-index">0{index + 1}</span><i>{feature.icon}</i><h3><a href={feature.href}>{feature.title}</a></h3><p>{feature.text}</p>
+        {features.map(({ icon: Icon, ...feature }, index) => <article class:list={["feature-card", index === 0 && "featured"]}>
+          <span class="feature-index">0{index + 1}</span><span class="feature-icon"><Icon size={28} strokeWidth={1.65} /></span><h3><a href={feature.href}>{feature.title}</a></h3><p>{feature.text}</p>
         </article>)}
       </div>
     </section>
@@ -55,19 +71,19 @@ const facts = ["本地优先", "不安装后台服务", "写操作可回滚", "�
     <section class="page-section section-shell">
       <div class="section-head"><div class="section-label">工具箱 / TOOLBOX</div><h2>25 个独立工具，<br />每个都看得懂。</h2><p>工具箱里的每个工具都是独立进程，能力、权限和风险等级写在清单里。只读工具只扫描不改写，写操作一律先预览再确认，执行记录留在本机。</p></div>
       <div class="mini-grid">
-        <article class="mini-card"><h3>清理与空间</h3><p>清理大师、C 盘瘦身、重复文件清理与 Windows 系统瘦身共用同一套扫描与回收站机制，清掉的文件可还原。</p><a href="/toolbox/#cleanup">查看清理类工具 →</a></article>
-        <article class="mini-card"><h3>系统优化</h3><p>Windows 优化助手体检 11 项设置，电脑性能优化切换电源计划与逐项读写，系统优化大师一键加速并可快照撤销。</p><a href="/toolbox/#optimize">查看优化类工具 →</a></article>
-        <article class="mini-card"><h3>日常文件工具</h3><p>Windows 压缩工具实时进度可随时取消，PDF 大师支持逐页预览、合并拆分、输出加密与权限限制。</p><a href="/toolbox/#utility">查看文件类工具 →</a></article>
+        <article class="mini-card"><span class="mini-icon"><Eraser size={20} /></span><h3>清理与空间</h3><p>清理大师、C 盘瘦身、重复文件清理与 Windows 系统瘦身共用同一套扫描与回收站机制，清掉的文件可还原。</p><a href="/toolbox/#cleanup">查看清理类工具 <ArrowRight size={14} /></a></article>
+        <article class="mini-card"><span class="mini-icon"><SlidersHorizontal size={20} /></span><h3>系统优化</h3><p>Windows 优化助手体检 11 项设置，电脑性能优化切换电源计划与逐项读写，系统优化大师一键加速并可快照撤销。</p><a href="/toolbox/#optimize">查看优化类工具 <ArrowRight size={14} /></a></article>
+        <article class="mini-card"><span class="mini-icon"><FileArchive size={20} /></span><h3>日常文件工具</h3><p>Windows 压缩工具实时进度可随时取消，PDF 大师支持逐页预览、合并拆分、输出加密与权限限制。</p><a href="/toolbox/#utility">查看文件类工具 <ArrowRight size={14} /></a></article>
       </div>
     </section>
 
     <section id="security" class="security section-shell">
-      <div class="shield" aria-hidden="true">◇<span>✓</span></div>
+      <div class="shield" aria-hidden="true"><ShieldCheck strokeWidth={1.2} /></div>
       <div><div class="section-label">LOCAL-FIRST</div><h2>你的电脑数据，<br />留在你的电脑。</h2><p>小鲁优先使用 Windows 标准接口读取信息，不要求注册账户，也不安装额外的后台服务。导出的诊断报告会自动隐藏敏感信息。</p><div class="security-points"><span><i>01</i>默认本地运行</span><span><i>02</i>清理前明确预览</span><span><i>03</i>写操作需要确认</span></div><p style="margin-top:22px"><a href="/security/" style="color:#9aa5ff;font-weight:600">查看完整安全说明 →</a></p></div>
     </section>
 
     <section id="download" class="download section-shell">
-      <div class="download-card"><div><div class="section-label">开始使用</div><h2>更了解电脑，<br />从现在开始。</h2><p>适用于 Windows 11 · 当前版本 {SITE.version}</p></div><div class="download-actions"><a class="button light" href={SITE.releasesUrl}>前往 GitHub Releases <span>↗</span></a><small>安装包发布后将在此提供下载</small></div></div>
+      <div class="download-card"><div><div class="section-label">开始使用</div><h2>更了解电脑，<br />从现在开始。</h2><p>适用于 Windows 11 · 当前版本 {SITE.version}</p></div><div class="download-actions"><a class="button light" href={SITE.releasesUrl}>前往 GitHub Releases <span><ExternalLink size={16} /></span></a><small>安装包发布后将在此提供下载</small></div></div>
     </section>
   </main>
 </Layout>
